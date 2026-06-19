@@ -109,7 +109,7 @@ function SyncSection({ refresh }: { refresh: () => Promise<void> }) {
         <Cloud size={16} /> 自托管同步
       </h3>
       <p className="text-xs text-gray-500">
-        端到端加密同步到你自己的服务器；服务器只存密文，无法解密。多设备共享同一个金库。
+        端到端加密同步到你自己的服务器；服务器只存密文，无法解密。多设备共享同一个保险箱。
       </p>
 
       {!enabled ? (
@@ -203,7 +203,7 @@ function BiometricSection({ refresh }: { refresh: () => Promise<void> }) {
       </h3>
       <p className="text-xs text-gray-500">
         作为<strong>额外</strong>的解锁方式，主密码始终保留作兜底。每台设备需各自注册；
-        丢失设备不会锁死金库。
+        丢失设备不会锁死保险箱。
       </p>
 
       {available === false && (
@@ -393,7 +393,7 @@ function DangerSection({ onReset, onClose }: { onReset: () => Promise<void>; onC
   const reset = async () => {
     if (
       !window.confirm(
-        '确定要清空整个金库吗？此操作不可恢复，所有项目与账号都会被删除。建议先做加密备份导出。',
+        '确定要清空整个保险箱吗？此操作不可恢复，所有项目与账号都会被删除。建议先做加密备份导出。',
       )
     )
       return;
@@ -404,9 +404,9 @@ function DangerSection({ onReset, onClose }: { onReset: () => Promise<void>; onC
   return (
     <section className="flex flex-col gap-2 border-t border-gray-100 pt-5">
       <h3 className="text-sm font-semibold text-rose-700">危险操作</h3>
-      <p className="text-xs text-gray-500">清空金库会删除全部本地数据且不可恢复。</p>
+      <p className="text-xs text-gray-500">清空保险箱会删除全部本地数据且不可恢复。</p>
       <Button variant="danger" onClick={reset} className="self-start">
-        清空整个金库
+        清空整个保险箱
       </Button>
     </section>
   );

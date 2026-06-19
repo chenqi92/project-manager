@@ -57,7 +57,7 @@ export interface Tombstone {
   deletedAt: number;
 }
 
-/** 自托管同步配置（随金库一起加密存储，并在设备间同步） */
+/** 自托管同步配置（随保险箱一起加密存储，并在设备间同步） */
 export interface SyncConfig {
   serverUrl: string;
   token: string;
@@ -82,7 +82,7 @@ export interface VaultSettings {
   theme?: 'light' | 'dark' | 'system';
 }
 
-/** 解密后的金库明文数据（仅存在于内存中） */
+/** 解密后的保险箱明文数据（仅存在于内存中） */
 export interface VaultData {
   version: number;
   projects: Project[];
@@ -106,7 +106,7 @@ export interface CipherText {
 }
 
 /**
- * 落盘的加密金库（信封加密）。
+ * 落盘的加密保险箱（信封加密）。
  *  - 主密码 --KDF--> KEK
  *  - KEK 解开 wrappedKey 得到随机 DEK
  *  - DEK 解密 data 得到 VaultData
@@ -115,7 +115,7 @@ export interface CipherText {
 export interface EncryptedVault {
   /** 结构 schema 版本，便于未来迁移 */
   version: number;
-  /** 金库身份 id，创建时生成、永不改变；同步时用来判断是否同一个金库 */
+  /** 保险箱身份 id，创建时生成、永不改变；同步时用来判断是否同一个保险箱 */
   vaultId: string;
   kdf: KdfConfig;
   /** KEK 派生用的盐（非机密） */
@@ -158,7 +158,7 @@ export interface BioEnrollmentPublic {
 // ---------------------------------------------------------------------------
 
 export interface VaultStatus {
-  /** 是否已创建过金库（设置过主密码） */
+  /** 是否已创建过保险箱（设置过主密码） */
   initialized: boolean;
   /** 当前是否处于锁定状态 */
   locked: boolean;

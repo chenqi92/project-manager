@@ -46,7 +46,7 @@ export async function enrollBiometricCredential(): Promise<EnrollResult> {
     user: {
       id: crypto.getRandomValues(new Uint8Array(16)),
       name: 'vault',
-      displayName: '本地金库',
+      displayName: '本地保险箱',
     },
     pubKeyCredParams: [
       { type: 'public-key', alg: -7 },
@@ -132,6 +132,6 @@ export async function evaluatePrfForAny(
     prf?: { results?: { first?: ArrayBuffer } };
   };
   const first = ext.prf?.results?.first;
-  if (!match || !first) throw new Error('未能用本设备的生物识别解锁该金库');
+  if (!match || !first) throw new Error('未能用本设备的生物识别解锁该保险箱');
   return { enrollmentId: match.id, prfOutput: new Uint8Array(first) };
 }

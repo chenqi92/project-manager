@@ -48,7 +48,7 @@ export default defineBackground(() => {
     if (state !== 'active') lock();
   });
 
-  // 右键菜单：在任意页面/链接上保存到金库。
+  // 右键菜单：在任意页面/链接上保存到保险箱。
   browser.runtime.onInstalled.addListener(() => {
     browser.contextMenus.create({
       id: 'save-to-vault',
@@ -74,7 +74,7 @@ export default defineBackground(() => {
   browser.omnibox.onInputChanged.addListener(async (text, suggest) => {
     await ensureRestored();
     if (!cachedData) {
-      suggest([{ content: '__locked__', description: '🔒 先解锁金库后再搜索' }]);
+      suggest([{ content: '__locked__', description: '🔒 先解锁保险箱后再搜索' }]);
       return;
     }
     const hits = search(cachedData, text).slice(0, 8);
@@ -158,7 +158,7 @@ async function route(msg: Msg): Promise<unknown> {
       return getStatus();
 
     case 'vault:create': {
-      if (await vaultBackend.load()) throw new Error('金库已存在，请直接解锁');
+      if (await vaultBackend.load()) throw new Error('保险箱已存在，请直接解锁');
       const data = emptyVaultData();
       if (msg.kdf) data.settings.kdf = msg.kdf;
       const { encrypted, dek: newDek } = await createEncryptedVault(
@@ -173,7 +173,7 @@ async function route(msg: Msg): Promise<unknown> {
 
     case 'vault:unlock': {
       const enc = await vaultBackend.load();
-      if (!enc) throw new Error('尚未创建金库');
+      if (!enc) throw new Error('尚未创建保险箱');
       let newDek: Uint8Array;
       try {
         newDek = await unwrapDEK(enc, msg.password);
@@ -201,7 +201,7 @@ async function route(msg: Msg): Promise<unknown> {
     case 'vault:changePassword': {
       await requireUnlocked();
       const enc = await vaultBackend.load();
-      if (!enc) throw new Error('金库不存在');
+      if (!enc) throw new Error('保险箱不存在');
       try {
         await unwrapDEK(enc, msg.current);
       } catch {
@@ -249,7 +249,7 @@ async function route(msg: Msg): Promise<unknown> {
 
     case 'vault:unlockWithPrf': {
       const enc = await vaultBackend.load();
-      if (!enc) throw new Error('尚未创建金库');
+      if (!enc) throw new Error('尚未创建保险箱');
       let newDek: Uint8Array;
       try {
         newDek = await unwrapDEKWithPrf(enc, msg.enrollmentId, fromB64(msg.prfOutput));
@@ -263,7 +263,7 @@ async function route(msg: Msg): Promise<unknown> {
     case 'vault:enrollBio': {
       await requireUnlocked();
       const enc = await vaultBackend.load();
-      if (!enc) throw new Error('金库不存在');
+      if (!enc) throw new Error('保险箱不存在');
       const next = await enrollBiometric(enc, dek!, {
         label: msg.label,
         credentialId: msg.credentialId,
@@ -277,7 +277,7 @@ async function route(msg: Msg): Promise<unknown> {
     case 'vault:removeBio': {
       await requireUnlocked();
       const enc = await vaultBackend.load();
-      if (!enc) throw new Error('金库不存在');
+      if (!enc) throw new Error('保险箱不存在');
       await vaultBackend.save(removeBioEnrollment(enc, msg.enrollmentId));
       return;
     }
@@ -319,11 +319,11 @@ async function route(msg: Msg): Promise<unknown> {
     case 'vault:adopt': {
       const client = new SyncClient(msg.serverUrl, msg.token);
       const remote = await client.pull();
-      if (!remote) throw new Error('服务器上没有可恢复的金库');
+      if (!remote) throw new Error('服务器上没有可恢复的保险箱');
       await vaultBackend.save(remote);
       const meta = await client.meta();
       await saveSyncState({ serverRevision: meta.revision, lastSyncAt: Date.now() });
-      lock(); // 用该金库的主密码重新解锁
+      lock(); // 用该保险箱的主密码重新解锁
       return getStatus();
     }
 
@@ -544,7 +544,7 @@ async function setUnlocked(d: Uint8Array, data: VaultData): Promise<void> {
 /** 重新加密并持久化数据；更新内存缓存。 */
 async function persistData(data: VaultData): Promise<void> {
   const enc = await vaultBackend.load();
-  if (!enc) throw new Error('金库不存在');
+  if (!enc) throw new Error('保险箱不存在');
   await vaultBackend.save(await reencryptData(enc, data, dek!));
   cachedData = data;
   autoLockMinutes = data.settings.autoLockMinutes ?? 15;
@@ -583,7 +583,7 @@ async function ensureRestored(): Promise<void> {
 
 async function requireUnlocked(): Promise<void> {
   await ensureRestored();
-  if (!dek || !cachedData) throw new Error('金库已锁定');
+  if (!dek || !cachedData) throw new Error('保险箱已锁定');
 }
 
 async function requireData(): Promise<VaultData> {
@@ -626,7 +626,7 @@ async function runSync(): Promise<void> {
   const cfg = cachedData!.settings.sync;
   if (!cfg?.enabled) throw new Error('同步未启用');
   const enc = await vaultBackend.load();
-  if (!enc) throw new Error('金库不存在');
+  if (!enc) throw new Error('保险箱不存在');
 
   const result = await syncVault(cfg, enc, dek!);
   if (result.mergedEncrypted) {

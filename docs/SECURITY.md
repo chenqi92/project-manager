@@ -5,13 +5,13 @@
 ```
 主密码 ──Argon2id(m=19MiB,t=3,p=1)──> KEK
                                        │ 包裹
-随机金库密钥 DEK(256bit) <─────────────┘
+随机保险箱密钥 DEK(256bit) <─────────────┘
         │ AES-GCM-256（每条记录全新 96bit IV，128bit tag）
         ▼
       VaultData 密文
 ```
 
-- **DEK** 随金库创建时随机生成，是真正加密数据的密钥。
+- **DEK** 随保险箱创建时随机生成，是真正加密数据的密钥。
 - **KEK** 由主密码经 Argon2id 派生（浏览器无原生 Argon2 时回退 PBKDF2-600k），只用来包裹 DEK。
 - **改主密码**只需用新 KEK 重新包裹同一个 DEK（O(1)），无需重新加密整库。
 - 加密原语见 [lib/crypto.ts](../lib/crypto.ts)、信封逻辑见 [lib/vault-core.ts](../lib/vault-core.ts)。
@@ -42,9 +42,9 @@
 ## 生物识别（WebAuthn PRF）
 
 - Touch ID / Windows Hello 经 WebAuthn PRF（hmac-secret）派生 32 字节 secret，再经 HKDF-SHA256 得到一把 KEK，**额外**包裹同一个 DEK。
-- **主密码始终保留作根**：丢失授权器不会锁死金库；每台设备各自注册一份包裹副本。
+- **主密码始终保留作根**：丢失授权器不会锁死保险箱；每台设备各自注册一份包裹副本。
 - 仪式必须在 options 页/独立标签页里进行（不能在 popup），RP ID 取扩展自身 origin。详见 [lib/webauthn.ts](../lib/webauthn.ts)。
 
 ## 同步合并
 
-多设备共享同一金库（同一 DEK / `vaultId`）。合并在客户端解密后进行：按稳定 id 合并，逐项以 `updatedAt` 取较新者，删除用墓碑表达以防复活。服务器只用整数 revision 做乐观并发，绝不接触明文。见 [lib/merge.ts](../lib/merge.ts)、[lib/sync.ts](../lib/sync.ts)。
+多设备共享同一保险箱（同一 DEK / `vaultId`）。合并在客户端解密后进行：按稳定 id 合并，逐项以 `updatedAt` 取较新者，删除用墓碑表达以防复活。服务器只用整数 revision 做乐观并发，绝不接触明文。见 [lib/merge.ts](../lib/merge.ts)、[lib/sync.ts](../lib/sync.ts)。

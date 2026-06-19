@@ -114,7 +114,7 @@ export async function syncVault(
   }
 
   if (remote.vaultId !== localEnc.vaultId) {
-    throw new SyncError('服务器上是另一个金库', 'vault_mismatch', remote);
+    throw new SyncError('服务器上是另一个保险箱', 'vault_mismatch', remote);
   }
 
   return mergeAndPush(client, localEnc, dek, meta.revision, remote);

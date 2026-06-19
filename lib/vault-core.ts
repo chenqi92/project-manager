@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// 金库内核：信封加密（KEK 包裹 DEK，DEK 加密数据）的创建 / 解锁 / 保存 / 改密。
+// 保险箱内核：信封加密（KEK 包裹 DEK，DEK 加密数据）的创建 / 解锁 / 保存 / 改密。
 // 纯函数，不接触存储和 UI，便于审计与测试。
 // ---------------------------------------------------------------------------
 import {
@@ -27,7 +27,7 @@ export function emptyVaultData(): VaultData {
   };
 }
 
-/** 用主密码创建一个全新的加密金库；返回密文信封与（内存用的）DEK。 */
+/** 用主密码创建一个全新的加密保险箱；返回密文信封与（内存用的）DEK。 */
 export async function createEncryptedVault(
   data: VaultData,
   password: string,
@@ -62,7 +62,7 @@ export async function unwrapDEK(
   return aesDecrypt(kek, enc.wrappedKey);
 }
 
-/** 用 DEK 解密金库数据。 */
+/** 用 DEK 解密保险箱数据。 */
 export async function decryptVaultData(
   enc: EncryptedVault,
   dek: Uint8Array,
@@ -111,7 +111,7 @@ export async function rewrapDEK(
 
 // ---------------------------------------------------------------------------
 // 生物识别（WebAuthn PRF）：把同一个 DEK 用 PRF 派生的 KEK 再包一份，
-// 作为「额外」的解锁方式。主密码始终保留，丢失授权器不会锁死金库。
+// 作为「额外」的解锁方式。主密码始终保留，丢失授权器不会锁死保险箱。
 // ---------------------------------------------------------------------------
 
 /** 注册一个生物识别授权器：用其 PRF 输出包裹当前 DEK，追加到 bioEnrollments。 */

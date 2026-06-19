@@ -12,7 +12,7 @@ import {
 
 const NEW = '__new';
 
-/** 把当前页/链接快速存入金库：选择或新建 项目 + 环境，可顺带存一个账号。 */
+/** 把当前页/链接快速存入保险箱：选择或新建 项目 + 环境，可顺带存一个账号。 */
 export function CaptureModal({
   data,
   initialUrl,
@@ -73,7 +73,7 @@ export function CaptureModal({
   };
 
   return (
-    <Modal title="保存到金库" onClose={onClose}>
+    <Modal title="保存到保险箱" onClose={onClose}>
       <div className="flex flex-col gap-3">
         <div className="grid grid-cols-2 gap-3">
           <div>

@@ -424,7 +424,7 @@ export default function App() {
             await vault.save(next);
             setCapture(null);
             history.replaceState(null, '', location.pathname);
-            flash('已保存到金库');
+            flash('已保存到保险箱');
           }}
         />
       )}

@@ -159,7 +159,7 @@ try {
 
   // 6. 锁定 -> 解锁，验证数据持久化（真实 chrome.storage 加密往返）
   await clickText(page, '锁定');
-  await waitText(page, '解锁金库');
+  await waitText(page, '解锁保险箱');
   ok('已锁定');
   await page.screenshot({ path: join(SHOTS, '04-locked.png') });
   await typeP(page, '主密码', MASTER);
@@ -171,7 +171,7 @@ try {
 
   // 7. 错误主密码应被拒
   await clickText(page, '锁定');
-  await waitText(page, '解锁金库');
+  await waitText(page, '解锁保险箱');
   await typeP(page, '主密码', 'wrong-password');
   await clickText(page, '解锁');
   await waitText(page, '主密码错误');

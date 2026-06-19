@@ -18,7 +18,7 @@ export function LockScreen({
   onCreate: (password: string) => Promise<void>;
   /** 生物识别解锁。options 页直接跑 WebAuthn；popup 里应改为打开新标签页。 */
   onBioUnlock?: () => Promise<void>;
-  /** 从同步服务器恢复金库（新设备）。 */
+  /** 从同步服务器恢复保险箱（新设备）。 */
   onAdopt?: (serverUrl: string, token: string) => Promise<void>;
 }) {
   const [pw, setPw] = useState('');
@@ -89,7 +89,7 @@ export function LockScreen({
           {initialized ? <KeyRound size={24} /> : <ShieldCheck size={24} />}
         </div>
         <h1 className="text-lg font-semibold text-gray-900">
-          {initialized ? '解锁金库' : '创建主密码'}
+          {initialized ? '解锁保险箱' : '创建主密码'}
         </h1>
         <p className="text-xs text-gray-500">
           {initialized
@@ -150,7 +150,7 @@ export function LockScreen({
               onClick={() => setShowAdopt(true)}
               className="text-xs text-brand-600 hover:underline"
             >
-              已有同步金库？从同步服务器恢复 →
+              已有同步保险箱？从同步服务器恢复 →
             </button>
           ) : (
             <div className="flex flex-col gap-2">
@@ -166,7 +166,7 @@ export function LockScreen({
                 拉取并恢复
               </Button>
               <p className="text-[11px] text-gray-400">
-                恢复后用该金库的主密码解锁。这会覆盖本机现有金库（如果有）。
+                恢复后用该保险箱的主密码解锁。这会覆盖本机现有保险箱（如果有）。
               </p>
             </div>
           )}

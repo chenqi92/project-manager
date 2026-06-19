@@ -176,7 +176,7 @@ export default function App() {
             检测到在 <b>{hostOf(pending.origin)}</b> 的登录
             {pending.kind === 'update'
               ? `，更新「${pending.linkName ?? ''}」的密码？`
-              : `（${pending.username || '无用户名'}），保存到金库？`}
+              : `（${pending.username || '无用户名'}），保存到保险箱？`}
           </div>
           <div className="flex gap-2">
             <Button
@@ -184,7 +184,7 @@ export default function App() {
                 await api.captureSave();
                 setPending(null);
                 await vault.reload();
-                flash('已保存到金库');
+                flash('已保存到保险箱');
               }}
             >
               {pending.kind === 'update' ? '更新' : '保存'}
@@ -292,7 +292,7 @@ export default function App() {
             <div className="mt-3 flex flex-col gap-2">
               {tab?.url && (
                 <Button variant="subtle" className="w-full" onClick={saveCurrentPage}>
-                  <Plus size={15} /> 保存当前页到金库
+                  <Plus size={15} /> 保存当前页到保险箱
                 </Button>
               )}
               <Button

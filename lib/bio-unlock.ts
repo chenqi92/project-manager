@@ -1,4 +1,4 @@
-// 页面上下文里用生物识别解锁金库（绝不能在 popup 里调用）。
+// 页面上下文里用生物识别解锁保险箱（绝不能在 popup 里调用）。
 import { toB64 } from './crypto';
 import { api } from './messaging';
 import { evaluatePrfForAny } from './webauthn';
