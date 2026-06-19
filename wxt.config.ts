@@ -1,6 +1,13 @@
 import { defineConfig } from 'wxt';
 import tailwindcss from '@tailwindcss/vite';
 
+// 固定扩展 ID 的公钥（非机密）：本地 dev / e2e 保持稳定的 chrome-extension://<id>，
+// 即 WebAuthn 的 RP ID，避免重载后生物识别凭据失效。
+// 首次上传到 Chrome 商店时不能带 key（商店会自己分配），用 STORE_BUILD=1 构建即可去掉。
+const EXT_KEY =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnf9yn/JCMTch4zNKUigDrl0VbjuWlPb6X/BNtTHG/CwMVmUxK18LL/Ntb+jAPGwp5M7gJSOD6DgkDo1LIodQf3n9Dr2XkizT8WL1dJla1SIBN7kvjdt151tPnjqWt9PagNeePSl8nnB488ZJ6GN6l+Y8Lew2PXm1IA6jOai/edrUleA1yzjvVdYXjUfzuCdz4snjK1pTFRNBgws5DX+ClZ2EV3SFSSTgKzVQzBlW0/xjvKl3QIai9ssrpNg5Qr1q83PyaissR18fW84TC8fcXCYhdY1GmFZvCK3pvHkOAELmyhl8EomNjooYysj5sCfBEovqIKYrFUl1jukYvuTIfwIDAQAB';
+const STORE_BUILD = process.env.STORE_BUILD === '1';
+
 // WXT config. https://wxt.dev
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
@@ -20,9 +27,8 @@ export default defineConfig({
     // 自托管同步服务器的访问权限：基础清单里不申请，启用同步时由用户在运行时
     // 针对其自己的服务器地址授权（chrome.permissions.request），审核更友好。
     optional_host_permissions: ['https://*/*', 'http://localhost/*'],
-    // 固定扩展 ID：使 chrome-extension://<id>（即 WebAuthn 的 RP ID）在重新加载后
-    // 保持不变，避免已注册的生物识别凭据失效。这是公钥，非机密。
-    key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnf9yn/JCMTch4zNKUigDrl0VbjuWlPb6X/BNtTHG/CwMVmUxK18LL/Ntb+jAPGwp5M7gJSOD6DgkDo1LIodQf3n9Dr2XkizT8WL1dJla1SIBN7kvjdt151tPnjqWt9PagNeePSl8nnB488ZJ6GN6l+Y8Lew2PXm1IA6jOai/edrUleA1yzjvVdYXjUfzuCdz4snjK1pTFRNBgws5DX+ClZ2EV3SFSSTgKzVQzBlW0/xjvKl3QIai9ssrpNg5Qr1q83PyaissR18fW84TC8fcXCYhdY1GmFZvCK3pvHkOAELmyhl8EomNjooYysj5sCfBEovqIKYrFUl1jukYvuTIfwIDAQAB',
+    // 商店首发包（STORE_BUILD=1）不带 key；本地构建带 key 以固定 ID。
+    ...(STORE_BUILD ? {} : { key: EXT_KEY }),
     action: { default_title: '项目环境管家' },
     // 地址栏输入 "env" + 空格 即可搜索金库。
     omnibox: { keyword: 'env' },

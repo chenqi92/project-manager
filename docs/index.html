@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>项目环境管家 · 隐私政策</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        max-width: 760px; margin: 0 auto; padding: 40px 20px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        line-height: 1.7; color: #1f2937;
+      }
+      h1 { font-size: 1.6rem; }
+      h2 { font-size: 1.15rem; margin-top: 2rem; border-top: 1px solid #e5e7eb; padding-top: 1.2rem; }
+      code, .mono { font-family: ui-monospace, Menlo, monospace; background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
+      .meta { color: #6b7280; font-size: .9rem; }
+      .note { background: #eef2ff; border-radius: 8px; padding: 12px 16px; font-size: .9rem; }
+      @media (prefers-color-scheme: dark) {
+        body { color: #e5e7eb; background: #0b0f17; }
+        h2 { border-color: #374151; }
+        code, .mono { background: #1f2937; }
+        .note { background: #1e1b4b; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>项目环境管家（Project Env Manager）· 隐私政策</h1>
+    <p class="meta">生效日期：2026-06-19</p>
+    <p>
+      「项目环境管家」是一个<strong>本地优先、端到端加密</strong>的 Chrome 凭据管理扩展，用于管理多项目、多环境、多平台的登录凭据。
+    </p>
+
+    <h2>1. 我们收集哪些数据</h2>
+    <ul>
+      <li>你创建的<strong>凭据</strong>：用户名、密码、链接地址、备注、TOTP 密钥。</li>
+      <li>应用<strong>设置 / 偏好</strong>（自动锁定时长、同步配置、主题等）。</li>
+      <li>我们<strong>不收集</strong>浏览历史、分析、遥测、IP 日志，<strong>没有任何数据发送到开发者的服务器</strong>——开发者不运营任何服务器，不接收任何用户数据。</li>
+    </ul>
+
+    <h2>2. 数据如何被使用</h2>
+    <p>仅用于在你自己的设备上存储、填充、管理你的凭据，无其它用途。</p>
+
+    <h2>3. 存储与加密</h2>
+    <p>
+      全部金库数据在写入磁盘前先在本地加密：<code>AES-256-GCM</code>，密钥由你的主密码经 <code>Argon2id / PBKDF2</code> 派生。主密码与派生密钥<strong>永不离开你的设备</strong>。明文凭据仅在金库解锁期间短暂存在于内存。
+    </p>
+
+    <h2>4. 可选的自托管同步</h2>
+    <p>
+      同步默认关闭，需手动开启。开启后，扩展只会把<strong>已加密的金库（密文）</strong>上传到<strong>你自己配置并运营</strong>的同步服务器，全程 HTTPS/TLS。服务器只存密文，<strong>运营者无法解密</strong>你的数据。你可随时关闭同步并删除远端副本。
+    </p>
+
+    <h2>5. 数据共享与披露</h2>
+    <p>我们<strong>不出售、不共享、不向任何第三方转移</strong>你的数据。无广告、无数据经纪、无分析合作方。共享：无。</p>
+
+    <h2>6. 数据保留</h2>
+    <p>数据在本地持续保存，直到你删除或卸载扩展。开启同步时，密文在你的服务器上保留直到你删除。卸载将清除本地数据。</p>
+
+    <h2>7. 你的权利与控制</h2>
+    <p>你可在扩展内随时查看、编辑、导出、删除全部数据，无需向我们提出请求。</p>
+
+    <h2>8. 政策变更与联系方式</h2>
+    <p>任何实质性变更都会更新本页的生效日期。如有疑问或数据相关请求，请联系：<code>请替换为你的联系邮箱</code>。</p>
+
+    <h2>Limited Use 声明</h2>
+    <p class="note">
+      The use of information received from Google APIs will adhere to the Chrome Web Store User Data Policy, including the Limited Use requirements. All credential data is end-to-end encrypted on the user's device, is used solely to provide the extension's password-management function, is never sold or transferred to third parties, is never used for advertising, and is never read by the developer (the developer operates no servers; where optional sync is enabled, the operator stores only ciphertext).
+    </p>
+
+    <p class="meta">开源地址：https://github.com/chenqi92/project-manager</p>
+  </body>
+</html>
