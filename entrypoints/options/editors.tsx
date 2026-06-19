@@ -119,10 +119,11 @@ export function LinkEditor({
 }: {
   initial?: PlatformLink;
   onClose: () => void;
-  onSave: (v: { name: string; url: string; note?: string }) => void;
+  onSave: (v: { name: string; url: string; note?: string; urls?: string[] }) => void;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [url, setUrl] = useState(initial?.url ?? '');
+  const [extraUrls, setExtraUrls] = useState((initial?.urls ?? []).join('\n'));
   const [note, setNote] = useState(initial?.note ?? '');
 
   return (
@@ -133,11 +134,21 @@ export function LinkEditor({
           <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：管理后台" />
         </div>
         <div>
-          <Label>网址</Label>
+          <Label>主网址</Label>
           <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://admin.example.com" />
           <p className="mt-1 text-[11px] text-gray-400">
-            填充只会在「页面网址与此处 origin 完全一致」时生效。
+            填充只会在「页面网址与某个 origin 完全一致」时生效。
           </p>
+        </div>
+        <div>
+          <Label>更多网址（每行一个，可选）</Label>
+          <textarea
+            value={extraUrls}
+            onChange={(e) => setExtraUrls(e.target.value)}
+            rows={3}
+            placeholder={'https://admin-eu.example.com\nhttps://admin-us.example.com'}
+            className="w-full rounded-lg border border-gray-300 p-2 font-mono text-xs outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+          />
         </div>
         <div>
           <Label>备注（可选）</Label>
@@ -148,7 +159,18 @@ export function LinkEditor({
         <Button variant="subtle" onClick={onClose}>取消</Button>
         <Button
           disabled={!name.trim()}
-          onClick={() => onSave({ name: name.trim(), url: url.trim(), note: note.trim() || undefined })}
+          onClick={() => {
+            const urls = extraUrls
+              .split('\n')
+              .map((u) => u.trim())
+              .filter(Boolean);
+            onSave({
+              name: name.trim(),
+              url: url.trim(),
+              note: note.trim() || undefined,
+              urls: urls.length ? urls : undefined,
+            });
+          }}
         >
           保存
         </Button>

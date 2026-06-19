@@ -189,6 +189,14 @@ try {
   ok('密码健康审计面板正常');
   await page.keyboard.press('Escape');
 
+  // 8b. 深色模式渲染
+  await page.evaluate(() => document.documentElement.classList.add('dark'));
+  await wait(300);
+  const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  await page.screenshot({ path: join(SHOTS, '07-dark.png') });
+  ok(`深色模式渲染（body bg=${bg}）`);
+  await page.evaluate(() => document.documentElement.classList.remove('dark'));
+
   // 9. popup 渲染 + 运行时错误检查
   const popup = await browser.newPage();
   popup.on('pageerror', (e) => errors.push('popup pageerror: ' + e.message));

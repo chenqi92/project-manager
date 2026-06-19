@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 import { getOrigin, originsMatch } from './autofill';
 import type { VaultData } from './types';
+import { linkUrls } from './vault-ops';
 
 export interface EnvTarget {
   envId: string;
@@ -36,7 +37,7 @@ export function envSwitchTargets(data: VaultData, currentUrl: string): EnvSwitch
   for (const project of data.projects) {
     for (const env of project.environments) {
       for (const link of env.links) {
-        if (!link.url || !originsMatch(link.url, currentUrl)) continue;
+        if (!linkUrls(link).some((u) => originsMatch(u, currentUrl))) continue;
 
         const targets: EnvTarget[] = [];
         for (const other of project.environments) {

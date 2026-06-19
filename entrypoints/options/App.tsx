@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { browser } from 'wxt/browser';
 import {
   Copy,
@@ -27,6 +27,7 @@ import { useVault } from '@/hooks/useVault';
 import { getOrigin } from '@/lib/autofill';
 import { biometricUnlock } from '@/lib/bio-unlock';
 import { api } from '@/lib/messaging';
+import { applyTheme } from '@/lib/theme';
 import { copyWithAutoClear } from '@/lib/clipboard';
 import { search, type FlatEntry } from '@/lib/search';
 import type {
@@ -82,6 +83,10 @@ export default function App() {
       ? { url: p.get('url') ?? '', title: p.get('title') ?? '' }
       : null;
   });
+
+  useEffect(() => {
+    applyTheme(data?.settings.theme);
+  }, [data?.settings.theme]);
 
   const flash = (m: string) => {
     setToast(m);
@@ -157,7 +162,7 @@ export default function App() {
   return (
     <div className="flex h-screen bg-gray-50 text-gray-900">
       {/* sidebar */}
-      <aside className="flex w-72 shrink-0 flex-col border-r border-gray-200 bg-white">
+      <aside className="flex w-72 shrink-0 flex-col border-r border-gray-200 bg-surface">
         <div className="flex items-center gap-2 px-4 py-3.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">
             <Layers size={18} />
@@ -425,7 +430,7 @@ export default function App() {
       )}
 
       {toast && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 rounded-lg bg-gray-900/90 px-4 py-2 text-sm text-white shadow-lg">
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 rounded-lg bg-neutral-800/95 px-4 py-2 text-sm text-white shadow-lg">
           {toast}
         </div>
       )}
@@ -487,7 +492,7 @@ function ProjectView(props: ProjectViewProps) {
   const { project } = props;
   return (
     <>
-      <header className="flex items-center gap-2 border-b border-gray-200 bg-white px-6 py-4">
+      <header className="flex items-center gap-2 border-b border-gray-200 bg-surface px-6 py-4">
         <h1 className="text-lg font-semibold">{project.name}</h1>
         {(project.tags ?? []).map((t) => (
           <span key={t} className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">
@@ -524,7 +529,7 @@ function ProjectView(props: ProjectViewProps) {
 
 function EnvBlock({ env, ...props }: { env: Environment } & ProjectViewProps) {
   return (
-    <section className="rounded-xl border border-gray-200 bg-white">
+    <section className="rounded-xl border border-gray-200 bg-surface">
       <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-2.5">
         <span className={cx('rounded px-2 py-0.5 text-xs font-medium', ENV_KIND_COLORS[env.kind])}>
           {ENV_KIND_LABELS[env.kind]}
@@ -576,6 +581,14 @@ function LinkBlock({
             <span className="truncate">{link.url}</span>
             <ExternalLink size={12} className="shrink-0" />
           </a>
+        )}
+        {link.urls && link.urls.length > 0 && (
+          <span
+            title={link.urls.join('\n')}
+            className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500"
+          >
+            +{link.urls.length}
+          </span>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <IconButton title="编辑链接" onClick={() => props.onEditLink(env.id, link)}>
@@ -678,7 +691,7 @@ function SearchView({
 }) {
   return (
     <>
-      <header className="border-b border-gray-200 bg-white px-6 py-4">
+      <header className="border-b border-gray-200 bg-surface px-6 py-4">
         <h1 className="text-lg font-semibold">搜索结果（{results.length}）</h1>
       </header>
       <div className="flex-1 space-y-2 overflow-auto p-6">
@@ -704,7 +717,7 @@ function SearchRow({
 }) {
   const [show, setShow] = useState(false);
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm">
+    <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-surface px-4 py-3 text-sm">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="font-medium">{entry.linkName}</span>

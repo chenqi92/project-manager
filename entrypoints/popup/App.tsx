@@ -20,6 +20,7 @@ import { fillCredentialsInPage, getOrigin, originsMatch } from '@/lib/autofill';
 import { copyWithAutoClear } from '@/lib/clipboard';
 import { envSwitchTargets } from '@/lib/env-switch';
 import { api } from '@/lib/messaging';
+import { applyTheme } from '@/lib/theme';
 import { matchForUrl, search, type FlatEntry } from '@/lib/search';
 import type { CapturePending, EnvKind } from '@/lib/types';
 import { ENV_KIND_COLORS, ENV_KIND_LABELS } from '@/lib/vault-ops';
@@ -36,6 +37,10 @@ export default function App() {
   useEffect(() => {
     if (status && !status.locked) api.capturePending().then(setPending).catch(() => {});
   }, [status]);
+
+  useEffect(() => {
+    applyTheme(data?.settings.theme);
+  }, [data?.settings.theme]);
 
   useEffect(() => {
     browser.tabs
@@ -144,7 +149,7 @@ export default function App() {
   return (
     <div className="flex max-h-[560px] w-[380px] flex-col bg-gray-50">
       {/* header */}
-      <div className="flex items-center gap-2 border-b border-gray-200 bg-white px-4 py-2.5">
+      <div className="flex items-center gap-2 border-b border-gray-200 bg-surface px-4 py-2.5">
         <ShieldCheck size={18} className="text-brand-600" />
         <span className="text-sm font-semibold text-gray-900">项目环境管家</span>
         <div className="ml-auto flex items-center gap-1">
@@ -198,7 +203,7 @@ export default function App() {
       )}
 
       {/* search */}
-      <div className="border-b border-gray-200 bg-white px-3 py-2">
+      <div className="border-b border-gray-200 bg-surface px-3 py-2">
         <div className="relative">
           <Search
             size={15}
@@ -266,7 +271,7 @@ export default function App() {
                       <button
                         key={t.envId}
                         onClick={() => browser.tabs.create({ url: t.targetUrl })}
-                        className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs hover:border-brand-300"
+                        className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-surface px-2.5 py-1.5 text-xs hover:border-brand-300"
                       >
                         <span
                           className={cx(
@@ -303,7 +308,7 @@ export default function App() {
       </div>
 
       {toast && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-3 mx-auto w-fit rounded-lg bg-gray-900/90 px-3 py-1.5 text-xs text-white">
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 mx-auto w-fit rounded-lg bg-neutral-800/95 px-3 py-1.5 text-xs text-white">
           {toast}
         </div>
       )}
@@ -355,7 +360,7 @@ function Row({
   return (
     <div
       className={cx(
-        'rounded-xl border bg-white p-3',
+        'rounded-xl border bg-surface p-3',
         highlight ? 'border-brand-200 ring-1 ring-brand-100' : 'border-gray-200',
       )}
     >

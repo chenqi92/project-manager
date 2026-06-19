@@ -32,7 +32,7 @@ export function ImportExport({
             onClick={() => setTab(t)}
             className={cx(
               'flex-1 rounded-md py-1.5 font-medium',
-              tab === t ? 'bg-white shadow-sm' : 'text-gray-500',
+              tab === t ? 'bg-surface shadow-sm' : 'text-gray-500',
             )}
           >
             {t === 'export' ? '导出' : '导入'}

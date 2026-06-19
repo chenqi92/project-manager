@@ -56,7 +56,7 @@ export function Select({
   return (
     <select
       className={cx(
-        'w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100',
+        'w-full rounded-lg border border-gray-300 bg-surface px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100',
         className,
       )}
       {...props}
@@ -96,12 +96,12 @@ export function Modal({
     >
       <div
         className={cx(
-          'max-h-[90vh] w-full overflow-auto rounded-2xl bg-white shadow-2xl',
+          'max-h-[90vh] w-full overflow-auto rounded-2xl bg-surface shadow-2xl',
           wide ? 'max-w-2xl' : 'max-w-md',
         )}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 flex items-center justify-between border-b border-gray-100 bg-white px-5 py-3">
+        <div className="sticky top-0 flex items-center justify-between border-b border-gray-100 bg-surface px-5 py-3">
           <h2 className="text-base font-semibold text-gray-900">{title}</h2>
           <button
             onClick={onClose}

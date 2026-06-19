@@ -6,14 +6,41 @@
   --color-brand-500: #6366f1;
   --color-brand-600: #4f46e5;
   --color-brand-700: #4338ca;
+  /* 卡片/面板表面色（亮色为白，暗色翻转见 .dark） */
+  --color-surface: #ffffff;
+}
+
+/*
+ * 深色模式：直接重映射灰阶与 surface 的 CSS 变量。
+ * Tailwind v4 的颜色工具都引用 var(--color-*)，因此无需给每个组件加 dark: 类，
+ * 现有的 bg-surface / bg-gray-* / text-gray-* / border-gray-* 会自动翻转。
+ * 彩色徽标（brand/sky/amber...）保持不变，在深色背景上作为浅色标签依然清晰。
+ */
+.dark {
+  --color-surface: #111827;
+  --color-gray-50: #0b0f17;
+  --color-gray-100: #1f2937;
+  --color-gray-200: #374151;
+  --color-gray-300: #4b5563;
+  --color-gray-400: #6b7280;
+  --color-gray-500: #9ca3af;
+  --color-gray-600: #cbd5e1;
+  --color-gray-700: #d1d5db;
+  --color-gray-800: #e5e7eb;
+  --color-gray-900: #f3f4f6;
 }
 
 html,
 body {
   margin: 0;
+  color: var(--color-gray-900);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+html.dark {
+  color-scheme: dark;
 }
 
 /* slim scrollbar */
@@ -22,6 +49,6 @@ body {
   height: 8px;
 }
 *::-webkit-scrollbar-thumb {
-  background: rgb(0 0 0 / 0.18);
+  background: rgb(128 128 128 / 0.35);
   border-radius: 9999px;
 }

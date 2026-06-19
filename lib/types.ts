@@ -19,7 +19,10 @@ export interface Account {
 export interface PlatformLink {
   id: string;
   name: string;
+  /** 主网址 */
   url: string;
+  /** 额外网址（同一平台的多区域/多域名）；匹配填充时主+额外都会比对 */
+  urls?: string[];
   note?: string;
   accounts: Account[];
   updatedAt: number;
@@ -75,6 +78,8 @@ export interface VaultSettings {
   sync?: SyncConfig;
   /** 填充后是否自动提交直接登录；undefined 视为开启 */
   autoSubmit?: boolean;
+  /** 主题；undefined 视为跟随系统 */
+  theme?: 'light' | 'dark' | 'system';
 }
 
 /** 解密后的金库明文数据（仅存在于内存中） */

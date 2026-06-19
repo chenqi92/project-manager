@@ -36,10 +36,16 @@ export function newLink(p: Partial<PlatformLink> = {}): PlatformLink {
     id: uid(),
     name: p.name ?? '',
     url: p.url ?? '',
+    urls: p.urls,
     note: p.note,
     accounts: p.accounts ?? [],
     updatedAt: p.updatedAt ?? now(),
   };
+}
+
+/** 一个链接的全部网址（主 + 额外）。 */
+export function linkUrls(link: PlatformLink): string[] {
+  return [link.url, ...(link.urls ?? [])].map((u) => u.trim()).filter(Boolean);
 }
 
 export function newEnvironment(p: Partial<Environment> = {}): Environment {

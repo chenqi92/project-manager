@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { Cloud, Fingerprint, Loader2, RefreshCw, Trash2 } from 'lucide-react';
-import { Banner, Button, Input, Label, Modal } from '@/components/ui';
+import { Banner, Button, Input, Label, Modal, Select } from '@/components/ui';
 import { toB64 } from '@/lib/crypto';
 import { api, type SyncStateResp } from '@/lib/messaging';
+import { applyTheme, type Theme } from '@/lib/theme';
 import type { BioEnrollmentPublic, VaultData } from '@/lib/types';
 import { produce } from '@/lib/vault-ops';
 import { enrollBiometricCredential, isPlatformAuthAvailable } from '@/lib/webauthn';
@@ -24,6 +25,7 @@ export function Settings({
   return (
     <Modal title="设置" onClose={onClose} wide>
       <div className="flex flex-col gap-6">
+        <AppearanceSection data={data} onSave={onSave} />
         <FillSection data={data} onSave={onSave} />
         <SyncSection refresh={refresh} />
         <BiometricSection refresh={refresh} />
@@ -233,6 +235,37 @@ function BiometricSection({ refresh }: { refresh: () => Promise<void> }) {
         </Button>
       )}
       {msg && <Banner tone={msg.tone === 'error' ? 'error' : 'info'}>{msg.text}</Banner>}
+    </section>
+  );
+}
+
+// --------------------------- 外观 ---------------------------
+
+function AppearanceSection({
+  data,
+  onSave,
+}: {
+  data: VaultData;
+  onSave: (next: VaultData) => Promise<void>;
+}) {
+  const theme = data.settings.theme ?? 'system';
+  const change = async (value: Theme) => {
+    applyTheme(value); // 立即生效
+    await onSave(produce(data, (d) => void (d.settings.theme = value)));
+  };
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold text-gray-800">外观</h3>
+      <Label>主题</Label>
+      <Select
+        value={theme}
+        onChange={(e) => change(e.target.value as Theme)}
+        className="w-40"
+      >
+        <option value="system">跟随系统</option>
+        <option value="light">浅色</option>
+        <option value="dark">深色</option>
+      </Select>
     </section>
   );
 }

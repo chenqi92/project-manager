@@ -1,6 +1,7 @@
 import { browser } from 'wxt/browser';
 import { fillCredentialsInPage, getOrigin } from '@/lib/autofill';
 import { fromB64, toB64 } from '@/lib/crypto';
+import { flatten, matchForUrl, search } from '@/lib/search';
 import { buildExport, mergeVaults, parseImport } from '@/lib/import-export';
 import type { Msg, MsgResponse, SyncStateResp } from '@/lib/messaging';
 import { vaultBackend } from '@/lib/storage';
@@ -68,8 +69,80 @@ export default defineBackground(() => {
   registerCapture();
   browser.permissions.onAdded.addListener(() => registerCapture());
 
+  // 地址栏 "env" 关键字搜索。
+  browser.omnibox.setDefaultSuggestion({ description: '搜索项目 / 环境 / 链接 / 账号…' });
+  browser.omnibox.onInputChanged.addListener(async (text, suggest) => {
+    await ensureRestored();
+    if (!cachedData) {
+      suggest([{ content: '__locked__', description: '🔒 先解锁金库后再搜索' }]);
+      return;
+    }
+    const hits = search(cachedData, text).slice(0, 8);
+    suggest(
+      hits.map((h) => ({
+        content: `acc:${h.accountId}`,
+        description:
+          escapeXml(`${h.linkName} · ${h.envName} · ${h.username || '—'}`) +
+          (h.url ? ` <url>${escapeXml(h.url)}</url>` : ''),
+      })),
+    );
+  });
+  browser.omnibox.onInputEntered.addListener(async (text) => {
+    await ensureRestored();
+    if (!cachedData) {
+      browser.action.openPopup?.().catch(() => {});
+      return;
+    }
+    const entry = text.startsWith('acc:')
+      ? flatten(cachedData).find((e) => e.accountId === text.slice(4))
+      : search(cachedData, text)[0];
+    if (!entry?.url) return;
+    await openAndFill(
+      entry.url,
+      entry.username,
+      entry.password,
+      cachedData.settings.autoSubmit !== false,
+    );
+  });
+
+  // 快捷键。
+  browser.commands.onCommand.addListener(async (command) => {
+    if (command === 'lock-vault') lock();
+    else if (command === 'fill-current') await fillActiveTab();
+  });
+
   browser.runtime.onMessage.addListener((msg: Msg) => handle(msg));
 });
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** 快捷键「填充当前页」：唯一匹配则直接填，否则打开 popup 让用户选。 */
+async function fillActiveTab(): Promise<void> {
+  await ensureRestored();
+  if (!cachedData) {
+    browser.action.openPopup?.().catch(() => {});
+    return;
+  }
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url) return;
+  const matches = matchForUrl(cachedData, tab.url);
+  if (matches.length === 1) {
+    const m = matches[0]!;
+    await browser.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: fillCredentialsInPage,
+      args: [m.username, m.password, cachedData.settings.autoSubmit !== false],
+    });
+  } else {
+    browser.action.openPopup?.().catch(() => {});
+  }
+}
 
 async function handle(msg: Msg): Promise<MsgResponse<unknown>> {
   try {
