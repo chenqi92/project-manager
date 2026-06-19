@@ -16,7 +16,7 @@ export default defineConfig({
     //  scripting - 在用户授权的当前页注入一次性填充函数
     //  idle      - 空闲自动锁定
     // 不申请 <all_urls> / host_permissions，最大限度降低审核摩擦与攻击面。
-    permissions: ['storage', 'activeTab', 'scripting', 'idle'],
+    permissions: ['storage', 'activeTab', 'scripting', 'idle', 'contextMenus'],
     // 自托管同步服务器的访问权限：基础清单里不申请，启用同步时由用户在运行时
     // 针对其自己的服务器地址授权（chrome.permissions.request），审核更友好。
     optional_host_permissions: ['https://*/*', 'http://localhost/*'],

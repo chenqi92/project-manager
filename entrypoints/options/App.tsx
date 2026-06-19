@@ -44,6 +44,7 @@ import {
   newProject,
   produce,
 } from '@/lib/vault-ops';
+import { CaptureModal } from './CaptureModal';
 import { AccountEditor, EnvEditor, LinkEditor, ProjectEditor } from './editors';
 import { ImportExport } from './ImportExport';
 import { Settings } from './Settings';
@@ -71,6 +72,12 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showIO, setShowIO] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [capture, setCapture] = useState(() => {
+    const p = new URLSearchParams(location.search);
+    return p.get('capture') === '1'
+      ? { url: p.get('url') ?? '', title: p.get('title') ?? '' }
+      : null;
+  });
 
   const flash = (m: string) => {
     setToast(m);
@@ -93,7 +100,12 @@ export default function App() {
     const granted = await browser.permissions.request({ origins: [origin + '/*'] });
     if (!granted) return flash('未授权访问该网站');
     try {
-      const r = await api.openAndFill(url, username, password);
+      const r = await api.openAndFill(
+        url,
+        username,
+        password,
+        data?.settings.autoSubmit !== false,
+      );
       if (!r.filled && r.reason) flash(r.reason);
     } catch (e) {
       flash('打开失败：' + (e instanceof Error ? e.message : String(e)));
@@ -387,6 +399,23 @@ export default function App() {
       )}
       {showIO && (
         <ImportExport onClose={() => setShowIO(false)} onImported={vault.reload} />
+      )}
+      {capture && (
+        <CaptureModal
+          data={data}
+          initialUrl={capture.url}
+          initialTitle={capture.title}
+          onClose={() => {
+            setCapture(null);
+            history.replaceState(null, '', location.pathname);
+          }}
+          onSave={async (next) => {
+            await vault.save(next);
+            setCapture(null);
+            history.replaceState(null, '', location.pathname);
+            flash('已保存到金库');
+          }}
+        />
       )}
 
       {toast && (

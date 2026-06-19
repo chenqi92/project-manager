@@ -7,6 +7,7 @@ import {
   EyeOff,
   Lock,
   LogIn,
+  Plus,
   Search,
   Settings,
   ShieldCheck,
@@ -25,14 +26,14 @@ export default function App() {
   const vault = useVault();
   const { status, data, loading } = vault;
 
-  const [tab, setTab] = useState<{ id?: number; url?: string } | null>(null);
+  const [tab, setTab] = useState<{ id?: number; url?: string; title?: string } | null>(null);
   const [query, setQuery] = useState('');
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     browser.tabs
       .query({ active: true, currentWindow: true })
-      .then(([t]) => setTab(t ? { id: t.id, url: t.url } : null))
+      .then(([t]) => setTab(t ? { id: t.id, url: t.url, title: t.title } : null))
       .catch(() => {});
   }, []);
 
@@ -60,12 +61,21 @@ export default function App() {
       await browser.scripting.executeScript({
         target: { tabId: tab.id },
         func: fillCredentialsInPage,
-        args: [entry.username, entry.password],
+        args: [entry.username, entry.password, data?.settings.autoSubmit !== false],
       });
       window.close();
     } catch (e) {
       flash('填充失败：' + (e instanceof Error ? e.message : String(e)));
     }
+  }
+
+  async function saveCurrentPage() {
+    if (!tab?.url) return flash('无法读取当前标签页');
+    const target =
+      browser.runtime.getURL('/options.html') +
+      `?capture=1&url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title ?? '')}`;
+    await browser.tabs.create({ url: target });
+    window.close();
   }
 
   async function copy(text: string, what: string) {
@@ -80,7 +90,12 @@ export default function App() {
     const granted = await browser.permissions.request({ origins: [origin + '/*'] });
     if (!granted) return flash('未授权访问该网站');
     try {
-      const r = await api.openAndFill(entry.url, entry.username, entry.password);
+      const r = await api.openAndFill(
+        entry.url,
+        entry.username,
+        entry.password,
+        data?.settings.autoSubmit !== false,
+      );
       if (!r.filled && r.reason) flash(r.reason);
       window.close();
     } catch (e) {
@@ -199,9 +214,14 @@ export default function App() {
                 ))
               )}
             </Section>
-            <div className="mt-3">
+            <div className="mt-3 flex flex-col gap-2">
+              {tab?.url && (
+                <Button variant="subtle" className="w-full" onClick={saveCurrentPage}>
+                  <Plus size={15} /> 保存当前页到金库
+                </Button>
+              )}
               <Button
-                variant="subtle"
+                variant="ghost"
                 className="w-full"
                 onClick={() => browser.runtime.openOptionsPage()}
               >

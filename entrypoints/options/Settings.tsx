@@ -24,6 +24,7 @@ export function Settings({
   return (
     <Modal title="设置" onClose={onClose} wide>
       <div className="flex flex-col gap-6">
+        <FillSection data={data} onSave={onSave} />
         <SyncSection refresh={refresh} />
         <BiometricSection refresh={refresh} />
         <AutoLockSection data={data} onSave={onSave} />
@@ -232,6 +233,33 @@ function BiometricSection({ refresh }: { refresh: () => Promise<void> }) {
         </Button>
       )}
       {msg && <Banner tone={msg.tone === 'error' ? 'error' : 'info'}>{msg.text}</Banner>}
+    </section>
+  );
+}
+
+// --------------------------- 填充 ---------------------------
+
+function FillSection({
+  data,
+  onSave,
+}: {
+  data: VaultData;
+  onSave: (next: VaultData) => Promise<void>;
+}) {
+  const autoSubmit = data.settings.autoSubmit !== false;
+  const toggle = async () => {
+    await onSave(produce(data, (d) => void (d.settings.autoSubmit = !autoSubmit)));
+  };
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold text-gray-800">填充</h3>
+      <label className="flex items-center gap-2 text-sm text-gray-700">
+        <input type="checkbox" checked={autoSubmit} onChange={toggle} />
+        填充后自动提交（直接登录）
+      </label>
+      <p className="text-[11px] text-gray-400">
+        关闭后只填账号密码、不自动提交，需你手动点登录。仅在网址 origin 完全一致的页面才会提交。
+      </p>
     </section>
   );
 }

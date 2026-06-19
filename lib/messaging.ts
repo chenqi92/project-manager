@@ -55,7 +55,13 @@ export type Msg =
   | { type: 'sync:state' }
   | { type: 'vault:adopt'; serverUrl: string; token: string }
   // 打开链接并自动填充
-  | { type: 'tab:openAndFill'; url: string; username: string; password: string };
+  | {
+      type: 'tab:openAndFill';
+      url: string;
+      username: string;
+      password: string;
+      submit: boolean;
+    };
 
 export interface ExportResult {
   filename: string;
@@ -121,11 +127,12 @@ export const api = {
     send<VaultStatus>({ type: 'vault:adopt', serverUrl, token }),
 
   // 打开链接并自动填充（调用前需在页面里先 chrome.permissions.request 该 origin）
-  openAndFill: (url: string, username: string, password: string) =>
+  openAndFill: (url: string, username: string, password: string, submit: boolean) =>
     send<{ filled: boolean; reason?: string }>({
       type: 'tab:openAndFill',
       url,
       username,
       password,
+      submit,
     }),
 };

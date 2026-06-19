@@ -37,6 +37,23 @@ export default defineBackground(() => {
     if (state !== 'active') lock();
   });
 
+  // 右键菜单：在任意页面/链接上保存到金库。
+  browser.runtime.onInstalled.addListener(() => {
+    browser.contextMenus.create({
+      id: 'save-to-vault',
+      title: '保存到项目环境管家',
+      contexts: ['page', 'link'],
+    });
+  });
+  browser.contextMenus.onClicked.addListener((info, tab) => {
+    const url = info.linkUrl || info.pageUrl || tab?.url || '';
+    const title = tab?.title || '';
+    const target =
+      browser.runtime.getURL('/options.html') +
+      `?capture=1&url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`;
+    browser.tabs.create({ url: target });
+  });
+
   browser.runtime.onMessage.addListener((msg: Msg) => handle(msg));
 });
 
@@ -224,15 +241,16 @@ async function route(msg: Msg): Promise<unknown> {
     }
 
     case 'tab:openAndFill':
-      return openAndFill(msg.url, msg.username, msg.password);
+      return openAndFill(msg.url, msg.username, msg.password, msg.submit);
   }
 }
 
-/** 打开链接 -> 等加载完成 -> 校验最终 origin 与链接一致 -> 注入填充（不自动提交）。 */
+/** 打开链接 -> 等加载完成 -> 校验最终 origin 与链接一致 -> 注入填充（可选自动提交）。 */
 async function openAndFill(
   url: string,
   username: string,
   password: string,
+  submit: boolean,
 ): Promise<{ filled: boolean; reason?: string }> {
   const targetOrigin = getOrigin(url);
   if (!targetOrigin) throw new Error('链接地址不合法');
@@ -251,7 +269,7 @@ async function openAndFill(
   await browser.scripting.executeScript({
     target: { tabId },
     func: fillCredentialsInPage,
-    args: [username, password],
+    args: [username, password, submit],
   });
   return { filled: true };
 }

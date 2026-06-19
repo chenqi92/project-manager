@@ -71,6 +71,8 @@ export interface VaultSettings {
   autoLockMinutes: number;
   kdf: KdfConfig;
   sync?: SyncConfig;
+  /** 填充后是否自动提交直接登录；undefined 视为开启 */
+  autoSubmit?: boolean;
 }
 
 /** 解密后的金库明文数据（仅存在于内存中） */

@@ -35,6 +35,7 @@ export interface FillResult {
 export function fillCredentialsInPage(
   username: string,
   password: string,
+  submit = false,
 ): FillResult {
   const visible = (el: Element): boolean => {
     const r = (el as HTMLElement).getBoundingClientRect();
@@ -80,6 +81,25 @@ export function fillCredentialsInPage(
   if (userField && username) setValue(userField, username);
   setValue(pw, password);
 
-  pw.focus();
+  if (submit) {
+    // 稍等让前端框架处理完 input 事件再提交，提高成功率。
+    setTimeout(() => {
+      const form = pw.form;
+      if (form) {
+        const btn = form.querySelector<HTMLElement>(
+          'button[type="submit"], input[type="submit"], button:not([type])',
+        );
+        if (btn) btn.click();
+        else if (typeof form.requestSubmit === 'function') form.requestSubmit();
+        else form.submit();
+      } else {
+        pw.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }),
+        );
+      }
+    }, 80);
+  } else {
+    pw.focus();
+  }
   return { ok: true };
 }
