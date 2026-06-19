@@ -24,9 +24,10 @@ export default defineConfig({
     // 保持不变，避免已注册的生物识别凭据失效。这是公钥，非机密。
     key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnf9yn/JCMTch4zNKUigDrl0VbjuWlPb6X/BNtTHG/CwMVmUxK18LL/Ntb+jAPGwp5M7gJSOD6DgkDo1LIodQf3n9Dr2XkizT8WL1dJla1SIBN7kvjdt151tPnjqWt9PagNeePSl8nnB488ZJ6GN6l+Y8Lew2PXm1IA6jOai/edrUleA1yzjvVdYXjUfzuCdz4snjK1pTFRNBgws5DX+ClZ2EV3SFSSTgKzVQzBlW0/xjvKl3QIai9ssrpNg5Qr1q83PyaissR18fW84TC8fcXCYhdY1GmFZvCK3pvHkOAELmyhl8EomNjooYysj5sCfBEovqIKYrFUl1jukYvuTIfwIDAQAB',
     action: { default_title: '项目环境管家' },
-    // 严格 CSP：禁止内联脚本与远程代码（MV3 默认已禁远程代码，此处再收紧一道）。
+    // 严格 CSP：禁止内联脚本与远程代码（MV3 默认已禁远程代码）。
+    // 需 'wasm-unsafe-eval' 以允许 Argon2id（hash-wasm）在扩展页/SW 里运行 WebAssembly。
     content_security_policy: {
-      extension_pages: "script-src 'self'; object-src 'self'",
+      extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
     },
   },
   vite: () => ({
