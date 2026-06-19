@@ -164,12 +164,19 @@ export function AccountEditor({
 }: {
   initial?: Account;
   onClose: () => void;
-  onSave: (v: { label: string; username: string; password: string; note?: string }) => void;
+  onSave: (v: {
+    label: string;
+    username: string;
+    password: string;
+    note?: string;
+    totp?: string;
+  }) => void;
 }) {
   const [label, setLabel] = useState(initial?.label ?? '');
   const [username, setUsername] = useState(initial?.username ?? '');
   const [password, setPassword] = useState(initial?.password ?? '');
   const [note, setNote] = useState(initial?.note ?? '');
+  const [totp, setTotp] = useState(initial?.totp ?? '');
   const [show, setShow] = useState(false);
 
   return (
@@ -201,6 +208,15 @@ export function AccountEditor({
           </div>
         </div>
         <div>
+          <Label>两步验证 TOTP（可选）</Label>
+          <Input
+            value={totp}
+            onChange={(e) => setTotp(e.target.value)}
+            placeholder="base32 密钥 或 otpauth://..."
+            className="font-mono"
+          />
+        </div>
+        <div>
           <Label>备注（可选）</Label>
           <Input value={note} onChange={(e) => setNote(e.target.value)} />
         </div>
@@ -215,6 +231,7 @@ export function AccountEditor({
               username: username.trim(),
               password,
               note: note.trim() || undefined,
+              totp: totp.trim() || undefined,
             })
           }
         >

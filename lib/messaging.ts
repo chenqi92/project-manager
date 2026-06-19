@@ -5,6 +5,7 @@
 import { browser } from 'wxt/browser';
 import type {
   BioEnrollmentPublic,
+  CapturePending,
   ExportMode,
   ImportFormat,
   ImportMode,
@@ -61,7 +62,12 @@ export type Msg =
       username: string;
       password: string;
       submit: boolean;
-    };
+    }
+  // 登录捕获
+  | { type: 'capture:login'; origin: string; url: string; username: string; password: string }
+  | { type: 'capture:pending' }
+  | { type: 'capture:save' }
+  | { type: 'capture:dismiss' };
 
 export interface ExportResult {
   filename: string;
@@ -135,4 +141,9 @@ export const api = {
       password,
       submit,
     }),
+
+  // 登录捕获
+  capturePending: () => send<CapturePending | null>({ type: 'capture:pending' }),
+  captureSave: () => send<void>({ type: 'capture:save' }),
+  captureDismiss: () => send<void>({ type: 'capture:dismiss' }),
 };

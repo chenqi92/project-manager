@@ -14,12 +14,14 @@ import {
   Plus,
   Search,
   Settings as SettingsIcon,
+  ShieldCheck,
   Star,
   Trash2,
   UploadCloud,
   UserPlus,
 } from 'lucide-react';
 import { LockScreen } from '@/components/LockScreen';
+import { TotpBadge } from '@/components/TotpBadge';
 import { Button, Input, cx } from '@/components/ui';
 import { useVault } from '@/hooks/useVault';
 import { getOrigin } from '@/lib/autofill';
@@ -44,6 +46,7 @@ import {
   newProject,
   produce,
 } from '@/lib/vault-ops';
+import { AuditModal } from './AuditModal';
 import { CaptureModal } from './CaptureModal';
 import { AccountEditor, EnvEditor, LinkEditor, ProjectEditor } from './editors';
 import { ImportExport } from './ImportExport';
@@ -71,6 +74,7 @@ export default function App() {
   const [editing, setEditing] = useState<Editing>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showIO, setShowIO] = useState(false);
+  const [showAudit, setShowAudit] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [capture, setCapture] = useState(() => {
     const p = new URLSearchParams(location.search);
@@ -231,6 +235,7 @@ export default function App() {
         </nav>
 
         <div className="flex gap-1 border-t border-gray-100 p-2">
+          <SideAction icon={<ShieldCheck size={16} />} label="审计" onClick={() => setShowAudit(true)} />
           <SideAction icon={<UploadCloud size={16} />} label="导入导出" onClick={() => setShowIO(true)} />
           <SideAction icon={<SettingsIcon size={16} />} label="设置" onClick={() => setShowSettings(true)} />
           <SideAction icon={<Lock size={16} />} label="锁定" onClick={() => vault.lock()} />
@@ -400,6 +405,7 @@ export default function App() {
       {showIO && (
         <ImportExport onClose={() => setShowIO(false)} onImported={vault.reload} />
       )}
+      {showAudit && <AuditModal data={data} onClose={() => setShowAudit(false)} />}
       {capture && (
         <CaptureModal
           data={data}
@@ -626,6 +632,11 @@ function AccountRow({
       <div className="min-w-0 flex-1">
         <div className="truncate text-gray-700">{account.username || '—'}</div>
         {account.note && <div className="truncate text-xs text-gray-400">{account.note}</div>}
+        {account.totp && (
+          <div className="mt-1">
+            <TotpBadge secret={account.totp} onCopy={(c) => onCopy(c, '验证码')} />
+          </div>
+        )}
       </div>
       <div className="w-40 shrink-0 truncate font-mono text-xs text-gray-500">
         {show ? account.password : '••••••••••'}
@@ -705,6 +716,11 @@ function SearchRow({
         <div className="truncate text-xs text-gray-400">
           {entry.projectName} · {entry.envName} · {entry.username}
         </div>
+        {entry.totp && (
+          <div className="mt-1">
+            <TotpBadge secret={entry.totp} onCopy={(c) => onCopy(c, '验证码')} />
+          </div>
+        )}
       </div>
       <div className="w-40 shrink-0 truncate font-mono text-xs text-gray-500">
         {show ? entry.password : '••••••••'}

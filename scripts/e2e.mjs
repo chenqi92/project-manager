@@ -147,10 +147,14 @@ try {
   await page.keyboard.type('admin', { delay: 10 });
   await page.keyboard.press('Tab');
   await page.keyboard.type('p@ssw0rd!', { delay: 10 });
+  await typeP(page, 'base32 密钥 或 otpauth://...', 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ');
   await clickText(page, '保存');
   await waitGone(page, '例如：管理员 / 测试账号');
   await waitText(page, 'admin');
   ok('新建账号「管理员 / admin」');
+
+  await page.waitForSelector('button[title="复制验证码"]', { timeout: 5000 });
+  ok('TOTP 验证码已实时生成');
   await page.screenshot({ path: join(SHOTS, '03-filled.png') });
 
   // 6. 锁定 -> 解锁，验证数据持久化（真实 chrome.storage 加密往返）
@@ -178,7 +182,14 @@ try {
   await clickText(page, '解锁');
   await waitText(page, '支付平台');
 
-  // 8. popup 渲染 + 运行时错误检查
+  // 8. 密码健康审计面板
+  await clickText(page, '审计');
+  await waitText(page, '密码健康审计');
+  await waitText(page, '弱密码');
+  ok('密码健康审计面板正常');
+  await page.keyboard.press('Escape');
+
+  // 9. popup 渲染 + 运行时错误检查
   const popup = await browser.newPage();
   popup.on('pageerror', (e) => errors.push('popup pageerror: ' + e.message));
   popup.on('console', (m) => {

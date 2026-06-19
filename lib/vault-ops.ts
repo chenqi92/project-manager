@@ -25,6 +25,7 @@ export function newAccount(p: Partial<Account> = {}): Account {
     username: p.username ?? '',
     password: p.password ?? '',
     note: p.note,
+    totp: p.totp,
     createdAt: p.createdAt ?? t,
     updatedAt: t,
   };

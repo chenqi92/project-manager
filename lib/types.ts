@@ -9,6 +9,8 @@ export interface Account {
   username: string;
   password: string;
   note?: string;
+  /** TOTP 两步验证：base32 密钥或 otpauth:// URI */
+  totp?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -160,6 +162,18 @@ export interface VaultStatus {
   hasBiometric: boolean;
   /** 同步是否已启用 */
   syncEnabled: boolean;
+}
+
+/** 登录捕获：检测到一次登录后等待用户确认保存/更新 */
+export interface CapturePending {
+  kind: 'new' | 'update';
+  origin: string;
+  url: string;
+  username: string;
+  password: string;
+  accountId?: string;
+  /** 展示用：匹配到的链接名（update 时） */
+  linkName?: string;
 }
 
 export type ExportMode = 'encrypted' | 'json' | 'csv';

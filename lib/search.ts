@@ -18,6 +18,8 @@ export interface FlatEntry {
   username: string;
   /** 注意：明文密码也在内存里，仅供已解锁的扩展 UI 使用 */
   password: string;
+  totp?: string;
+  updatedAt: number;
   note?: string;
 }
 
@@ -40,6 +42,8 @@ export function flatten(data: VaultData): FlatEntry[] {
             accountLabel: a.label,
             username: a.username,
             password: a.password,
+            totp: a.totp,
+            updatedAt: a.updatedAt,
             note: a.note ?? l.note,
           });
         }

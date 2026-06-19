@@ -13,13 +13,15 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { LockScreen } from '@/components/LockScreen';
+import { TotpBadge } from '@/components/TotpBadge';
 import { Button, Input, cx } from '@/components/ui';
 import { useVault } from '@/hooks/useVault';
 import { fillCredentialsInPage, getOrigin, originsMatch } from '@/lib/autofill';
 import { copyWithAutoClear } from '@/lib/clipboard';
+import { envSwitchTargets } from '@/lib/env-switch';
 import { api } from '@/lib/messaging';
 import { matchForUrl, search, type FlatEntry } from '@/lib/search';
-import type { EnvKind } from '@/lib/types';
+import type { CapturePending, EnvKind } from '@/lib/types';
 import { ENV_KIND_COLORS, ENV_KIND_LABELS } from '@/lib/vault-ops';
 
 export default function App() {
@@ -29,6 +31,11 @@ export default function App() {
   const [tab, setTab] = useState<{ id?: number; url?: string; title?: string } | null>(null);
   const [query, setQuery] = useState('');
   const [toast, setToast] = useState<string | null>(null);
+  const [pending, setPending] = useState<CapturePending | null>(null);
+
+  useEffect(() => {
+    if (status && !status.locked) api.capturePending().then(setPending).catch(() => {});
+  }, [status]);
 
   useEffect(() => {
     browser.tabs
@@ -49,6 +56,10 @@ export default function App() {
   const results = useMemo(
     () => (data && query.trim() ? search(data, query) : []),
     [data, query],
+  );
+  const envSwitch = useMemo(
+    () => (data && tab?.url ? envSwitchTargets(data, tab.url) : null),
+    [data, tab],
   );
 
   async function doFill(entry: FlatEntry) {
@@ -154,6 +165,38 @@ export default function App() {
         </div>
       </div>
 
+      {pending && (
+        <div className="border-b border-amber-200 bg-amber-50 px-3 py-2.5 text-xs">
+          <div className="mb-1.5 text-amber-800">
+            检测到在 <b>{hostOf(pending.origin)}</b> 的登录
+            {pending.kind === 'update'
+              ? `，更新「${pending.linkName ?? ''}」的密码？`
+              : `（${pending.username || '无用户名'}），保存到金库？`}
+          </div>
+          <div className="flex gap-2">
+            <Button
+              onClick={async () => {
+                await api.captureSave();
+                setPending(null);
+                await vault.reload();
+                flash('已保存到金库');
+              }}
+            >
+              {pending.kind === 'update' ? '更新' : '保存'}
+            </Button>
+            <Button
+              variant="subtle"
+              onClick={async () => {
+                await api.captureDismiss();
+                setPending(null);
+              }}
+            >
+              忽略
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* search */}
       <div className="border-b border-gray-200 bg-white px-3 py-2">
         <div className="relative">
@@ -214,6 +257,33 @@ export default function App() {
                 ))
               )}
             </Section>
+
+            {envSwitch && (
+              <div className="mt-3">
+                <Section title={`环境切换 · ${envSwitch.linkName}`}>
+                  <div className="flex flex-wrap gap-2">
+                    {envSwitch.targets.map((t) => (
+                      <button
+                        key={t.envId}
+                        onClick={() => browser.tabs.create({ url: t.targetUrl })}
+                        className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs hover:border-brand-300"
+                      >
+                        <span
+                          className={cx(
+                            'rounded px-1.5 py-0.5 text-[10px] font-medium',
+                            ENV_KIND_COLORS[t.envKind as EnvKind] ?? ENV_KIND_COLORS.other,
+                          )}
+                        >
+                          {ENV_KIND_LABELS[t.envKind as EnvKind] ?? t.envName}
+                        </span>
+                        {t.envName}
+                      </button>
+                    ))}
+                  </div>
+                </Section>
+              </div>
+            )}
+
             <div className="mt-3 flex flex-col gap-2">
               {tab?.url && (
                 <Button variant="subtle" className="w-full" onClick={saveCurrentPage}>
@@ -239,6 +309,14 @@ export default function App() {
       )}
     </div>
   );
+}
+
+function hostOf(origin: string): string {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return origin;
+  }
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -329,6 +407,11 @@ function Row({
         </div>
       </div>
 
+      {entry.totp && (
+        <div className="mt-2">
+          <TotpBadge secret={entry.totp} onCopy={(c) => onCopy(c, '验证码')} />
+        </div>
+      )}
       {canFill && (
         <Button className="mt-2 w-full" onClick={() => onFill(entry)}>
           <LogIn size={15} /> 填充到当前页

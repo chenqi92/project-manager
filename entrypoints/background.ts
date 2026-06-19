@@ -5,7 +5,15 @@ import { buildExport, mergeVaults, parseImport } from '@/lib/import-export';
 import type { Msg, MsgResponse, SyncStateResp } from '@/lib/messaging';
 import { vaultBackend } from '@/lib/storage';
 import { SyncClient, syncVault } from '@/lib/sync';
-import type { BioEnrollmentPublic, SyncState, VaultData, VaultStatus } from '@/lib/types';
+import type {
+  BioEnrollmentPublic,
+  CapturePending,
+  PlatformLink,
+  SyncState,
+  VaultData,
+  VaultStatus,
+} from '@/lib/types';
+import { newAccount, newEnvironment, newLink, newProject } from '@/lib/vault-ops';
 import {
   createEncryptedVault,
   decryptVaultData,
@@ -20,6 +28,7 @@ import {
 
 const SESSION_DEK = 'dek';
 const SYNC_STATE_KEY = 'syncState';
+const PENDING_KEY = 'pendingCapture';
 
 // 全部仅存在于内存（SW 重启后从 session 恢复，浏览器关闭即丢失）。
 let dek: Uint8Array | null = null;
@@ -27,6 +36,7 @@ let cachedData: VaultData | null = null;
 let autoLockMinutes = 15;
 let lockTimer: ReturnType<typeof setTimeout> | null = null;
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingCapture: CapturePending | null = null;
 
 export default defineBackground(() => {
   browser.storage.session
@@ -53,6 +63,10 @@ export default defineBackground(() => {
       `?capture=1&url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`;
     browser.tabs.create({ url: target });
   });
+
+  // 登录捕获内容脚本：只在已授权的站点动态注册。
+  registerCapture();
+  browser.permissions.onAdded.addListener(() => registerCapture());
 
   browser.runtime.onMessage.addListener((msg: Msg) => handle(msg));
 });
@@ -242,7 +256,144 @@ async function route(msg: Msg): Promise<unknown> {
 
     case 'tab:openAndFill':
       return openAndFill(msg.url, msg.username, msg.password, msg.submit);
+
+    case 'capture:login':
+      await handleCaptureLogin(msg.origin, msg.url, msg.username, msg.password);
+      return;
+    case 'capture:pending':
+      return getPending();
+    case 'capture:save':
+      await applyCapture();
+      return;
+    case 'capture:dismiss':
+      await clearPending();
+      return;
   }
+}
+
+// --------------------------- 登录捕获 ---------------------------
+
+async function registerCapture(): Promise<void> {
+  try {
+    const perms = await browser.permissions.getAll();
+    const origins = (perms.origins ?? []).filter((o) => o.startsWith('http'));
+    await browser.scripting.unregisterContentScripts({ ids: ['capture'] }).catch(() => {});
+    if (origins.length === 0) return;
+    await browser.scripting.registerContentScripts([
+      {
+        id: 'capture',
+        js: ['capture.js'],
+        matches: origins,
+        runAt: 'document_idle',
+      },
+    ]);
+  } catch (e) {
+    console.warn('registerCapture failed:', e);
+  }
+}
+
+async function handleCaptureLogin(
+  origin: string,
+  url: string,
+  username: string,
+  password: string,
+): Promise<void> {
+  await ensureRestored();
+  if (!dek || !cachedData || !password) return; // 锁定时忽略
+
+  let matchAccountId: string | undefined;
+  let linkName: string | undefined;
+  let exactSame = false;
+  for (const proj of cachedData.projects) {
+    for (const env of proj.environments) {
+      for (const link of env.links) {
+        if (!link.url || getOrigin(link.url) !== origin) continue;
+        for (const acc of link.accounts) {
+          if (acc.username && username && acc.username.toLowerCase() === username.toLowerCase()) {
+            matchAccountId = acc.id;
+            linkName = link.name;
+            if (acc.password === password) exactSame = true;
+          }
+        }
+      }
+    }
+  }
+  if (exactSame) return clearPending(); // 已是最新，无需提示
+  if (matchAccountId) {
+    await savePending({ kind: 'update', origin, url, username, password, accountId: matchAccountId, linkName });
+  } else {
+    await savePending({ kind: 'new', origin, url, username, password });
+  }
+}
+
+async function applyCapture(): Promise<void> {
+  await requireUnlocked();
+  const p = await getPending();
+  if (!p) return;
+  const data = structuredClone(cachedData!);
+
+  if (p.kind === 'update' && p.accountId) {
+    for (const proj of data.projects)
+      for (const env of proj.environments)
+        for (const link of env.links)
+          for (const acc of link.accounts)
+            if (acc.id === p.accountId) {
+              acc.password = p.password;
+              acc.updatedAt = Date.now();
+            }
+  } else {
+    let target: PlatformLink | null = null;
+    for (const proj of data.projects)
+      for (const env of proj.environments)
+        for (const link of env.links)
+          if (link.url && getOrigin(link.url) === p.origin) target = link;
+
+    if (!target) {
+      let proj = data.projects.find((x) => x.name === '捕获');
+      if (!proj) {
+        proj = newProject({ name: '捕获' });
+        data.projects.push(proj);
+      }
+      let env = proj.environments[0];
+      if (!env) {
+        env = newEnvironment({ name: '默认', kind: 'other' });
+        proj.environments.push(env);
+      }
+      let host = p.origin;
+      try {
+        host = new URL(p.url).host;
+      } catch {
+        /* keep origin */
+      }
+      target = newLink({ name: host, url: p.origin });
+      env.links.push(target);
+    }
+    target.accounts.push(newAccount({ label: '捕获', username: p.username, password: p.password }));
+  }
+
+  await persistData(data);
+  scheduleAutoSync();
+  await clearPending();
+}
+
+async function savePending(p: CapturePending): Promise<void> {
+  pendingCapture = p;
+  await browser.storage.session.set({ [PENDING_KEY]: p });
+  browser.action.setBadgeText({ text: '1' }).catch(() => {});
+  browser.action.setBadgeBackgroundColor?.({ color: '#e11d48' }).catch(() => {});
+}
+
+async function clearPending(): Promise<void> {
+  pendingCapture = null;
+  await browser.storage.session.remove(PENDING_KEY);
+  browser.action.setBadgeText({ text: '' }).catch(() => {});
+}
+
+async function getPending(): Promise<CapturePending | null> {
+  if (pendingCapture) return pendingCapture;
+  const s = await browser.storage.session.get(PENDING_KEY);
+  pendingCapture = (s[PENDING_KEY] as CapturePending | undefined) ?? null;
+  return pendingCapture;
 }
 
 /** 打开链接 -> 等加载完成 -> 校验最终 origin 与链接一致 -> 注入填充（可选自动提交）。 */
