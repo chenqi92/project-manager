@@ -14,8 +14,9 @@ import {
 import { LockScreen } from '@/components/LockScreen';
 import { Button, Input, cx } from '@/components/ui';
 import { useVault } from '@/hooks/useVault';
-import { fillCredentialsInPage, originsMatch } from '@/lib/autofill';
+import { fillCredentialsInPage, getOrigin, originsMatch } from '@/lib/autofill';
 import { copyWithAutoClear } from '@/lib/clipboard';
+import { api } from '@/lib/messaging';
 import { matchForUrl, search, type FlatEntry } from '@/lib/search';
 import type { EnvKind } from '@/lib/types';
 import { ENV_KIND_COLORS, ENV_KIND_LABELS } from '@/lib/vault-ops';
@@ -70,6 +71,21 @@ export default function App() {
   async function copy(text: string, what: string) {
     await copyWithAutoClear(text);
     flash(`${what}已复制（25 秒后自动清空）`);
+  }
+
+  async function openLogin(entry: FlatEntry) {
+    const origin = getOrigin(entry.url);
+    if (!origin) return flash('链接地址不合法');
+    // 已授权则立即返回 true（无弹窗）；首次会弹权限请求，可能关闭 popup，再点一次即可。
+    const granted = await browser.permissions.request({ origins: [origin + '/*'] });
+    if (!granted) return flash('未授权访问该网站');
+    try {
+      const r = await api.openAndFill(entry.url, entry.username, entry.password);
+      if (!r.filled && r.reason) flash(r.reason);
+      window.close();
+    } catch (e) {
+      flash('打开失败：' + (e instanceof Error ? e.message : String(e)));
+    }
   }
 
   if (loading) {
@@ -153,6 +169,7 @@ export default function App() {
                   canFill={!!tab?.url && originsMatch(e.url, tab.url)}
                   onFill={doFill}
                   onCopy={copy}
+                  onOpenLogin={openLogin}
                 />
               ))
             )}
@@ -177,6 +194,7 @@ export default function App() {
                     highlight
                     onFill={doFill}
                     onCopy={copy}
+                    onOpenLogin={openLogin}
                   />
                 ))
               )}
@@ -226,12 +244,14 @@ function Row({
   highlight,
   onFill,
   onCopy,
+  onOpenLogin,
 }: {
   entry: FlatEntry;
   canFill: boolean;
   highlight?: boolean;
   onFill: (e: FlatEntry) => void;
   onCopy: (text: string, what: string) => void;
+  onOpenLogin: (e: FlatEntry) => void;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -292,6 +312,11 @@ function Row({
       {canFill && (
         <Button className="mt-2 w-full" onClick={() => onFill(entry)}>
           <LogIn size={15} /> 填充到当前页
+        </Button>
+      )}
+      {entry.url && (
+        <Button variant="subtle" className="mt-1.5 w-full" onClick={() => onOpenLogin(entry)}>
+          <ExternalLink size={15} /> 打开并登录
         </Button>
       )}
     </div>

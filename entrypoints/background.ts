@@ -1,4 +1,5 @@
 import { browser } from 'wxt/browser';
+import { fillCredentialsInPage, getOrigin } from '@/lib/autofill';
 import { fromB64, toB64 } from '@/lib/crypto';
 import { buildExport, mergeVaults, parseImport } from '@/lib/import-export';
 import type { Msg, MsgResponse, SyncStateResp } from '@/lib/messaging';
@@ -221,7 +222,58 @@ async function route(msg: Msg): Promise<unknown> {
       lock(); // 用该金库的主密码重新解锁
       return getStatus();
     }
+
+    case 'tab:openAndFill':
+      return openAndFill(msg.url, msg.username, msg.password);
   }
+}
+
+/** 打开链接 -> 等加载完成 -> 校验最终 origin 与链接一致 -> 注入填充（不自动提交）。 */
+async function openAndFill(
+  url: string,
+  username: string,
+  password: string,
+): Promise<{ filled: boolean; reason?: string }> {
+  const targetOrigin = getOrigin(url);
+  if (!targetOrigin) throw new Error('链接地址不合法');
+  const tab = await browser.tabs.create({ url });
+  const tabId = tab.id;
+  if (tabId === undefined) throw new Error('无法打开标签页');
+
+  await waitForTabComplete(tabId, 20_000);
+
+  // 防重定向到别处后误填：以页面最终 origin 为准再校验一次。
+  const finalTab = await browser.tabs.get(tabId);
+  if (!finalTab.url || getOrigin(finalTab.url) !== targetOrigin) {
+    return { filled: false, reason: '页面最终地址与链接不一致，已阻止填充' };
+  }
+
+  await browser.scripting.executeScript({
+    target: { tabId },
+    func: fillCredentialsInPage,
+    args: [username, password],
+  });
+  return { filled: true };
+}
+
+function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      browser.tabs.onUpdated.removeListener(onUpdated);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('页面加载超时'));
+    }, timeoutMs);
+    const onUpdated = (id: number, info: { status?: string }) => {
+      if (id === tabId && info.status === 'complete') {
+        cleanup();
+        resolve();
+      }
+    };
+    browser.tabs.onUpdated.addListener(onUpdated);
+  });
 }
 
 // --------------------------- 状态 / 锁 ---------------------------

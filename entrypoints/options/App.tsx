@@ -9,6 +9,7 @@ import {
   Layers,
   Link as LinkIcon,
   Lock,
+  LogIn,
   Pencil,
   Plus,
   Search,
@@ -21,6 +22,7 @@ import {
 import { LockScreen } from '@/components/LockScreen';
 import { Button, Input, cx } from '@/components/ui';
 import { useVault } from '@/hooks/useVault';
+import { getOrigin } from '@/lib/autofill';
 import { biometricUnlock } from '@/lib/bio-unlock';
 import { api } from '@/lib/messaging';
 import { copyWithAutoClear } from '@/lib/clipboard';
@@ -83,6 +85,19 @@ export default function App() {
   const copy = async (text: string, what: string) => {
     await copyWithAutoClear(text);
     flash(`${what}已复制（25 秒后自动清空）`);
+  };
+
+  const openLogin = async (url: string, username: string, password: string) => {
+    const origin = getOrigin(url);
+    if (!origin) return flash('链接地址不合法');
+    const granted = await browser.permissions.request({ origins: [origin + '/*'] });
+    if (!granted) return flash('未授权访问该网站');
+    try {
+      const r = await api.openAndFill(url, username, password);
+      if (!r.filled && r.reason) flash(r.reason);
+    } catch (e) {
+      flash('打开失败：' + (e instanceof Error ? e.message : String(e)));
+    }
   };
 
   const projects = data?.projects ?? [];
@@ -213,7 +228,7 @@ export default function App() {
       {/* main */}
       <main className="flex flex-1 flex-col overflow-hidden">
         {searchResults ? (
-          <SearchView results={searchResults} onCopy={copy} />
+          <SearchView results={searchResults} onCopy={copy} onOpenLogin={openLogin} />
         ) : selected ? (
           <ProjectView
             project={selected}
@@ -268,6 +283,7 @@ export default function App() {
               });
             }}
             onCopy={copy}
+            onOpenLogin={openLogin}
           />
         ) : (
           <EmptyState onCreate={() => setEditing({ kind: 'project' })} />
@@ -429,6 +445,7 @@ interface ProjectViewProps {
   onEditAccount: (envId: string, linkId: string, account: Account) => void;
   onDeleteAccount: (envId: string, linkId: string, account: Account) => void;
   onCopy: (text: string, what: string) => void;
+  onOpenLogin: (url: string, username: string, password: string) => void;
 }
 
 function ProjectView(props: ProjectViewProps) {
@@ -547,6 +564,9 @@ function LinkBlock({
               onCopy={props.onCopy}
               onEdit={() => props.onEditAccount(env.id, link.id, a)}
               onDelete={() => props.onDeleteAccount(env.id, link.id, a)}
+              onOpenLogin={
+                link.url ? () => props.onOpenLogin(link.url, a.username, a.password) : undefined
+              }
             />
           ))}
         </div>
@@ -560,11 +580,13 @@ function AccountRow({
   onCopy,
   onEdit,
   onDelete,
+  onOpenLogin,
 }: {
   account: Account;
   onCopy: (text: string, what: string) => void;
   onEdit: () => void;
   onDelete: () => void;
+  onOpenLogin?: () => void;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -589,6 +611,11 @@ function AccountRow({
         <IconButton title="复制密码" onClick={() => onCopy(account.password, '密码')}>
           <span className="text-[10px] font-bold">PW</span>
         </IconButton>
+        {onOpenLogin && (
+          <IconButton title="打开并登录" onClick={onOpenLogin}>
+            <LogIn size={15} />
+          </IconButton>
+        )}
         <IconButton title="编辑" onClick={onEdit}>
           <Pencil size={15} />
         </IconButton>
@@ -603,9 +630,11 @@ function AccountRow({
 function SearchView({
   results,
   onCopy,
+  onOpenLogin,
 }: {
   results: FlatEntry[];
   onCopy: (text: string, what: string) => void;
+  onOpenLogin: (url: string, username: string, password: string) => void;
 }) {
   return (
     <>
@@ -617,7 +646,7 @@ function SearchView({
           <p className="py-10 text-center text-sm text-gray-400">没有匹配的条目</p>
         )}
         {results.map((e) => (
-          <SearchRow key={e.accountId} entry={e} onCopy={onCopy} />
+          <SearchRow key={e.accountId} entry={e} onCopy={onCopy} onOpenLogin={onOpenLogin} />
         ))}
       </div>
     </>
@@ -627,9 +656,11 @@ function SearchView({
 function SearchRow({
   entry,
   onCopy,
+  onOpenLogin,
 }: {
   entry: FlatEntry;
   onCopy: (text: string, what: string) => void;
+  onOpenLogin: (url: string, username: string, password: string) => void;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -660,9 +691,17 @@ function SearchRow({
           <span className="text-[10px] font-bold">PW</span>
         </IconButton>
         {entry.url && (
-          <IconButton title="打开链接" onClick={() => browser.tabs.create({ url: entry.url })}>
-            <ExternalLink size={15} />
-          </IconButton>
+          <>
+            <IconButton
+              title="打开并登录"
+              onClick={() => onOpenLogin(entry.url, entry.username, entry.password)}
+            >
+              <LogIn size={15} />
+            </IconButton>
+            <IconButton title="打开链接" onClick={() => browser.tabs.create({ url: entry.url })}>
+              <ExternalLink size={15} />
+            </IconButton>
+          </>
         )}
       </div>
     </div>
