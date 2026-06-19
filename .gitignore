@@ -1,0 +1,9 @@
+node_modules
+.wxt
+.output
+stats.html
+*.zip
+*.log
+.DS_Store
+.extension-key.pem
+.smoke.mjs

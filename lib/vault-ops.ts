@@ -1,0 +1,97 @@
+// ---------------------------------------------------------------------------
+// 金库数据的纯增删改工具：工厂函数 + 不可变更新辅助。
+// ---------------------------------------------------------------------------
+import type {
+  Account,
+  Environment,
+  PlatformLink,
+  Project,
+  VaultData,
+} from './types';
+
+export function uid(): string {
+  return crypto.randomUUID();
+}
+
+export function now(): number {
+  return Date.now();
+}
+
+export function newAccount(p: Partial<Account> = {}): Account {
+  const t = now();
+  return {
+    id: uid(),
+    label: p.label ?? '',
+    username: p.username ?? '',
+    password: p.password ?? '',
+    note: p.note,
+    createdAt: p.createdAt ?? t,
+    updatedAt: t,
+  };
+}
+
+export function newLink(p: Partial<PlatformLink> = {}): PlatformLink {
+  return {
+    id: uid(),
+    name: p.name ?? '',
+    url: p.url ?? '',
+    note: p.note,
+    accounts: p.accounts ?? [],
+    updatedAt: p.updatedAt ?? now(),
+  };
+}
+
+export function newEnvironment(p: Partial<Environment> = {}): Environment {
+  return {
+    id: uid(),
+    name: p.name ?? '',
+    kind: p.kind ?? 'other',
+    note: p.note,
+    links: p.links ?? [],
+    updatedAt: p.updatedAt ?? now(),
+  };
+}
+
+export function newProject(p: Partial<Project> = {}): Project {
+  const t = now();
+  return {
+    id: uid(),
+    name: p.name ?? '',
+    color: p.color,
+    favorite: p.favorite ?? false,
+    tags: p.tags ?? [],
+    note: p.note,
+    environments: p.environments ?? [],
+    createdAt: p.createdAt ?? t,
+    updatedAt: t,
+  };
+}
+
+/** 深拷贝后在回调中修改 draft，返回新对象（不污染 React state）。 */
+export function produce<T>(value: T, recipe: (draft: T) => void): T {
+  const draft = structuredClone(value);
+  recipe(draft);
+  return draft;
+}
+
+/** 记录一条删除墓碑（用于同步合并时防止已删项被复活）。 */
+export function addTombstone(data: VaultData, id: string): void {
+  data.tombstones = data.tombstones ?? [];
+  data.tombstones.push({ id, deletedAt: now() });
+}
+
+export const ENV_KIND_LABELS: Record<Environment['kind'], string> = {
+  dev: '开发',
+  test: '测试',
+  staging: '预发',
+  prod: '生产',
+  other: '其它',
+};
+
+export const ENV_KIND_COLORS: Record<Environment['kind'], string> = {
+  dev: 'bg-sky-100 text-sky-700',
+  test: 'bg-amber-100 text-amber-700',
+  staging: 'bg-violet-100 text-violet-700',
+  prod: 'bg-rose-100 text-rose-700',
+  other: 'bg-gray-100 text-gray-600',
+};
