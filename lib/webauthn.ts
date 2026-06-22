@@ -64,13 +64,10 @@ export async function enrollBiometricCredential(): Promise<EnrollResult> {
   const cred = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential | null;
   if (!cred) throw new Error('生物识别注册被取消');
 
-  const ext = cred.getClientExtensionResults() as { prf?: { enabled?: boolean } };
-  if (!ext.prf || ext.prf.enabled === false) {
-    throw new Error('该授权器不支持 PRF 扩展，无法用于生物识别解锁');
-  }
-
+  // 不依据 create() 阶段的 prf.enabled 直接判失败：该标志跨平台/版本并不可靠——
+  // Windows Hello 上 Chrome 常返回 enabled:false（甚至更早版本不返回），但实际 get()
+  // 阶段能正常产出 PRF。权威判定改为随后的一次真实 get()：能取到 PRF 才算支持。
   const credentialId = bytesToB64url(new Uint8Array(cred.rawId));
-  // create 不保证返回 PRF 结果，统一通过一次 get 取得稳定 secret。
   const prfOutput = await evaluatePrf(credentialId, prfSalt);
   return { credentialId, prfSalt: toB64(prfSalt), prfOutput };
 }
@@ -86,7 +83,10 @@ export async function evaluatePrf(
     userVerification: 'required',
     timeout: 60_000,
     extensions: {
-      prf: { eval: { first: prfSalt } },
+      // get() 阶段必须用 evalByCredential（key 为该凭据的 base64url id），不能用 eval：
+      // 按规范 eval 仅用于 create()，在 get() 上会被忽略/抛 NotSupportedError，导致
+      // results 为空（Windows Hello 上即表现为「未能获得 PRF 输出」）。与解锁路径一致。
+      prf: { evalByCredential: { [credentialIdB64url]: { first: prfSalt } } },
     } as unknown as AuthenticationExtensionsClientInputs,
   };
 
@@ -97,7 +97,11 @@ export async function evaluatePrf(
     prf?: { results?: { first?: ArrayBuffer } };
   };
   const first = ext.prf?.results?.first;
-  if (!first) throw new Error('未能获得 PRF 输出（可能浏览器/系统版本过低）');
+  if (!first)
+    throw new Error(
+      '未能获得 PRF 输出：该设备/浏览器不支持 WebAuthn PRF（hmac-secret）。' +
+        'Windows 需较新的 Windows Hello 与 Chrome 版本。',
+    );
   return new Uint8Array(first);
 }
 

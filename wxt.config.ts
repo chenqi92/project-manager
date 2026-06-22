@@ -24,9 +24,12 @@ export default defineConfig({
     //  idle      - 空闲自动锁定
     // 不申请 <all_urls> / host_permissions，最大限度降低审核摩擦与攻击面。
     permissions: ['storage', 'activeTab', 'scripting', 'idle', 'contextMenus'],
-    // 自托管同步服务器的访问权限：基础清单里不申请，启用同步时由用户在运行时
-    // 针对其自己的服务器地址授权（chrome.permissions.request），审核更友好。
-    optional_host_permissions: ['https://*/*', 'http://localhost/*'],
+    // 可选站点访问权：基础清单里不申请，由用户在运行时按需对单个来源授权
+    // （chrome.permissions.request），审核更友好。两种场景会用到：
+    //  - 自托管同步：对用户自己的服务器地址授权。
+    //  - 「打开并登录」：对要打开并填充的环境链接所在站点授权。内网开发/测试环境
+    //    常为明文 http（内网 IP / 主机名），故 http 不能只限 localhost。
+    optional_host_permissions: ['https://*/*', 'http://*/*'],
     // 商店首发包（STORE_BUILD=1）不带 key；本地构建带 key 以固定 ID。
     ...(STORE_BUILD ? {} : { key: EXT_KEY }),
     action: { default_title: '项目环境管家' },
