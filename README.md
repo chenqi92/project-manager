@@ -73,7 +73,3 @@ server/             自托管零知识同步服务（Hono + SQLite）
 tests/              Vitest 单测
 docs/               隐私政策、上架素材、安全说明
 ```
-
-## 上架与分发
-
-这是凭据类工具，推荐 **unlisted（未公开列出）或企业强制安装**，而非公开上架。上架素材见 [docs/PRIVACY.md](docs/PRIVACY.md) 与 [docs/STORE.md](docs/STORE.md)。
