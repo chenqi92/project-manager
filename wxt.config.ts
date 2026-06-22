@@ -1,5 +1,13 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'wxt';
 import tailwindcss from '@tailwindcss/vite';
+
+// 版本号单一来源：读 package.json，避免 manifest 与 package.json 不一致。
+// 发布时只改 package.json 的 version 即可。
+const pkg = JSON.parse(
+  readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8'),
+) as { version: string };
 
 // 固定扩展 ID 的公钥（非机密）：本地 dev / e2e 保持稳定的 chrome-extension://<id>，
 // 即 WebAuthn 的 RP ID，避免重载后生物识别凭据失效。
@@ -16,7 +24,7 @@ export default defineConfig({
     short_name: 'EnvManager',
     description:
       '安全存储并自动填充公司各项目 / 环境 / 平台的登录凭据。数据本地端到端加密，零知识，不上传服务器。',
-    version: '0.1.0',
+    version: pkg.version,
     // 最小权限集：
     //  storage   - 保存加密金库（local）与内存密钥（session）
     //  activeTab - 仅在用户点击扩展时临时获得当前标签页访问权，用于填充

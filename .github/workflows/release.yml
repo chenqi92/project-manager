@@ -1,0 +1,93 @@
+name: release
+
+# 触发：改了 package.json（即版本号）推到 main，或在 Actions 里手动运行。
+# 行为：当 v<version> 标签尚不存在时，构建两种包并：
+#   1) 建 GitHub Release，附「自分发包」(含 key，供 chrome://extensions 加载已解压)
+#   2) 若配置了 Chrome Web Store 密钥，则上传「商店包」(去 key) 并自动发布
+# 未配置商店密钥时只发 GitHub Release，不会失败。
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+      CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+      CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+      CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version & guard
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git ls-remote --tags origin "refs/tags/v$VERSION" | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$VERSION 已存在，跳过发布。"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.meta.outputs.exists == 'false'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        if: steps.meta.outputs.exists == 'false'
+        run: npm ci
+
+      - name: Build packages
+        if: steps.meta.outputs.exists == 'false'
+        run: |
+          set -e
+          VERSION=${{ steps.meta.outputs.version }}
+          # 自分发包：含 key，扩展 ID 稳定，供「加载已解压」
+          npm run zip
+          mv .output/*-chrome.zip "envmanager-$VERSION-selfhost.zip"
+          # 商店包：去 key，供 Chrome 网上应用店
+          STORE_BUILD=1 npm run zip
+          mv .output/*-chrome.zip "envmanager-$VERSION-store.zip"
+
+      - name: GitHub Release
+        if: steps.meta.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          VERSION=${{ steps.meta.outputs.version }}
+          {
+            echo "## 安装（直接导入 Chrome）"
+            echo ""
+            echo "1. 下载下方 \`envmanager-$VERSION-selfhost.zip\` 并解压到一个固定文件夹。"
+            echo "2. 打开 \`chrome://extensions\`，右上角开启「开发者模式」。"
+            echo "3. 点「加载已解压的扩展程序」，选解压出的文件夹。"
+            echo ""
+            echo "> Chrome 已禁止从商店外直接安装 .crx，故用「加载已解压」方式。该包内置固定公钥，扩展 ID 稳定，更新换包不会使生物识别凭据失效。"
+          } > notes.md
+          gh release create "v$VERSION" "envmanager-$VERSION-selfhost.zip" \
+            --title "v$VERSION" --notes-file notes.md
+
+      - name: Publish to Chrome Web Store
+        if: steps.meta.outputs.exists == 'false' && env.CHROME_EXTENSION_ID != ''
+        run: |
+          set -e
+          VERSION=${{ steps.meta.outputs.version }}
+          npx --yes chrome-webstore-upload-cli@3 upload \
+            --source "envmanager-$VERSION-store.zip" \
+            --extension-id "$CHROME_EXTENSION_ID" \
+            --client-id "$CHROME_CLIENT_ID" \
+            --client-secret "$CHROME_CLIENT_SECRET" \
+            --refresh-token "$CHROME_REFRESH_TOKEN" \
+            --auto-publish
