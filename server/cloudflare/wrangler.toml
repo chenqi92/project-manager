@@ -1,0 +1,11 @@
+name = "envmanager-sync"
+main = "worker.ts"
+compatibility_date = "2024-11-01"
+
+# 执行 `wrangler d1 create envmanager_sync` 后，把输出里的 database_id 填到下面。
+[[d1_databases]]
+binding = "DB"
+database_name = "envmanager_sync"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+# token 不写这里，用 `wrangler secret put SYNC_TOKEN` 配置。
