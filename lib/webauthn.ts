@@ -64,11 +64,28 @@ export async function enrollBiometricCredential(): Promise<EnrollResult> {
   const cred = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential | null;
   if (!cred) throw new Error('生物识别注册被取消');
 
-  // 不依据 create() 阶段的 prf.enabled 直接判失败：该标志跨平台/版本并不可靠——
-  // Windows Hello 上 Chrome 常返回 enabled:false（甚至更早版本不返回），但实际 get()
-  // 阶段能正常产出 PRF。权威判定改为随后的一次真实 get()：能取到 PRF 才算支持。
+  const createExt = cred.getClientExtensionResults() as { prf?: { enabled?: boolean } };
   const credentialId = bytesToB64url(new Uint8Array(cred.rawId));
-  const prfOutput = await evaluatePrf(credentialId, prfSalt);
+  // 诊断：create 阶段的 prf 标志 + 运行环境，便于定位「未获得 PRF」的根因（打开 options 页 DevTools 控制台查看）。
+  console.info('[bio] create prf =', JSON.stringify(createExt.prf ?? null), '| UA =', navigator.userAgent);
+
+  // 不据 create 的 enabled 直接判失败（跨平台/版本不可靠）；以一次真实 get() 为准。
+  let prfOutput: Uint8Array;
+  try {
+    prfOutput = await evaluatePrf(credentialId, prfSalt);
+  } catch (err) {
+    const enabled = createExt.prf?.enabled;
+    const why =
+      enabled === false
+        ? '创建阶段系统报告 prf.enabled=false——通常是 Windows Hello 尚未具备 hmac-secret 能力'
+        : enabled === undefined
+          ? '创建阶段未返回 prf 标志，验证阶段也未产出 PRF'
+          : '创建阶段报告支持(prf.enabled=true)，但验证阶段仍未产出 PRF（多为 Chrome 版本问题）';
+    console.warn('[bio] PRF 不可用：', why, err);
+    throw new Error(
+      `未能获得 PRF 输出：${why}。需 Windows Hello 支持 hmac-secret（Win11 25H2 + 较新累积更新）且较新 Chrome；可先用主密码解锁。`,
+    );
+  }
   return { credentialId, prfSalt: toB64(prfSalt), prfOutput };
 }
 

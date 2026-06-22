@@ -321,14 +321,15 @@ function AutoLockSection({
       <h3 className="text-sm font-semibold text-gray-800">自动锁定</h3>
       <Label>空闲多少分钟后自动锁定（0 = 不自动锁定，不推荐）</Label>
       <div className="flex items-center gap-2">
-        <Input
-          type="number"
-          min={0}
-          value={autoLock}
-          onChange={(e) => setAutoLock(e.target.value)}
-          className="w-28"
-        />
-        <Button variant="subtle" onClick={save}>
+        <div className="w-28 shrink-0">
+          <Input
+            type="number"
+            min={0}
+            value={autoLock}
+            onChange={(e) => setAutoLock(e.target.value)}
+          />
+        </div>
+        <Button variant="subtle" className="shrink-0 whitespace-nowrap" onClick={save}>
           保存
         </Button>
         {saved && <span className="text-xs text-emerald-600">已保存</span>}
