@@ -60,6 +60,7 @@ import {
 } from '@/lib/vault-ops';
 import { sortMemos } from '@/lib/memo';
 import { AddMemo, MemoRow } from '@/components/MemoRow';
+import { useDialog } from '@/components/Dialog';
 import { AuditModal } from './AuditModal';
 import { BigScreen } from './BigScreen';
 import { CaptureModal } from './CaptureModal';
@@ -86,6 +87,7 @@ type Editing =
 export default function App() {
   const vault = useVault();
   const { status, data, loading } = vault;
+  const { confirm } = useDialog();
 
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -365,8 +367,9 @@ export default function App() {
           <ProjectView
             project={selected}
             onEditProject={() => setEditing({ kind: 'project', project: selected })}
-            onDeleteProject={() => {
-              if (!window.confirm(`删除项目「${selected.name}」及其全部内容？`)) return;
+            onDeleteProject={async () => {
+              if (!(await confirm({ message: `删除项目「${selected.name}」及其全部内容？`, danger: true })))
+                return;
               update((d) => {
                 d.projects = d.projects.filter((p) => p.id !== selected.id);
                 addTombstone(d, selected.id);
@@ -375,8 +378,8 @@ export default function App() {
             }}
             onAddEnv={() => setEditing({ kind: 'env', projectId: selected.id })}
             onEditEnv={(env) => setEditing({ kind: 'env', projectId: selected.id, env })}
-            onDeleteEnv={(env) => {
-              if (!window.confirm(`删除环境「${env.name}」？`)) return;
+            onDeleteEnv={async (env) => {
+              if (!(await confirm({ message: `删除环境「${env.name}」？`, danger: true }))) return;
               update((d) => {
                 const p = d.projects.find((x) => x.id === selected.id);
                 if (p) p.environments = p.environments.filter((e) => e.id !== env.id);
@@ -387,8 +390,8 @@ export default function App() {
             onEditLink={(envId, link) =>
               setEditing({ kind: 'link', projectId: selected.id, envId, link })
             }
-            onDeleteLink={(envId, link) => {
-              if (!window.confirm(`删除链接「${link.name}」？`)) return;
+            onDeleteLink={async (envId, link) => {
+              if (!(await confirm({ message: `删除链接「${link.name}」？`, danger: true }))) return;
               update((d) => {
                 const e = d.projects
                   .find((x) => x.id === selected.id)
@@ -403,8 +406,9 @@ export default function App() {
             onEditAccount={(envId, linkId, account) =>
               setEditing({ kind: 'account', projectId: selected.id, envId, linkId, account })
             }
-            onDeleteAccount={(envId, linkId, account) => {
-              if (!window.confirm(`删除账号「${account.label || account.username}」？`)) return;
+            onDeleteAccount={async (envId, linkId, account) => {
+              if (!(await confirm({ message: `删除账号「${account.label || account.username}」？`, danger: true })))
+                return;
               update((d) => {
                 const l = d.projects
                   .find((x) => x.id === selected.id)

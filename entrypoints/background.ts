@@ -644,6 +644,7 @@ async function runSync(): Promise<void> {
 /** 本地保存后延迟自动同步（合并多次连续修改，失败只记录不打断）。 */
 function scheduleAutoSync(): void {
   if (!cachedData?.settings.sync?.enabled) return;
+  if (cachedData.settings.syncAuto === false) return; // 用户关闭了「修改后自动同步」
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
     runSync().catch(async (e) => {

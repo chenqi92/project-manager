@@ -8,6 +8,7 @@ import {
   Lock,
   LogIn,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   ShieldCheck,
@@ -36,6 +37,20 @@ export default function App() {
   const [pending, setPending] = useState<CapturePending | null>(null);
   const [usage, setUsage] = useState<Record<string, number>>({});
   const [quickLinkId, setQuickLinkId] = useState('');
+  const [syncing, setSyncing] = useState(false);
+
+  async function doSync() {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      await api.syncNow();
+      flash('已同步');
+    } catch (e) {
+      flash('同步失败：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   useEffect(() => {
     if (status && !status.locked) {
@@ -212,6 +227,16 @@ export default function App() {
         <ShieldCheck size={18} className="text-brand-600" />
         <span className="text-sm font-semibold text-gray-900">项目环境管家</span>
         <div className="ml-auto flex items-center gap-1">
+          {status?.syncEnabled && (
+            <button
+              title="立即同步"
+              onClick={doSync}
+              disabled={syncing}
+              className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+            >
+              <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
+            </button>
+          )}
           <button
             title="管理全部"
             onClick={() => browser.runtime.openOptionsPage()}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Eye, FileText, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
 import { Button, Input, cx } from '@/components/ui';
 import { Markdown } from '@/components/Markdown';
+import { useDialog } from '@/components/Dialog';
 import type { ProjectDoc } from '@/lib/types';
 import { newDoc } from '@/lib/vault-ops';
 
@@ -20,6 +21,7 @@ export function DocsModal({
   const [activeId, setActiveId] = useState<string | null>(docs[0]?.id ?? null);
   const [editing, setEditing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const { confirm } = useDialog();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -41,8 +43,8 @@ export function DocsModal({
     setActiveId(d.id);
     setEditing(true);
   };
-  const delDoc = (id: string) => {
-    if (!window.confirm('删除该文档？')) return;
+  const delDoc = async (id: string) => {
+    if (!(await confirm({ message: '删除该文档？', danger: true }))) return;
     const next = list.filter((d) => d.id !== id);
     commit(next);
     if (activeId === id) {

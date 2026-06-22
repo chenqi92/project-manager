@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { Cloud, Fingerprint, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { Banner, Button, Input, Label, Modal, Select } from '@/components/ui';
+import { useDialog } from '@/components/Dialog';
 import { toB64 } from '@/lib/crypto';
 import { api, type SyncStateResp } from '@/lib/messaging';
 import { applyTheme, type Theme } from '@/lib/theme';
@@ -27,7 +28,7 @@ export function Settings({
       <div className="flex flex-col gap-6">
         <AppearanceSection data={data} onSave={onSave} />
         <FillSection data={data} onSave={onSave} />
-        <SyncSection refresh={refresh} />
+        <SyncSection data={data} onSave={onSave} refresh={refresh} />
         <BiometricSection refresh={refresh} />
         <AutoLockSection data={data} onSave={onSave} />
         <ChangePasswordSection />
@@ -39,7 +40,16 @@ export function Settings({
 
 // --------------------------- 同步 ---------------------------
 
-function SyncSection({ refresh }: { refresh: () => Promise<void> }) {
+function SyncSection({
+  data,
+  onSave,
+  refresh,
+}: {
+  data: VaultData;
+  onSave: (next: VaultData) => Promise<void>;
+  refresh: () => Promise<void>;
+}) {
+  const { confirm } = useDialog();
   const [state, setState] = useState<SyncStateResp | null>(null);
   const [serverUrl, setServerUrl] = useState('');
   const [token, setToken] = useState('');
@@ -90,7 +100,7 @@ function SyncSection({ refresh }: { refresh: () => Promise<void> }) {
   };
 
   const disable = async () => {
-    if (!window.confirm('关闭同步并删除服务器上的副本？本地数据保留。')) return;
+    if (!(await confirm({ message: '关闭同步并删除服务器上的副本？本地数据保留。', danger: true }))) return;
     setBusy(true);
     try {
       await api.syncDisable();
@@ -134,6 +144,21 @@ function SyncSection({ refresh }: { refresh: () => Promise<void> }) {
           {state?.state?.lastError && (
             <div className="text-rose-600">上次错误：{state.state.lastError}</div>
           )}
+          <label className="mt-1 flex items-center gap-2 text-gray-600">
+            <input
+              type="checkbox"
+              checked={data.settings.syncAuto !== false}
+              onChange={() =>
+                onSave(
+                  produce(
+                    data,
+                    (d) => void (d.settings.syncAuto = !(data.settings.syncAuto !== false)),
+                  ),
+                )
+              }
+            />
+            内容修改后自动同步（关闭则只手动同步）
+          </label>
           <div className="mt-1 flex gap-2">
             <Button variant="subtle" disabled={busy} onClick={syncNow}>
               {busy ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} 立即同步
@@ -152,6 +177,7 @@ function SyncSection({ refresh }: { refresh: () => Promise<void> }) {
 // --------------------------- 生物识别 ---------------------------
 
 function BiometricSection({ refresh }: { refresh: () => Promise<void> }) {
+  const { confirm, prompt } = useDialog();
   const [available, setAvailable] = useState<boolean | null>(null);
   const [list, setList] = useState<BioEnrollmentPublic[]>([]);
   const [busy, setBusy] = useState(false);
@@ -168,7 +194,11 @@ function BiometricSection({ refresh }: { refresh: () => Promise<void> }) {
     const guess =
       // @ts-expect-error userAgentData 在新版浏览器可用
       (navigator.userAgentData?.platform as string | undefined) || navigator.platform || '本设备';
-    const label = window.prompt('给这台设备/授权器起个名字', guess);
+    const label = await prompt({
+      title: '生物识别',
+      message: '给这台设备/授权器起个名字',
+      defaultValue: guess,
+    });
     if (!label) return;
     setBusy(true);
     try {
@@ -185,7 +215,7 @@ function BiometricSection({ refresh }: { refresh: () => Promise<void> }) {
   };
 
   const remove = async (id: string) => {
-    if (!window.confirm('移除该生物识别注册？')) return;
+    if (!(await confirm({ message: '移除该生物识别注册？', danger: true }))) return;
     setBusy(true);
     try {
       await api.removeBio(id);
@@ -391,11 +421,16 @@ function ChangePasswordSection() {
 // --------------------------- 危险操作 ---------------------------
 
 function DangerSection({ onReset, onClose }: { onReset: () => Promise<void>; onClose: () => void }) {
+  const { confirm } = useDialog();
   const reset = async () => {
     if (
-      !window.confirm(
-        '确定要清空整个保险箱吗？此操作不可恢复，所有项目与账号都会被删除。建议先做加密备份导出。',
-      )
+      !(await confirm({
+        title: '清空保险箱',
+        message:
+          '确定要清空整个保险箱吗？此操作不可恢复，所有项目与账号都会被删除。建议先做加密备份导出。',
+        danger: true,
+        confirmText: '清空',
+      }))
     )
       return;
     await onReset();
