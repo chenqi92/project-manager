@@ -15,6 +15,17 @@ export interface Account {
   updatedAt: number;
 }
 
+/** 一个 Git 仓库地址（可选指定分支） */
+export interface GitRepo {
+  id: string;
+  /** 克隆地址（https / ssh 均可） */
+  url: string;
+  /** 指定分支（可选） */
+  branch?: string;
+  /** 备注（可选），如「后端」「前端」 */
+  label?: string;
+}
+
 /** 环境下的一个平台 / 入口链接（如「管理后台」「API 控制台」） */
 export interface PlatformLink {
   id: string;
@@ -23,6 +34,8 @@ export interface PlatformLink {
   url: string;
   /** 额外网址（同一平台的多区域/多域名）；匹配填充时主+额外都会比对 */
   urls?: string[];
+  /** 关联的 Git 仓库（可一个或多个） */
+  gitRepos?: GitRepo[];
   note?: string;
   accounts: Account[];
   updatedAt: number;
@@ -39,6 +52,26 @@ export interface Environment {
   updatedAt: number;
 }
 
+/** 项目说明文档（Markdown 源文，支持代码 / mermaid 流程图渲染） */
+export interface ProjectDoc {
+  id: string;
+  title: string;
+  /** Markdown 源文 */
+  content: string;
+  updatedAt: number;
+}
+
+/** 备忘条目（项目内的待办 / 提醒） */
+export interface MemoItem {
+  id: string;
+  text: string;
+  done: boolean;
+  /** 紧急：未完成时在浮动备忘里抖动标红提醒 */
+  urgent?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -46,6 +79,10 @@ export interface Project {
   favorite?: boolean;
   tags?: string[];
   note?: string;
+  /** 项目说明（一个或多个 Markdown 文档） */
+  docs?: ProjectDoc[];
+  /** 项目备忘（聚合到浮动备忘录） */
+  memos?: MemoItem[];
   environments: Environment[];
   createdAt: number;
   updatedAt: number;
@@ -188,4 +225,6 @@ export type ImportFormat =
   | 'json'
   | 'csv'
   | 'chrome-csv'
-  | 'bitwarden-csv';
+  | 'bitwarden-csv'
+  | '1password-csv'
+  | 'google-authenticator';

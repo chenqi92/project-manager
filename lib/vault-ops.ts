@@ -4,8 +4,11 @@
 import type {
   Account,
   Environment,
+  GitRepo,
+  MemoItem,
   PlatformLink,
   Project,
+  ProjectDoc,
   VaultData,
 } from './types';
 
@@ -37,10 +40,46 @@ export function newLink(p: Partial<PlatformLink> = {}): PlatformLink {
     name: p.name ?? '',
     url: p.url ?? '',
     urls: p.urls,
+    gitRepos: p.gitRepos,
     note: p.note,
     accounts: p.accounts ?? [],
     updatedAt: p.updatedAt ?? now(),
   };
+}
+
+export function newGitRepo(p: Partial<GitRepo> = {}): GitRepo {
+  return {
+    id: uid(),
+    url: p.url ?? '',
+    branch: p.branch,
+    label: p.label,
+  };
+}
+
+export function newDoc(p: Partial<ProjectDoc> = {}): ProjectDoc {
+  return {
+    id: uid(),
+    title: p.title ?? '未命名文档',
+    content: p.content ?? '',
+    updatedAt: p.updatedAt ?? now(),
+  };
+}
+
+export function newMemo(p: Partial<MemoItem> = {}): MemoItem {
+  const t = now();
+  return {
+    id: uid(),
+    text: p.text ?? '',
+    done: p.done ?? false,
+    urgent: p.urgent,
+    createdAt: p.createdAt ?? t,
+    updatedAt: t,
+  };
+}
+
+/** 克隆命令：有分支时带 -b。 */
+export function gitCloneCommand(repo: GitRepo): string {
+  return repo.branch ? `git clone -b ${repo.branch} ${repo.url}` : `git clone ${repo.url}`;
 }
 
 /** 一个链接的全部网址（主 + 额外）。 */
@@ -68,6 +107,8 @@ export function newProject(p: Partial<Project> = {}): Project {
     favorite: p.favorite ?? false,
     tags: p.tags ?? [],
     note: p.note,
+    docs: p.docs ?? [],
+    memos: p.memos ?? [],
     environments: p.environments ?? [],
     createdAt: p.createdAt ?? t,
     updatedAt: t,
