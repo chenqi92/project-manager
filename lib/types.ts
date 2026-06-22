@@ -68,6 +68,8 @@ export interface MemoItem {
   done: boolean;
   /** 紧急：未完成时在浮动备忘里抖动标红提醒 */
   urgent?: boolean;
+  /** 截止时间（epoch ms，可选）；逾期未完成会高亮提醒 */
+  dueAt?: number;
   createdAt: number;
   updatedAt: number;
 }

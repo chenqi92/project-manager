@@ -72,6 +72,7 @@ export function newMemo(p: Partial<MemoItem> = {}): MemoItem {
     text: p.text ?? '',
     done: p.done ?? false,
     urgent: p.urgent,
+    dueAt: p.dueAt,
     createdAt: p.createdAt ?? t,
     updatedAt: t,
   };
