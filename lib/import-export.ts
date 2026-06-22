@@ -3,7 +3,10 @@
 //   导出  encrypted  —— 整库密文备份（自带 KDF 参数，设备间迁移最安全）
 //         json       —— 明文 JSON（带警告，便于互通/手改）
 //         csv        —— 明文 CSV
-//   导入  encrypted / json / csv / chrome-csv / bitwarden-csv
+//   导入  encrypted / json / csv / chrome-csv / bitwarden-csv /
+//         1password-csv / google-authenticator(otpauth-migration:// 迁移码)
+//   注：csv / bitwarden / 1password 均会带入 TOTP(本扩展 CSV 的 totp 列、
+//       Bitwarden 的 login_totp、1Password 的 otpauth 列)。
 // ---------------------------------------------------------------------------
 import {
   createEncryptedVault,
@@ -18,6 +21,7 @@ import {
   newProject,
   uid,
 } from './vault-ops';
+import { parseMigrationUri } from './otp-migration';
 import type {
   Account,
   EncryptedVault,
@@ -102,6 +106,10 @@ export async function parseImport(
       return fromChromeCsv(content);
     case 'bitwarden-csv':
       return fromBitwardenCsv(content);
+    case '1password-csv':
+      return from1PasswordCsv(content);
+    case 'google-authenticator':
+      return fromGoogleAuthenticator(content);
   }
 }
 
@@ -183,6 +191,7 @@ const OWN_CSV_HEADER = [
   'account_label',
   'username',
   'password',
+  'totp',
   'note',
 ];
 
@@ -192,7 +201,7 @@ function toCsv(data: VaultData): string {
     for (const e of p.environments) {
       for (const l of e.links) {
         if (l.accounts.length === 0) {
-          rows.push([p.name, e.name, e.kind, l.name, l.url, '', '', '', l.note ?? '']);
+          rows.push([p.name, e.name, e.kind, l.name, l.url, '', '', '', '', l.note ?? '']);
         }
         for (const a of l.accounts) {
           rows.push([
@@ -204,6 +213,7 @@ function toCsv(data: VaultData): string {
             a.label,
             a.username,
             a.password,
+            a.totp ?? '',
             a.note ?? '',
           ]);
         }
@@ -227,6 +237,7 @@ function fromOwnCsv(content: string): VaultData {
       label: row[idx('account_label')] ?? '',
       username: row[idx('username')] ?? '',
       password: row[idx('password')] ?? '',
+      totp: row[idx('totp')] ?? '',
       note: row[idx('note')] ?? '',
     });
   }
@@ -249,13 +260,14 @@ function fromChromeCsv(content: string): VaultData {
       label: '',
       username: row[idx('username')] ?? '',
       password: row[idx('password')] ?? '',
+      totp: row[idx('totp')] ?? '',
       note: row[idx('note')] ?? '',
     });
   }
   return builder.build();
 }
 
-/** Bitwarden CSV：folder,favorite,type,name,notes,...,login_uri,login_username,login_password,... */
+/** Bitwarden CSV：folder,favorite,type,name,notes,...,login_uri,login_username,login_password,login_totp,... */
 function fromBitwardenCsv(content: string): VaultData {
   const { header, rows } = parseCsv(content);
   const idx = columnIndexer(header);
@@ -273,7 +285,63 @@ function fromBitwardenCsv(content: string): VaultData {
       label: '',
       username: row[idx('login_username')] ?? '',
       password: row[idx('login_password')] ?? '',
+      totp: row[idx('login_totp')] ?? '',
       note: row[idx('notes')] ?? '',
+    });
+  }
+  return builder.build();
+}
+
+/**
+ * 1Password CSV：列名各版本略有差异,常见为
+ * title,url,username,password,otpauth,favorite,archived,tags,notes。
+ * 这里对 url / otp / note 做多名兜底匹配。otpauth 列即 otpauth:// URI,原样存入。
+ */
+function from1PasswordCsv(content: string): VaultData {
+  const { header, rows } = parseCsv(content);
+  const idx = columnIndexer(header);
+  const pick = (row: string[], ...names: string[]): string => {
+    for (const n of names) {
+      const i = idx(n);
+      if (i >= 0 && row[i]) return row[i]!;
+    }
+    return '';
+  };
+  const builder = new VaultBuilder();
+  for (const row of rows) {
+    const url = pick(row, 'url', 'website', 'login_uri');
+    builder.add({
+      project: '导入 (1Password)',
+      environment: '默认',
+      envKind: 'other',
+      link: pick(row, 'title', 'name') || hostOf(url) || '链接',
+      url,
+      label: '',
+      username: pick(row, 'username', 'login_username'),
+      password: pick(row, 'password', 'login_password'),
+      totp: pick(row, 'otpauth', 'otp', 'one-time password', 'totp'),
+      note: pick(row, 'notes', 'note'),
+    });
+  }
+  return builder.build();
+}
+
+/** Google Authenticator 导出：otpauth-migration:// 迁移码(可由其导出二维码解出)。 */
+function fromGoogleAuthenticator(content: string): VaultData {
+  const otps = parseMigrationUri(content.trim());
+  const builder = new VaultBuilder();
+  for (const otp of otps) {
+    builder.add({
+      project: '导入 (Google Authenticator)',
+      environment: '默认',
+      envKind: 'other',
+      link: otp.issuer || otp.name || 'TOTP',
+      url: '',
+      label: otp.name,
+      username: otp.name,
+      password: '',
+      totp: otp.otpauth,
+      note: '',
     });
   }
   return builder.build();
@@ -290,6 +358,7 @@ interface FlatRow {
   label: string;
   username: string;
   password: string;
+  totp: string;
   note: string;
 }
 
@@ -301,12 +370,13 @@ class VaultBuilder {
     const proj = this.upsertProject(r.project);
     const env = this.upsertEnv(proj, r.environment, r.envKind);
     const link = this.upsertLink(env, r.link, r.url);
-    if (r.username || r.password || r.label) {
+    if (r.username || r.password || r.label || r.totp) {
       link.accounts.push(
         newAccount({
           label: r.label,
           username: r.username,
           password: r.password,
+          totp: r.totp || undefined,
           note: r.note || undefined,
         }),
       );

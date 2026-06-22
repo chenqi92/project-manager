@@ -213,7 +213,12 @@ async function route(msg: Msg): Promise<unknown> {
 
     case 'vault:export': {
       const data = await requireData();
-      return buildExport(data, msg.mode, msg.password);
+      // 可选导出范围：只导出选中的项目（projectIds 为空/缺省时导出全部）。
+      const scoped =
+        msg.projectIds && msg.projectIds.length
+          ? { ...data, projects: data.projects.filter((p) => msg.projectIds!.includes(p.id)) }
+          : data;
+      return buildExport(scoped, msg.mode, msg.password);
     }
 
     case 'vault:import': {

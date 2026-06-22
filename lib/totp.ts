@@ -22,6 +22,23 @@ function base32Decode(s: string): Uint8Array<ArrayBuffer> {
   return new Uint8Array(out);
 }
 
+/** 把原始字节编码为(无填充)base32。用于把迁移码里的二进制 secret 转回 base32。 */
+export function base32Encode(bytes: Uint8Array): string {
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (const b of bytes) {
+    value = (value << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      out += B32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
+  return out;
+}
+
 export interface TotpConfig {
   secret: string; // base32
   digits: number;

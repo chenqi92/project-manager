@@ -28,7 +28,7 @@ export type Msg =
   | { type: 'vault:get' }
   | { type: 'vault:save'; data: VaultData }
   | { type: 'vault:changePassword'; current: string; next: string }
-  | { type: 'vault:export'; mode: ExportMode; password?: string }
+  | { type: 'vault:export'; mode: ExportMode; password?: string; projectIds?: string[] }
   | {
       type: 'vault:import';
       format: ImportFormat;
@@ -97,8 +97,8 @@ export const api = {
   save: (data: VaultData) => send<void>({ type: 'vault:save', data }),
   changePassword: (current: string, next: string) =>
     send<void>({ type: 'vault:changePassword', current, next }),
-  export: (mode: ExportMode, password?: string) =>
-    send<ExportResult>({ type: 'vault:export', mode, password }),
+  export: (mode: ExportMode, password?: string, projectIds?: string[]) =>
+    send<ExportResult>({ type: 'vault:export', mode, password, projectIds }),
   import: (
     format: ImportFormat,
     content: string,
