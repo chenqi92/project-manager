@@ -73,3 +73,22 @@ server/             自托管零知识同步服务（Hono + SQLite）
 tests/              Vitest 单测
 docs/               隐私政策、上架素材、安全说明
 ```
+
+## 隐私政策页托管（静态页）
+
+`docs/index.html` 是隐私政策页（Chrome 商店要求一个公开 HTTPS 地址）。两种托管方式任选其一：
+
+### A. GitHub Pages（当前使用）
+
+- 仓库 Settings → Pages → Source 选 `main` 分支、`/docs` 目录。
+- 自定义域名写在 `docs/CNAME`（当前 `envmanager.yzs.ai`）。
+
+### B. Cloudflare Pages
+
+- Cloudflare 控制台 → Workers & Pages → Create → Pages → Connect to Git，选本仓库。
+- 构建设置：Framework preset = `None`；Build command 留空；**Build output directory = `docs`**。
+- 部署后得到 `*.pages.dev` 地址；自定义域名在 Pages 项目的 Custom domains 里加。
+
+> 同一个域名只能指向一处：用 Cloudflare Pages 的自定义域名时，就不要再用 `docs/CNAME` 把该域名指向 GitHub Pages。两种方式都只托管这一张静态页，与扩展、同步服务无关。
+
+> 自托管同步服务的部署见 [docs/RELEASING.md](docs/RELEASING.md) 与 [server/cloudflare/README.md](server/cloudflare/README.md)（Node 版 + Cloudflare Workers/D1 版）。
