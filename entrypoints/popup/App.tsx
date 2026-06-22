@@ -21,9 +21,10 @@ import { copyWithAutoClear } from '@/lib/clipboard';
 import { envSwitchTargets } from '@/lib/env-switch';
 import { api } from '@/lib/messaging';
 import { applyTheme } from '@/lib/theme';
-import { matchForUrl, search, type FlatEntry } from '@/lib/search';
+import { flatten, matchForUrl, search, type FlatEntry } from '@/lib/search';
+import { getUsage, recordUse } from '@/lib/usage';
 import type { CapturePending, EnvKind } from '@/lib/types';
-import { ENV_KIND_COLORS, ENV_KIND_LABELS } from '@/lib/vault-ops';
+import { ENV_KIND_COLORS, ENV_KIND_LABELS, linkUrls, produce } from '@/lib/vault-ops';
 
 export default function App() {
   const vault = useVault();
@@ -33,9 +34,14 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   const [pending, setPending] = useState<CapturePending | null>(null);
+  const [usage, setUsage] = useState<Record<string, number>>({});
+  const [quickLinkId, setQuickLinkId] = useState('');
 
   useEffect(() => {
-    if (status && !status.locked) api.capturePending().then(setPending).catch(() => {});
+    if (status && !status.locked) {
+      api.capturePending().then(setPending).catch(() => {});
+      getUsage().then(setUsage).catch(() => {});
+    }
   }, [status]);
 
   useEffect(() => {
@@ -66,6 +72,34 @@ export default function App() {
     () => (data && tab?.url ? envSwitchTargets(data, tab.url) : null),
     [data, tab],
   );
+  // 无当前站点匹配时(如新标签页)的兜底：收藏 + 最近使用,当作快捷启动器。
+  const favorites = useMemo(() => {
+    if (!data) return [];
+    const favIds = new Set(data.projects.filter((p) => p.favorite).map((p) => p.id));
+    if (favIds.size === 0) return [];
+    return flatten(data).filter((e) => favIds.has(e.projectId));
+  }, [data]);
+  const recent = useMemo(() => {
+    if (!data) return [];
+    const exclude = new Set([
+      ...matched.map((e) => e.accountId),
+      ...favorites.map((e) => e.accountId),
+    ]);
+    return flatten(data)
+      .filter((e) => usage[e.accountId] && !exclude.has(e.accountId))
+      .sort((a, b) => usage[b.accountId]! - usage[a.accountId]!)
+      .slice(0, 6);
+  }, [data, usage, matched, favorites]);
+  // 所有链接(扁平,带项目/环境路径标签),用于「把当前网址加入已有链接」。
+  const allLinks = useMemo(() => {
+    if (!data) return [];
+    const out: { id: string; label: string }[] = [];
+    for (const p of data.projects)
+      for (const e of p.environments)
+        for (const l of e.links) out.push({ id: l.id, label: `${p.name} / ${e.name} / ${l.name}` });
+    return out;
+  }, [data]);
+  const pageOrigin = tab?.url ? getOrigin(tab.url) : null;
 
   async function doFill(entry: FlatEntry) {
     if (!tab?.id || !tab.url) return;
@@ -79,10 +113,30 @@ export default function App() {
         func: fillCredentialsInPage,
         args: [entry.username, entry.password, data?.settings.autoSubmit !== false],
       });
+      await recordUse(entry.accountId);
       window.close();
     } catch (e) {
       flash('填充失败：' + (e instanceof Error ? e.message : String(e)));
     }
+  }
+
+  // 把当前页 origin 追加到某个已有链接的「更多网址」,使该地址今后可被识别填充。
+  async function addCurrentToLink(linkId: string) {
+    if (!data || !pageOrigin) return;
+    const next = produce(data, (d) => {
+      for (const p of d.projects)
+        for (const e of p.environments)
+          for (const l of e.links)
+            if (l.id === linkId) {
+              if (!linkUrls(l).some((u) => getOrigin(u) === pageOrigin)) {
+                l.urls = [...(l.urls ?? []), pageOrigin + '/'];
+              }
+              l.updatedAt = Date.now();
+            }
+    });
+    await vault.save(next);
+    setQuickLinkId('');
+    flash('已加入，当前页现在可填充了');
   }
 
   async function saveCurrentPage() {
@@ -102,16 +156,21 @@ export default function App() {
   async function openLogin(entry: FlatEntry) {
     const origin = getOrigin(entry.url);
     if (!origin) return flash('链接地址不合法');
-    // 已授权则立即返回 true（无弹窗）；首次会弹权限请求，可能关闭 popup，再点一次即可。
-    const granted = await browser.permissions.request({ origins: [origin + '/*'] });
-    if (!granted) return flash('未授权访问该网站');
+    const pattern = origin + '/*';
     try {
+      // 已授权则直接继续（不弹窗、不会关闭 popup）；未授权才申请——首次申请会弹系统
+      // 权限框从而关闭 popup，授权后再点一次即可（此时已 contains，一步到位）。
+      const granted =
+        (await browser.permissions.contains({ origins: [pattern] })) ||
+        (await browser.permissions.request({ origins: [pattern] }));
+      if (!granted) return flash('未授权访问该网站');
       const r = await api.openAndFill(
         entry.url,
         entry.username,
         entry.password,
         data?.settings.autoSubmit !== false,
       );
+      await recordUse(entry.accountId);
       if (!r.filled && r.reason) flash(r.reason);
       window.close();
     } catch (e) {
@@ -239,17 +298,9 @@ export default function App() {
           </Section>
         ) : (
           <>
-            <Section title="当前网站">
-              {matched.length === 0 ? (
-                <Empty
-                  text={
-                    tab?.url
-                      ? '当前页面没有匹配的账号'
-                      : '无法读取当前标签页'
-                  }
-                />
-              ) : (
-                matched.map((e) => (
+            {matched.length > 0 ? (
+              <Section title="当前网站">
+                {matched.map((e) => (
                   <Row
                     key={e.accountId}
                     entry={e}
@@ -259,9 +310,76 @@ export default function App() {
                     onCopy={copy}
                     onOpenLogin={openLogin}
                   />
-                ))
-              )}
-            </Section>
+                ))}
+              </Section>
+            ) : favorites.length > 0 || recent.length > 0 ? (
+              <div className="flex flex-col gap-3">
+                {favorites.length > 0 && (
+                  <Section title="收藏">
+                    {favorites.map((e) => (
+                      <Row
+                        key={e.accountId}
+                        entry={e}
+                        canFill={!!tab?.url && originsMatch(e.url, tab.url)}
+                        onFill={doFill}
+                        onCopy={copy}
+                        onOpenLogin={openLogin}
+                      />
+                    ))}
+                  </Section>
+                )}
+                {recent.length > 0 && (
+                  <Section title="最近使用">
+                    {recent.map((e) => (
+                      <Row
+                        key={e.accountId}
+                        entry={e}
+                        canFill={!!tab?.url && originsMatch(e.url, tab.url)}
+                        onFill={doFill}
+                        onCopy={copy}
+                        onOpenLogin={openLogin}
+                      />
+                    ))}
+                  </Section>
+                )}
+              </div>
+            ) : (
+              <Section title="当前网站">
+                <Empty
+                  text={tab?.url ? '当前页面没有匹配的账号' : '无法读取当前标签页'}
+                />
+              </Section>
+            )}
+
+            {matched.length === 0 && pageOrigin && allLinks.length > 0 && (
+              <div className="mt-3 rounded-xl border border-dashed border-gray-200 bg-surface p-3">
+                <div className="mb-1.5 text-xs text-gray-500">
+                  当前网址 <b>{hostOf(pageOrigin)}</b> 还没收录。它是某个已存系统的
+                  <b>另一个访问地址</b>吗？加入后即可在此填充：
+                </div>
+                <div className="flex gap-2">
+                  <select
+                    value={quickLinkId}
+                    onChange={(e) => setQuickLinkId(e.target.value)}
+                    className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2 py-1.5 text-xs outline-none focus:border-brand-500"
+                  >
+                    <option value="">选择已有链接…</option>
+                    {allLinks.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.label}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    variant="subtle"
+                    disabled={!quickLinkId}
+                    onClick={() => addCurrentToLink(quickLinkId)}
+                  >
+                    加入
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {envSwitch && (
               <div className="mt-3">
