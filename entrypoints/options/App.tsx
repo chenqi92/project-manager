@@ -13,15 +13,18 @@ import {
   Link as LinkIcon,
   Lock,
   LogIn,
+  Monitor,
   Pencil,
   Plus,
   Search,
   Settings as SettingsIcon,
   ShieldCheck,
   Star,
+  StickyNote,
   Trash2,
   UploadCloud,
   UserPlus,
+  Users,
 } from 'lucide-react';
 import { LockScreen } from '@/components/LockScreen';
 import { TotpBadge } from '@/components/TotpBadge';
@@ -36,6 +39,7 @@ import { search, type FlatEntry } from '@/lib/search';
 import type {
   Account,
   Environment,
+  MemoItem,
   PlatformLink,
   Project,
   ProjectDoc,
@@ -49,10 +53,14 @@ import {
   newAccount,
   newEnvironment,
   newLink,
+  newMemo,
   newProject,
   produce,
 } from '@/lib/vault-ops';
+import { sortMemos } from '@/lib/memo';
+import { AddMemo, MemoRow } from '@/components/MemoRow';
 import { AuditModal } from './AuditModal';
+import { BigScreen } from './BigScreen';
 import { CaptureModal } from './CaptureModal';
 import { DocsModal } from './DocsModal';
 import { MemoWidget } from './MemoWidget';
@@ -84,7 +92,9 @@ export default function App() {
   const [showIO, setShowIO] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
   const [docsProjectId, setDocsProjectId] = useState<string | null>(null);
+  const [bigScreenId, setBigScreenId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [capture, setCapture] = useState(() => {
     const p = new URLSearchParams(location.search);
@@ -151,6 +161,36 @@ export default function App() {
       if (moved) arr.splice(to, 0, moved);
     });
   };
+
+  const bigScreenProject = projects.find((p) => p.id === bigScreenId) ?? null;
+
+  // 备忘操作（项目内）：改动同时 bump 项目 updatedAt，保证同步合并不丢。
+  const addMemo = (projectId: string, text: string, dueAt: number | undefined, urgent: boolean) =>
+    update((d) => {
+      const p = d.projects.find((x) => x.id === projectId);
+      if (p) {
+        p.memos = [...(p.memos ?? []), newMemo({ text, dueAt, urgent })];
+        p.updatedAt = Date.now();
+      }
+    });
+  const mutateMemo = (projectId: string, memoId: string, fn: (m: MemoItem) => void) =>
+    update((d) => {
+      const p = d.projects.find((x) => x.id === projectId);
+      const m = p?.memos?.find((x) => x.id === memoId);
+      if (p && m) {
+        fn(m);
+        m.updatedAt = Date.now();
+        p.updatedAt = Date.now();
+      }
+    });
+  const deleteMemo = (projectId: string, memoId: string) =>
+    update((d) => {
+      const p = d.projects.find((x) => x.id === projectId);
+      if (p) {
+        p.memos = (p.memos ?? []).filter((m) => m.id !== memoId);
+        p.updatedAt = Date.now();
+      }
+    });
   const searchResults = useMemo(
     () => (data && query.trim() ? search(data, query) : null),
     [data, query],
@@ -227,12 +267,20 @@ export default function App() {
                 key={p.id}
                 draggable
                 onDragStart={() => setDragId(p.id)}
-                onDragOver={(e) => e.preventDefault()}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (dragId && dragId !== p.id) setDragOverId(p.id);
+                }}
+                onDragLeave={() => setDragOverId((cur) => (cur === p.id ? null : cur))}
                 onDrop={() => {
                   if (dragId) reorderProjects(dragId, p.id);
                   setDragId(null);
+                  setDragOverId(null);
                 }}
-                onDragEnd={() => setDragId(null)}
+                onDragEnd={() => {
+                  setDragId(null);
+                  setDragOverId(null);
+                }}
                 onClick={() => {
                   setSelectedId(p.id);
                   setQuery('');
@@ -240,6 +288,7 @@ export default function App() {
                 className={cx(
                   'group mb-0.5 flex w-full items-center gap-1.5 rounded-lg px-2 py-2 text-left',
                   dragId === p.id && 'opacity-40',
+                  dragOverId === p.id && 'ring-2 ring-brand-300',
                   selected?.id === p.id && !searchResults
                     ? 'bg-brand-50 text-brand-700'
                     : 'hover:bg-gray-100',
@@ -264,8 +313,15 @@ export default function App() {
                   }}
                 />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
-                <span className="shrink-0 text-[11px] text-gray-400">
-                  {envCount}env · {acctCount}
+                <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-gray-400">
+                  <span className="flex items-center gap-0.5" title={`${envCount} 个环境`}>
+                    <Layers size={11} />
+                    {envCount}
+                  </span>
+                  <span className="flex items-center gap-0.5" title={`${acctCount} 个账号`}>
+                    <Users size={11} />
+                    {acctCount}
+                  </span>
                 </span>
               </button>
             );
@@ -340,6 +396,11 @@ export default function App() {
             onCopy={copy}
             onOpenLogin={openLogin}
             onOpenDocs={() => setDocsProjectId(selected.id)}
+            onOpenBigScreen={() => setBigScreenId(selected.id)}
+            onAddMemo={(text, dueAt, urgent) => addMemo(selected.id, text, dueAt, urgent)}
+            onToggleMemoDone={(id) => mutateMemo(selected.id, id, (m) => (m.done = !m.done))}
+            onToggleMemoUrgent={(id) => mutateMemo(selected.id, id, (m) => (m.urgent = !m.urgent))}
+            onDeleteMemo={(id) => deleteMemo(selected.id, id)}
           />
         ) : (
           <EmptyState onCreate={() => setEditing({ kind: 'project' })} />
@@ -461,6 +522,9 @@ export default function App() {
           }
         />
       )}
+      {bigScreenProject && (
+        <BigScreen project={bigScreenProject} onClose={() => setBigScreenId(null)} />
+      )}
       {capture && (
         <CaptureModal
           data={data}
@@ -479,7 +543,7 @@ export default function App() {
         />
       )}
 
-      <MemoWidget data={data} onUpdate={update} />
+      <MemoWidget data={data} selectedProjectId={selected?.id ?? null} onUpdate={update} />
 
       {toast && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 rounded-lg bg-neutral-800/95 px-4 py-2 text-sm text-white shadow-lg">
@@ -539,6 +603,11 @@ interface ProjectViewProps {
   onCopy: (text: string, what: string) => void;
   onOpenLogin: (url: string, username: string, password: string) => void;
   onOpenDocs: () => void;
+  onOpenBigScreen: () => void;
+  onAddMemo: (text: string, dueAt: number | undefined, urgent: boolean) => void;
+  onToggleMemoDone: (id: string) => void;
+  onToggleMemoUrgent: (id: string) => void;
+  onDeleteMemo: (id: string) => void;
 }
 
 function ProjectView(props: ProjectViewProps) {
@@ -554,6 +623,9 @@ function ProjectView(props: ProjectViewProps) {
           </span>
         ))}
         <div className="ml-auto flex items-center gap-1">
+          <Button variant="subtle" onClick={props.onOpenBigScreen}>
+            <Monitor size={15} /> 大屏
+          </Button>
           <Button variant="subtle" onClick={props.onOpenDocs}>
             <FileText size={15} /> 说明{docCount > 0 ? `（${docCount}）` : ''}
           </Button>
@@ -571,6 +643,15 @@ function ProjectView(props: ProjectViewProps) {
 
       <div className="flex-1 space-y-5 overflow-auto p-6">
         {project.note && <p className="text-sm text-gray-500">{project.note}</p>}
+
+        <MemoSection
+          memos={project.memos ?? []}
+          onAdd={props.onAddMemo}
+          onToggleDone={props.onToggleMemoDone}
+          onToggleUrgent={props.onToggleMemoUrgent}
+          onDelete={props.onDeleteMemo}
+        />
+
         {project.environments.length === 0 && (
           <p className="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
             还没有环境，点右上角「新建环境」
@@ -581,6 +662,52 @@ function ProjectView(props: ProjectViewProps) {
         ))}
       </div>
     </>
+  );
+}
+
+function MemoSection({
+  memos,
+  onAdd,
+  onToggleDone,
+  onToggleUrgent,
+  onDelete,
+}: {
+  memos: MemoItem[];
+  onAdd: (text: string, dueAt: number | undefined, urgent: boolean) => void;
+  onToggleDone: (id: string) => void;
+  onToggleUrgent: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const sorted = sortMemos(memos);
+  const pending = memos.filter((m) => !m.done).length;
+  return (
+    <section className="rounded-xl border border-gray-200 bg-surface">
+      <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-2.5">
+        <StickyNote size={15} className="text-brand-600" />
+        <span className="font-medium">备忘</span>
+        {pending > 0 && (
+          <span className="rounded-full bg-gray-100 px-1.5 text-[11px] text-gray-500">待办 {pending}</span>
+        )}
+      </div>
+      <div className="space-y-2.5 p-3">
+        <AddMemo onAdd={onAdd} />
+        {sorted.length === 0 ? (
+          <p className="py-1 text-center text-xs text-gray-400">还没有备忘，上方添加</p>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {sorted.map((m) => (
+              <MemoRow
+                key={m.id}
+                memo={m}
+                onToggleDone={() => onToggleDone(m.id)}
+                onToggleUrgent={() => onToggleUrgent(m.id)}
+                onDelete={() => onDelete(m.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
