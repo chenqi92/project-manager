@@ -52,3 +52,74 @@ html.dark {
   background: rgb(128 128 128 / 0.35);
   border-radius: 9999px;
 }
+
+/* ---- Markdown 渲染样式（项目说明文档）---- */
+.md-body {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--color-gray-800);
+  word-wrap: break-word;
+}
+.md-body > :first-child { margin-top: 0; }
+.md-body > :last-child { margin-bottom: 0; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.2em 0 0.6em;
+  color: var(--color-gray-900);
+}
+.md-body h1 { font-size: 1.5em; border-bottom: 1px solid var(--color-gray-200); padding-bottom: 0.3em; }
+.md-body h2 { font-size: 1.3em; border-bottom: 1px solid var(--color-gray-200); padding-bottom: 0.25em; }
+.md-body h3 { font-size: 1.12em; }
+.md-body p, .md-body ul, .md-body ol, .md-body blockquote, .md-body table { margin: 0.6em 0; }
+.md-body ul, .md-body ol { padding-left: 1.5em; }
+.md-body li { margin: 0.2em 0; }
+.md-body a { color: var(--color-brand-600); text-decoration: none; }
+.md-body a:hover { text-decoration: underline; }
+.md-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--color-gray-100);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+}
+.md-body pre {
+  background: var(--color-gray-100);
+  border: 1px solid var(--color-gray-200);
+  border-radius: 8px;
+  padding: 0.85em 1em;
+  overflow: auto;
+  margin: 0.8em 0;
+}
+.md-body pre code { background: none; padding: 0; font-size: 0.85em; line-height: 1.55; }
+.md-body blockquote {
+  border-left: 3px solid var(--color-brand-500);
+  padding: 0.1em 0 0.1em 1em;
+  color: var(--color-gray-500);
+}
+.md-body table { border-collapse: collapse; width: 100%; display: block; overflow: auto; }
+.md-body th, .md-body td { border: 1px solid var(--color-gray-200); padding: 0.4em 0.7em; text-align: left; }
+.md-body th { background: var(--color-gray-100); font-weight: 600; }
+.md-body img { max-width: 100%; border-radius: 6px; }
+.md-body hr { border: 0; border-top: 1px solid var(--color-gray-200); margin: 1.2em 0; }
+.md-body .mermaid-rendered { display: flex; justify-content: center; margin: 0.8em 0; }
+.md-body .mermaid-rendered svg { max-width: 100%; height: auto; }
+.md-body .mermaid-error {
+  font-size: 12px;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+}
+
+/* 浮动备忘：紧急未完成项的抖动提醒 */
+@keyframes memo-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-2px); }
+  40% { transform: translateX(2px); }
+  60% { transform: translateX(-1.5px); }
+  80% { transform: translateX(1.5px); }
+}
+.memo-shake { animation: memo-shake 0.5s ease-in-out infinite; }

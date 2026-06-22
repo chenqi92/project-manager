@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Eye, EyeOff, GitBranch, Plus, QrCode, RefreshCw, Trash2 } from 'lucide-react';
 import { Button, Input, Label, Modal, Select } from '@/components/ui';
-import type { Account, EnvKind, Environment, PlatformLink, Project } from '@/lib/types';
-import { ENV_KIND_LABELS } from '@/lib/vault-ops';
+import { decodeQrImage } from '@/lib/qr';
+import type { Account, EnvKind, Environment, GitRepo, PlatformLink, Project } from '@/lib/types';
+import { ENV_KIND_LABELS, newGitRepo } from '@/lib/vault-ops';
 
 function genPassword(len = 20): string {
   const charset =
@@ -119,12 +120,22 @@ export function LinkEditor({
 }: {
   initial?: PlatformLink;
   onClose: () => void;
-  onSave: (v: { name: string; url: string; note?: string; urls?: string[] }) => void;
+  onSave: (v: {
+    name: string;
+    url: string;
+    note?: string;
+    urls?: string[];
+    gitRepos?: GitRepo[];
+  }) => void;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [url, setUrl] = useState(initial?.url ?? '');
   const [extraUrls, setExtraUrls] = useState((initial?.urls ?? []).join('\n'));
   const [note, setNote] = useState(initial?.note ?? '');
+  const [repos, setRepos] = useState<GitRepo[]>(initial?.gitRepos ?? []);
+
+  const setRepo = (id: string, patch: Partial<GitRepo>) =>
+    setRepos((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
 
   return (
     <Modal title={initial ? '编辑链接' : '新建链接 / 平台'} onClose={onClose}>
@@ -137,7 +148,8 @@ export function LinkEditor({
           <Label>主网址</Label>
           <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://admin.example.com" />
           <p className="mt-1 text-[11px] text-gray-400">
-            填充只会在「页面网址与某个 origin 完全一致」时生效。
+            匹配按 <b>origin（协议 + 域名/IP + 端口）</b>判断，<b>路径会被忽略</b>；http 与 https、不同端口都算不同站点。
+            填 <code>http://1.2.3.4:8080/login</code> 与 <code>http://1.2.3.4:8080/</code> 完全等价。
           </p>
         </div>
         <div>
@@ -146,9 +158,55 @@ export function LinkEditor({
             value={extraUrls}
             onChange={(e) => setExtraUrls(e.target.value)}
             rows={3}
-            placeholder={'https://admin-eu.example.com\nhttps://admin-us.example.com'}
+            placeholder={'http://内网IP:端口/\nhttps://外网域名/'}
             className="w-full rounded-lg border border-gray-300 p-2 font-mono text-xs outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
           />
+          <p className="mt-1 text-[11px] text-gray-400">
+            同一系统的<b>其它访问地址</b>（不同 IP / 域名 / 端口）写这里。换路径无意义——要写就写不同的 origin。
+          </p>
+        </div>
+        <div>
+          <div className="flex items-center justify-between">
+            <Label>Git 仓库（可选，可多个）</Label>
+            <button
+              type="button"
+              onClick={() => setRepos((rs) => [...rs, newGitRepo()])}
+              className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700"
+            >
+              <Plus size={13} /> 添加仓库
+            </button>
+          </div>
+          {repos.length === 0 ? (
+            <p className="mt-1 text-[11px] text-gray-400">关联代码仓库地址，可指定分支；展示处一键复制 git clone 命令。</p>
+          ) : (
+            <div className="mt-1 flex flex-col gap-1.5">
+              {repos.map((r) => (
+                <div key={r.id} className="flex items-center gap-1.5">
+                  <GitBranch size={14} className="shrink-0 text-gray-400" />
+                  <Input
+                    value={r.url}
+                    onChange={(e) => setRepo(r.id, { url: e.target.value })}
+                    placeholder="https://git.example.com/group/repo.git"
+                    className="flex-1 font-mono text-xs"
+                  />
+                  <Input
+                    value={r.branch ?? ''}
+                    onChange={(e) => setRepo(r.id, { branch: e.target.value })}
+                    placeholder="分支(可选)"
+                    className="w-28 font-mono text-xs"
+                  />
+                  <button
+                    type="button"
+                    title="删除"
+                    onClick={() => setRepos((rs) => rs.filter((x) => x.id !== r.id))}
+                    className="shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <div>
           <Label>备注（可选）</Label>
@@ -164,11 +222,19 @@ export function LinkEditor({
               .split('\n')
               .map((u) => u.trim())
               .filter(Boolean);
+            const gitRepos = repos
+              .map((r) => ({
+                ...r,
+                url: r.url.trim(),
+                branch: r.branch?.trim() || undefined,
+              }))
+              .filter((r) => r.url);
             onSave({
               name: name.trim(),
               url: url.trim(),
               note: note.trim() || undefined,
               urls: urls.length ? urls : undefined,
+              gitRepos: gitRepos.length ? gitRepos : undefined,
             });
           }}
         >
@@ -200,6 +266,24 @@ export function AccountEditor({
   const [note, setNote] = useState(initial?.note ?? '');
   const [totp, setTotp] = useState(initial?.totp ?? '');
   const [show, setShow] = useState(false);
+  const [qrMsg, setQrMsg] = useState<string | null>(null);
+  const qrInput = useRef<HTMLInputElement>(null);
+
+  const importQr = async (file: File) => {
+    setQrMsg(null);
+    try {
+      const text = (await decodeQrImage(file)).trim();
+      if (text.startsWith('otpauth-migration://')) {
+        setQrMsg('这是 Google Authenticator 批量迁移码，请用「导入/导出 → Google Authenticator」批量导入。');
+      } else if (text.startsWith('otpauth://') || /^[A-Za-z2-7\s]{8,}=*$/.test(text)) {
+        setTotp(text);
+      } else {
+        setQrMsg('二维码内容不是有效的 TOTP（需 otpauth:// 或 base32 密钥）。');
+      }
+    } catch (e) {
+      setQrMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   return (
     <Modal title={initial ? '编辑账号' : '新建账号'} onClose={onClose}>
@@ -231,12 +315,40 @@ export function AccountEditor({
         </div>
         <div>
           <Label>两步验证 TOTP（可选）</Label>
-          <Input
-            value={totp}
-            onChange={(e) => setTotp(e.target.value)}
-            placeholder="base32 密钥 或 otpauth://..."
-            className="font-mono"
-          />
+          <div className="flex gap-1.5">
+            <Input
+              value={totp}
+              onChange={(e) => setTotp(e.target.value)}
+              placeholder="base32 密钥 或 otpauth://..."
+              className="font-mono"
+            />
+            <Button
+              variant="subtle"
+              type="button"
+              title="从二维码图片导入"
+              onClick={() => qrInput.current?.click()}
+            >
+              <QrCode size={16} />
+            </Button>
+            <input
+              ref={qrInput}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                if (f) importQr(f);
+              }}
+            />
+          </div>
+          {qrMsg ? (
+            <p className="mt-1 text-[11px] text-rose-600">{qrMsg}</p>
+          ) : (
+            <p className="mt-1 text-[11px] text-gray-400">
+              已在 1Password 等工具里记录过?复制其 otpauth:// 或扫码图片即可导入。
+            </p>
+          )}
         </div>
         <div>
           <Label>备注（可选）</Label>

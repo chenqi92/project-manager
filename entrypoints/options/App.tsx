@@ -5,7 +5,10 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
+  FileText,
   FolderPlus,
+  GitBranch,
+  GripVertical,
   Layers,
   Link as LinkIcon,
   Lock,
@@ -35,12 +38,14 @@ import type {
   Environment,
   PlatformLink,
   Project,
+  ProjectDoc,
   VaultData,
 } from '@/lib/types';
 import {
   ENV_KIND_COLORS,
   ENV_KIND_LABELS,
   addTombstone,
+  gitCloneCommand,
   newAccount,
   newEnvironment,
   newLink,
@@ -49,6 +54,8 @@ import {
 } from '@/lib/vault-ops';
 import { AuditModal } from './AuditModal';
 import { CaptureModal } from './CaptureModal';
+import { DocsModal } from './DocsModal';
+import { MemoWidget } from './MemoWidget';
 import { AccountEditor, EnvEditor, LinkEditor, ProjectEditor } from './editors';
 import { ImportExport } from './ImportExport';
 import { Settings } from './Settings';
@@ -76,6 +83,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showIO, setShowIO] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
+  const [docsProjectId, setDocsProjectId] = useState<string | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [capture, setCapture] = useState(() => {
     const p = new URLSearchParams(location.search);
@@ -106,9 +115,14 @@ export default function App() {
   const openLogin = async (url: string, username: string, password: string) => {
     const origin = getOrigin(url);
     if (!origin) return flash('链接地址不合法');
-    const granted = await browser.permissions.request({ origins: [origin + '/*'] });
-    if (!granted) return flash('未授权访问该网站');
+    const pattern = origin + '/*';
     try {
+      // 已授权则直接继续（不弹窗）；未授权才申请。请求放进 try 内：内网 http 等被拒
+      // 或抛错时给出提示，避免静默失效。
+      const granted =
+        (await browser.permissions.contains({ origins: [pattern] })) ||
+        (await browser.permissions.request({ origins: [pattern] }));
+      if (!granted) return flash('未授权访问该网站');
       const r = await api.openAndFill(
         url,
         username,
@@ -122,15 +136,21 @@ export default function App() {
   };
 
   const projects = data?.projects ?? [];
-  const sortedProjects = useMemo(
-    () =>
-      [...projects].sort(
-        (a, b) => Number(b.favorite ?? false) - Number(a.favorite ?? false),
-      ),
-    [projects],
-  );
-  const selected =
-    projects.find((p) => p.id === selectedId) ?? sortedProjects[0] ?? null;
+  // 显示顺序 = 数组顺序（可拖拽调整）；收藏星标只作标记，不再自动置顶。
+  const selected = projects.find((p) => p.id === selectedId) ?? projects[0] ?? null;
+  const docsProject = projects.find((p) => p.id === docsProjectId) ?? null;
+
+  const reorderProjects = async (fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    await update((d) => {
+      const arr = d.projects;
+      const from = arr.findIndex((p) => p.id === fromId);
+      const to = arr.findIndex((p) => p.id === toId);
+      if (from < 0 || to < 0) return;
+      const [moved] = arr.splice(from, 1);
+      if (moved) arr.splice(to, 0, moved);
+    });
+  };
   const searchResults = useMemo(
     () => (data && query.trim() ? search(data, query) : null),
     [data, query],
@@ -193,10 +213,10 @@ export default function App() {
         </div>
 
         <nav className="flex-1 overflow-auto px-2 pb-3">
-          {sortedProjects.length === 0 && (
+          {projects.length === 0 && (
             <p className="px-2 py-6 text-center text-xs text-gray-400">还没有项目</p>
           )}
-          {sortedProjects.map((p) => {
+          {projects.map((p) => {
             const envCount = p.environments.length;
             const acctCount = p.environments.reduce(
               (n, e) => n + e.links.reduce((m, l) => m + l.accounts.length, 0),
@@ -205,17 +225,30 @@ export default function App() {
             return (
               <button
                 key={p.id}
+                draggable
+                onDragStart={() => setDragId(p.id)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => {
+                  if (dragId) reorderProjects(dragId, p.id);
+                  setDragId(null);
+                }}
+                onDragEnd={() => setDragId(null)}
                 onClick={() => {
                   setSelectedId(p.id);
                   setQuery('');
                 }}
                 className={cx(
-                  'group mb-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left',
+                  'group mb-0.5 flex w-full items-center gap-1.5 rounded-lg px-2 py-2 text-left',
+                  dragId === p.id && 'opacity-40',
                   selected?.id === p.id && !searchResults
                     ? 'bg-brand-50 text-brand-700'
                     : 'hover:bg-gray-100',
                 )}
               >
+                <GripVertical
+                  size={14}
+                  className="shrink-0 cursor-grab text-gray-300 opacity-0 group-hover:opacity-100"
+                />
                 <Star
                   size={14}
                   className={cx(
@@ -306,6 +339,7 @@ export default function App() {
             }}
             onCopy={copy}
             onOpenLogin={openLogin}
+            onOpenDocs={() => setDocsProjectId(selected.id)}
           />
         ) : (
           <EmptyState onCreate={() => setEditing({ kind: 'project' })} />
@@ -408,9 +442,25 @@ export default function App() {
         />
       )}
       {showIO && (
-        <ImportExport onClose={() => setShowIO(false)} onImported={vault.reload} />
+        <ImportExport data={data} onClose={() => setShowIO(false)} onImported={vault.reload} />
       )}
       {showAudit && <AuditModal data={data} onClose={() => setShowAudit(false)} />}
+      {docsProject && (
+        <DocsModal
+          projectName={docsProject.name}
+          docs={docsProject.docs ?? []}
+          onClose={() => setDocsProjectId(null)}
+          onChange={(docs) =>
+            update((d) => {
+              const p = d.projects.find((x) => x.id === docsProject.id);
+              if (p) {
+                p.docs = docs;
+                p.updatedAt = Date.now();
+              }
+            })
+          }
+        />
+      )}
       {capture && (
         <CaptureModal
           data={data}
@@ -428,6 +478,8 @@ export default function App() {
           }}
         />
       )}
+
+      <MemoWidget data={data} onUpdate={update} />
 
       {toast && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 rounded-lg bg-neutral-800/95 px-4 py-2 text-sm text-white shadow-lg">
@@ -486,10 +538,12 @@ interface ProjectViewProps {
   onDeleteAccount: (envId: string, linkId: string, account: Account) => void;
   onCopy: (text: string, what: string) => void;
   onOpenLogin: (url: string, username: string, password: string) => void;
+  onOpenDocs: () => void;
 }
 
 function ProjectView(props: ProjectViewProps) {
   const { project } = props;
+  const docCount = project.docs?.length ?? 0;
   return (
     <>
       <header className="flex items-center gap-2 border-b border-gray-200 bg-surface px-6 py-4">
@@ -500,6 +554,9 @@ function ProjectView(props: ProjectViewProps) {
           </span>
         ))}
         <div className="ml-auto flex items-center gap-1">
+          <Button variant="subtle" onClick={props.onOpenDocs}>
+            <FileText size={15} /> 说明{docCount > 0 ? `（${docCount}）` : ''}
+          </Button>
           <IconButton title="编辑项目" onClick={props.onEditProject}>
             <Pencil size={16} />
           </IconButton>
@@ -602,6 +659,25 @@ function LinkBlock({
           </Button>
         </div>
       </div>
+
+      {link.gitRepos && link.gitRepos.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 border-t border-gray-100 px-3 py-2">
+          {link.gitRepos.map((r) => (
+            <button
+              key={r.id}
+              title={`点击复制：${gitCloneCommand(r)}`}
+              onClick={() => props.onCopy(gitCloneCommand(r), 'git clone 命令')}
+              className="flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] text-gray-600 hover:border-brand-300"
+            >
+              <GitBranch size={12} className="shrink-0 text-gray-400" />
+              <span className="max-w-[220px] truncate font-mono">{r.url}</span>
+              {r.branch && (
+                <span className="shrink-0 rounded bg-brand-50 px-1 text-brand-600">{r.branch}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
 
       {link.accounts.length > 0 && (
         <div className="divide-y divide-gray-50 border-t border-gray-100">
