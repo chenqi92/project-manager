@@ -157,10 +157,10 @@ export function BigScreen({ project, onClose }: { project: Project; onClose: () 
           <section className="space-y-6">
             <div>
               <SectionTitle icon={<StickyNote size={18} />}>
-                备忘{pending > 0 ? `（待办 ${pending}）` : ''}
+                待办{pending > 0 ? `（${pending}）` : ''}
               </SectionTitle>
               {memos.length === 0 ? (
-                <Empty>还没有备忘</Empty>
+                <Empty>还没有待办</Empty>
               ) : (
                 <div className="flex flex-col gap-1.5">
                   {memos.map((m) => (

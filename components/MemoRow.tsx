@@ -116,7 +116,7 @@ export function AddMemo({
         onKeyDown={(e) => {
           if (e.key === 'Enter') submit();
         }}
-        placeholder="新增备忘…"
+        placeholder="新增待办…"
         className="min-w-[8rem] flex-1"
       />
       <input

@@ -132,9 +132,9 @@ export function MemoWidget({
           'fixed z-40 flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium text-white shadow-lg',
           alarmCount > 0 ? 'memo-shake bg-rose-600' : 'bg-brand-600',
         )}
-        title="展开备忘"
+        title="展开待办"
       >
-        <StickyNote size={16} /> 备忘
+        <StickyNote size={16} /> 待办
         {pendingTotal > 0 && (
           <span className="rounded-full bg-white/25 px-1.5 text-xs">{pendingTotal}</span>
         )}
@@ -153,7 +153,7 @@ export function MemoWidget({
       >
         <GripVertical size={15} className="text-gray-400" />
         <StickyNote size={15} className="text-brand-600" />
-        <span className="text-sm font-semibold text-gray-800">备忘录</span>
+        <span className="text-sm font-semibold text-gray-800">待办任务</span>
         {pendingTotal > 0 && (
           <span
             className={cx(
@@ -176,7 +176,7 @@ export function MemoWidget({
       {/* 聚合列表（主体） */}
       <div className="flex-1 overflow-auto p-2">
         {groups.length === 0 ? (
-          <p className="px-1 py-6 text-center text-xs text-gray-400">还没有备忘，下方添加</p>
+          <p className="px-1 py-6 text-center text-xs text-gray-400">还没有待办，下方添加</p>
         ) : (
           groups.map((g) => (
             <div key={g.id} className="mb-2">

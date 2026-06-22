@@ -684,7 +684,7 @@ function MemoSection({
     <section className="rounded-xl border border-gray-200 bg-surface">
       <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-2.5">
         <StickyNote size={15} className="text-brand-600" />
-        <span className="font-medium">备忘</span>
+        <span className="font-medium">待办</span>
         {pending > 0 && (
           <span className="rounded-full bg-gray-100 px-1.5 text-[11px] text-gray-500">待办 {pending}</span>
         )}
@@ -692,7 +692,7 @@ function MemoSection({
       <div className="space-y-2.5 p-3">
         <AddMemo onAdd={onAdd} />
         {sorted.length === 0 ? (
-          <p className="py-1 text-center text-xs text-gray-400">还没有备忘，上方添加</p>
+          <p className="py-1 text-center text-xs text-gray-400">还没有待办，上方添加</p>
         ) : (
           <div className="flex flex-col gap-1.5">
             {sorted.map((m) => (
