@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Download, Upload } from 'lucide-react';
 import { Banner, Button, Input, Label, Modal, Select, cx } from '@/components/ui';
 import { api } from '@/lib/messaging';
@@ -169,42 +169,51 @@ const FORMAT_LABELS: Record<ImportFormat, string> = {
 function ImportTab({ onImported }: { onImported: () => Promise<void> }) {
   const [format, setFormat] = useState<ImportFormat>('encrypted');
   const [mode, setMode] = useState<ImportMode>('merge');
+  const [file, setFile] = useState<File | null>(null);
   const [content, setContent] = useState('');
   const [pw, setPw] = useState('');
   const [msg, setMsg] = useState<{ tone: 'info' | 'error'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
 
-  const pickFile = async (file: File) => {
-    setMsg(null);
-    // Google Authenticator 导出码:支持直接上传二维码截图,本地解码成迁移码文本。
-    if (format === 'google-authenticator' && file.type.startsWith('image/')) {
-      try {
-        setContent(await decodeQrImage(file));
-        setMsg({ tone: 'info', text: '已从二维码读取迁移码，点「开始导入」继续' });
-      } catch (e) {
-        setMsg({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
+  const clearFile = () => {
+    setFile(null);
+    if (fileInput.current) fileInput.current.value = '';
+  };
+
+  // 取本次导入内容：选了文件就用文件（图片走二维码解码），否则用粘贴框。
+  // 在「开始导入」时才读文件（await），避免选文件后异步读取造成的竞态/误报。
+  const resolvePayload = async (): Promise<string> => {
+    if (file) {
+      if (format === 'google-authenticator' && file.type.startsWith('image/')) {
+        return (await decodeQrImage(file)).trim();
       }
-      return;
+      return (await file.text()).trim();
     }
-    const reader = new FileReader();
-    reader.onload = () => setContent(String(reader.result ?? ''));
-    reader.readAsText(file);
+    return content.trim();
   };
 
   const run = async () => {
     setMsg(null);
-    if (!content.trim()) return setMsg({ tone: 'error', text: '请先选择文件或粘贴内容' });
+    let payload: string;
+    try {
+      payload = await resolvePayload();
+    } catch (e) {
+      return setMsg({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
+    }
+    if (!payload) return setMsg({ tone: 'error', text: '请先选择文件或粘贴内容' });
     setBusy(true);
     try {
       const { imported } = await api.import(
         format,
-        content,
+        payload,
         mode,
         format === 'encrypted' ? pw : undefined,
       );
       await onImported();
       setMsg({ tone: 'info', text: `导入成功，新增 ${imported} 个账号` });
       setContent('');
+      clearFile();
     } catch (e) {
       setMsg({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -251,6 +260,7 @@ function ImportTab({ onImported }: { onImported: () => Promise<void> }) {
       <div>
         <Label>{format === 'google-authenticator' ? '选择文件 / 二维码图片' : '选择文件'}</Label>
         <input
+          ref={fileInput}
           type="file"
           accept={
             format === 'google-authenticator'
@@ -258,20 +268,29 @@ function ImportTab({ onImported }: { onImported: () => Promise<void> }) {
               : '.json,.csv,text/csv,application/json'
           }
           onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) pickFile(f);
+            setMsg(null);
+            setFile(e.target.files?.[0] ?? null);
           }}
           className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm hover:file:bg-gray-200"
         />
+        {file && (
+          <p className="mt-1 text-[11px] text-gray-500">
+            将导入此文件：<b>{file.name}</b>
+            <button onClick={clearFile} className="ml-2 text-brand-600 hover:underline">
+              清除
+            </button>
+          </p>
+        )}
       </div>
 
       <div>
-        <Label>或直接粘贴内容</Label>
+        <Label>或直接粘贴内容（已选文件时以文件为准）</Label>
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
           rows={5}
-          className="w-full rounded-lg border border-gray-300 p-2 font-mono text-xs outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+          disabled={!!file}
+          className="w-full rounded-lg border border-gray-300 p-2 font-mono text-xs outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-gray-50 disabled:text-gray-400"
           placeholder={
             format === 'google-authenticator'
               ? 'otpauth-migration://offline?data=...'
