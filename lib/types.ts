@@ -48,6 +48,8 @@ export interface Environment {
   name: string;
   kind: EnvKind;
   note?: string;
+  /** 该环境关联的 Git 仓库（可一个或多个，含分支） */
+  gitRepos?: GitRepo[];
   links: PlatformLink[];
   updatedAt: number;
 }

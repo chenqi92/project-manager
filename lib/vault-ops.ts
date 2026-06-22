@@ -94,6 +94,7 @@ export function newEnvironment(p: Partial<Environment> = {}): Environment {
     name: p.name ?? '',
     kind: p.kind ?? 'other',
     note: p.note,
+    gitRepos: p.gitRepos,
     links: p.links ?? [],
     updatedAt: p.updatedAt ?? now(),
   };

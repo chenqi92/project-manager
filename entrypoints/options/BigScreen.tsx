@@ -87,6 +87,19 @@ export function BigScreen({ project, onClose }: { project: Project; onClose: () 
                     </span>
                     <span className="font-semibold">{env.name}</span>
                   </div>
+                  {(env.gitRepos ?? []).length > 0 && (
+                    <div className="mb-3 flex flex-wrap gap-1.5">
+                      {(env.gitRepos ?? []).map((r) => (
+                        <span
+                          key={r.id}
+                          className="flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] text-gray-600"
+                        >
+                          <GitBranch size={11} className="shrink-0 text-gray-400" />
+                          <span className="max-w-[280px] truncate font-mono">{gitCloneCommand(r)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <div className="grid gap-3 md:grid-cols-2">
                     {env.links.length === 0 && <p className="text-xs text-gray-400">无链接</p>}
                     {env.links.map((link) => (

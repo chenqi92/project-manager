@@ -733,6 +733,25 @@ function EnvBlock({ env, ...props }: { env: Environment } & ProjectViewProps) {
         </div>
       </div>
 
+      {env.gitRepos && env.gitRepos.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 border-b border-gray-100 px-4 py-2">
+          {env.gitRepos.map((r) => (
+            <button
+              key={r.id}
+              title={`点击复制：${gitCloneCommand(r)}`}
+              onClick={() => props.onCopy(gitCloneCommand(r), 'git clone 命令')}
+              className="flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] text-gray-600 hover:border-brand-300"
+            >
+              <GitBranch size={12} className="shrink-0 text-gray-400" />
+              <span className="max-w-[220px] truncate font-mono">{r.url}</span>
+              {r.branch && (
+                <span className="shrink-0 rounded bg-brand-50 px-1 text-brand-600">{r.branch}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="space-y-3 p-3">
         {env.links.length === 0 && (
           <p className="py-3 text-center text-xs text-gray-400">还没有链接</p>

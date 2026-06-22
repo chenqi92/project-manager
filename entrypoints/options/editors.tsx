@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { Eye, EyeOff, GitBranch, Plus, QrCode, RefreshCw, Trash2 } from 'lucide-react';
 import { Button, Input, Label, Modal, Select } from '@/components/ui';
 import { decodeQrImage } from '@/lib/qr';
@@ -16,6 +16,73 @@ function genPassword(len = 20): string {
 }
 
 const FOOTER = 'mt-5 flex justify-end gap-2';
+
+/** 清洗 Git 仓库列表：去空白、丢空 url；全空返回 undefined。 */
+function cleanRepos(repos: GitRepo[]): GitRepo[] | undefined {
+  const out = repos
+    .map((r) => ({ ...r, url: r.url.trim(), branch: r.branch?.trim() || undefined }))
+    .filter((r) => r.url);
+  return out.length ? out : undefined;
+}
+
+/** Git 仓库编辑字段（链接 / 环境 共用）：可加多个，各自指定分支。 */
+function GitReposField({
+  repos,
+  setRepos,
+}: {
+  repos: GitRepo[];
+  setRepos: Dispatch<SetStateAction<GitRepo[]>>;
+}) {
+  const setRepo = (id: string, patch: Partial<GitRepo>) =>
+    setRepos((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <Label>Git 仓库（可选，可多个）</Label>
+        <button
+          type="button"
+          onClick={() => setRepos((rs) => [...rs, newGitRepo()])}
+          className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700"
+        >
+          <Plus size={13} /> 添加仓库
+        </button>
+      </div>
+      {repos.length === 0 ? (
+        <p className="mt-1 text-[11px] text-gray-400">关联代码仓库地址，可指定分支；展示处一键复制 git clone 命令。</p>
+      ) : (
+        <div className="mt-1 flex flex-col gap-1.5">
+          {repos.map((r) => (
+            <div key={r.id} className="flex items-center gap-1.5">
+              <GitBranch size={14} className="shrink-0 text-gray-400" />
+              <Input
+                value={r.url}
+                onChange={(e) => setRepo(r.id, { url: e.target.value })}
+                placeholder="https://git.example.com/group/repo.git"
+                className="min-w-0 flex-1 font-mono text-xs"
+              />
+              <div className="w-24 shrink-0">
+                <Input
+                  value={r.branch ?? ''}
+                  onChange={(e) => setRepo(r.id, { branch: e.target.value })}
+                  placeholder="分支"
+                  className="font-mono text-xs"
+                />
+              </div>
+              <button
+                type="button"
+                title="删除"
+                onClick={() => setRepos((rs) => rs.filter((x) => x.id !== r.id))}
+                className="shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function ProjectEditor({
   initial,
@@ -72,11 +139,12 @@ export function EnvEditor({
 }: {
   initial?: Environment;
   onClose: () => void;
-  onSave: (v: { name: string; kind: EnvKind; note?: string }) => void;
+  onSave: (v: { name: string; kind: EnvKind; note?: string; gitRepos?: GitRepo[] }) => void;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [kind, setKind] = useState<EnvKind>(initial?.kind ?? 'dev');
   const [note, setNote] = useState(initial?.note ?? '');
+  const [repos, setRepos] = useState<GitRepo[]>(initial?.gitRepos ?? []);
 
   return (
     <Modal title={initial ? '编辑环境' : '新建环境'} onClose={onClose}>
@@ -95,6 +163,7 @@ export function EnvEditor({
             ))}
           </Select>
         </div>
+        <GitReposField repos={repos} setRepos={setRepos} />
         <div>
           <Label>备注（可选）</Label>
           <Input value={note} onChange={(e) => setNote(e.target.value)} />
@@ -104,7 +173,14 @@ export function EnvEditor({
         <Button variant="subtle" onClick={onClose}>取消</Button>
         <Button
           disabled={!name.trim()}
-          onClick={() => onSave({ name: name.trim(), kind, note: note.trim() || undefined })}
+          onClick={() =>
+            onSave({
+              name: name.trim(),
+              kind,
+              note: note.trim() || undefined,
+              gitRepos: cleanRepos(repos),
+            })
+          }
         >
           保存
         </Button>
@@ -134,9 +210,6 @@ export function LinkEditor({
   const [note, setNote] = useState(initial?.note ?? '');
   const [repos, setRepos] = useState<GitRepo[]>(initial?.gitRepos ?? []);
 
-  const setRepo = (id: string, patch: Partial<GitRepo>) =>
-    setRepos((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-
   return (
     <Modal title={initial ? '编辑链接' : '新建链接 / 平台'} onClose={onClose}>
       <div className="flex flex-col gap-3">
@@ -165,49 +238,7 @@ export function LinkEditor({
             同一系统的<b>其它访问地址</b>（不同 IP / 域名 / 端口）写这里。换路径无意义——要写就写不同的 origin。
           </p>
         </div>
-        <div>
-          <div className="flex items-center justify-between">
-            <Label>Git 仓库（可选，可多个）</Label>
-            <button
-              type="button"
-              onClick={() => setRepos((rs) => [...rs, newGitRepo()])}
-              className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700"
-            >
-              <Plus size={13} /> 添加仓库
-            </button>
-          </div>
-          {repos.length === 0 ? (
-            <p className="mt-1 text-[11px] text-gray-400">关联代码仓库地址，可指定分支；展示处一键复制 git clone 命令。</p>
-          ) : (
-            <div className="mt-1 flex flex-col gap-1.5">
-              {repos.map((r) => (
-                <div key={r.id} className="flex items-center gap-1.5">
-                  <GitBranch size={14} className="shrink-0 text-gray-400" />
-                  <Input
-                    value={r.url}
-                    onChange={(e) => setRepo(r.id, { url: e.target.value })}
-                    placeholder="https://git.example.com/group/repo.git"
-                    className="flex-1 font-mono text-xs"
-                  />
-                  <Input
-                    value={r.branch ?? ''}
-                    onChange={(e) => setRepo(r.id, { branch: e.target.value })}
-                    placeholder="分支(可选)"
-                    className="w-28 font-mono text-xs"
-                  />
-                  <button
-                    type="button"
-                    title="删除"
-                    onClick={() => setRepos((rs) => rs.filter((x) => x.id !== r.id))}
-                    className="shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <GitReposField repos={repos} setRepos={setRepos} />
         <div>
           <Label>备注（可选）</Label>
           <Input value={note} onChange={(e) => setNote(e.target.value)} />
@@ -222,19 +253,12 @@ export function LinkEditor({
               .split('\n')
               .map((u) => u.trim())
               .filter(Boolean);
-            const gitRepos = repos
-              .map((r) => ({
-                ...r,
-                url: r.url.trim(),
-                branch: r.branch?.trim() || undefined,
-              }))
-              .filter((r) => r.url);
             onSave({
               name: name.trim(),
               url: url.trim(),
               note: note.trim() || undefined,
               urls: urls.length ? urls : undefined,
-              gitRepos: gitRepos.length ? gitRepos : undefined,
+              gitRepos: cleanRepos(repos),
             });
           }}
         >
