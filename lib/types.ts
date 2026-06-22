@@ -124,8 +124,12 @@ export type DashWidgetType =
 export interface DashWidget {
   id: string;
   type: DashWidgetType;
-  /** 占几格（1-4 列） */
-  span: number;
+  /** 占列数 1-4 */
+  w?: number;
+  /** 占行数 1-3 */
+  h?: number;
+  /** @deprecated 旧版列宽，迁移用 */
+  span?: number;
   /** 各卡片自有配置 */
   config?: {
     label?: string;

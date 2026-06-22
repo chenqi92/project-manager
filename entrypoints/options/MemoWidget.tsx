@@ -82,6 +82,32 @@ export function MemoWidget({
     });
   };
 
+  // 收起态小圆按钮：可拖动移动；几乎没移动则当作点击 → 展开。
+  const startPillDrag = (e: React.PointerEvent) => {
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const ox = posRef.current.x;
+    const oy = posRef.current.y;
+    let moved = false;
+    let last = { x: ox, y: oy };
+    const onMove = (ev: PointerEvent) => {
+      if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 4) moved = true;
+      last = {
+        x: Math.min(Math.max(ox + ev.clientX - sx, 4), window.innerWidth - 60),
+        y: Math.min(Math.max(oy + ev.clientY - sy, 4), window.innerHeight - 40),
+      };
+      if (moved) setPos(last);
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (moved) save({ x: last.x, y: last.y, collapsed: true });
+      else toggleCollapsed();
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   const mutate = (id: string, fn: (m: MemoItem) => void) =>
     onUpdate((d) => {
       for (const p of d.projects) {
@@ -126,13 +152,13 @@ export function MemoWidget({
   if (collapsed) {
     return (
       <button
-        onClick={toggleCollapsed}
-        style={{ left: pos.x, top: pos.y }}
+        onPointerDown={startPillDrag}
+        style={{ left: pos.x, top: pos.y, touchAction: 'none' }}
         className={cx(
-          'fixed z-40 flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium text-white shadow-lg',
+          'fixed z-40 flex cursor-grab items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium text-white shadow-lg active:cursor-grabbing',
           alarmCount > 0 ? 'memo-shake bg-rose-600' : 'bg-brand-600',
         )}
-        title="展开待办"
+        title="拖动移动 / 点击展开"
       >
         <StickyNote size={16} /> 待办
         {pendingTotal > 0 && (

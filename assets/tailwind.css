@@ -123,3 +123,10 @@ html.dark {
   80% { transform: translateX(1.5px); }
 }
 .memo-shake { animation: memo-shake 0.5s ease-in-out infinite; }
+
+/* 文档面板：从左侧滑入 */
+@keyframes drawer-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+.drawer-in-left { animation: drawer-in-left 0.22s ease-out; }

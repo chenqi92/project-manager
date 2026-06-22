@@ -1,8 +1,12 @@
 // ---------------------------------------------------------------------------
 // 首页仪表盘：卡片默认布局与工具。
+// 网格为 4 列，卡片用 w(1-4) × h(1-3) 占格；流式 dense 排布。
 // ---------------------------------------------------------------------------
 import type { DashWidget, DashWidgetType, DashboardConfig } from './types';
 import { uid } from './vault-ops';
+
+export const GRID_COLS = 4;
+export const ROW_HEIGHT = 130; // px，每行高度
 
 export const WIDGET_LABELS: Record<DashWidgetType, string> = {
   stats: '统计',
@@ -13,39 +17,39 @@ export const WIDGET_LABELS: Record<DashWidgetType, string> = {
   image: '图片 / 图表',
 };
 
-function defaultSpan(type: DashWidgetType): number {
+/** 各类型默认 [w, h]。 */
+export function defaultWH(type: DashWidgetType): [number, number] {
   switch (type) {
     case 'stats':
+      return [4, 1];
     case 'launcher':
-      return 4;
+      return [4, 2];
     case 'todos':
+      return [2, 2];
     case 'calendar':
+      return [2, 2];
     case 'image':
-      return 2;
+      return [2, 2];
     case 'weather':
-      return 1;
+      return [1, 1];
   }
 }
 
-export function newDashWidget(type: DashWidgetType, span?: number): DashWidget {
-  return { id: uid(), type, span: span ?? defaultSpan(type) };
+export function newDashWidget(type: DashWidgetType, w?: number, h?: number): DashWidget {
+  const [dw, dh] = defaultWH(type);
+  return { id: uid(), type, w: w ?? dw, h: h ?? dh };
+}
+
+/** 读取时归一化：补全 w/h（兼容旧版 span），并夹到合法范围。 */
+export function normWidget(widget: DashWidget): DashWidget & { w: number; h: number } {
+  const [dw, dh] = defaultWH(widget.type);
+  const w = Math.min(GRID_COLS, Math.max(1, widget.w ?? widget.span ?? dw));
+  const h = Math.min(3, Math.max(1, widget.h ?? dh));
+  return { ...widget, w, h };
 }
 
 export function defaultDashboard(): DashboardConfig {
   return {
-    widgets: [
-      newDashWidget('stats', 4),
-      newDashWidget('todos', 2),
-      newDashWidget('calendar', 2),
-      newDashWidget('launcher', 4),
-    ],
+    widgets: [newDashWidget('stats'), newDashWidget('todos'), newDashWidget('calendar'), newDashWidget('launcher')],
   };
 }
-
-/** span -> Tailwind 列宽类（静态字面量，确保被 Tailwind 收集）。 */
-export const SPAN_CLASS: Record<number, string> = {
-  1: 'md:col-span-1 xl:col-span-1',
-  2: 'md:col-span-2 xl:col-span-2',
-  3: 'md:col-span-2 xl:col-span-3',
-  4: 'md:col-span-2 xl:col-span-4',
-};

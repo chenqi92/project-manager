@@ -70,12 +70,9 @@ export function DocsModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onMouseDown={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex bg-black/20" onMouseDown={onClose}>
       <div
-        className="flex h-[85vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl"
+        className="drawer-in-left flex h-full w-full flex-col overflow-hidden bg-surface shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
@@ -147,11 +144,21 @@ export function DocsModal({
                     value={active.title}
                     onChange={(e) => updateActive({ title: e.target.value })}
                     placeholder="文档标题"
+                    className="min-w-0 flex-1"
                   />
-                  <Button variant="subtle" onClick={() => setEditing(false)}>
+                  <Button
+                    variant="subtle"
+                    className="shrink-0 whitespace-nowrap"
+                    onClick={() => setEditing(false)}
+                  >
                     <Eye size={15} /> 预览
                   </Button>
-                  <Button variant="ghost" title="删除" onClick={() => delDoc(active.id)}>
+                  <Button
+                    variant="ghost"
+                    className="shrink-0"
+                    title="删除"
+                    onClick={() => delDoc(active.id)}
+                  >
                     <Trash2 size={15} />
                   </Button>
                 </div>
@@ -171,10 +178,19 @@ export function DocsModal({
               <>
                 <div className="mb-2 flex items-center gap-2">
                   <h3 className="min-w-0 flex-1 truncate text-base font-semibold text-gray-900">{active.title}</h3>
-                  <Button variant="subtle" onClick={() => setEditing(true)}>
+                  <Button
+                    variant="subtle"
+                    className="shrink-0 whitespace-nowrap"
+                    onClick={() => setEditing(true)}
+                  >
                     <Pencil size={15} /> 编辑
                   </Button>
-                  <Button variant="ghost" title="删除" onClick={() => delDoc(active.id)}>
+                  <Button
+                    variant="ghost"
+                    className="shrink-0"
+                    title="删除"
+                    onClick={() => delDoc(active.id)}
+                  >
                     <Trash2 size={15} />
                   </Button>
                 </div>

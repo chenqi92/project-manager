@@ -20,7 +20,14 @@ import {
 import { Button, Input, cx } from '@/components/ui';
 import { MemoRow } from '@/components/MemoRow';
 import type { DashWidget, DashWidgetType, VaultData } from '@/lib/types';
-import { SPAN_CLASS, WIDGET_LABELS, defaultDashboard, newDashWidget } from '@/lib/dashboard';
+import {
+  GRID_COLS,
+  ROW_HEIGHT,
+  WIDGET_LABELS,
+  defaultDashboard,
+  newDashWidget,
+  normWidget,
+} from '@/lib/dashboard';
 import { flatMemos, sortMemos } from '@/lib/memo';
 import { ENV_KIND_COLORS, ENV_KIND_LABELS } from '@/lib/vault-ops';
 import { fetchWeather, geocodeCity, weatherLabel, type WeatherNow } from '@/lib/weather';
@@ -33,18 +40,19 @@ export function Home({
   onUpdate: (recipe: (d: VaultData) => void) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
-  const [dragId, setDragId] = useState<string | null>(null);
   const [addType, setAddType] = useState<DashWidgetType>('weather');
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [resizing, setResizing] = useState<{ id: string; w: number; h: number } | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
 
-  const widgets = data.settings.dashboard?.widgets ?? defaultDashboard().widgets;
+  const widgets = (data.settings.dashboard?.widgets ?? defaultDashboard().widgets).map(normWidget);
   const setWidgets = (next: DashWidget[]) =>
     onUpdate((d) => {
       d.settings.dashboard = { widgets: next };
     });
   const updateConfig = (id: string, cfg: NonNullable<DashWidget['config']>) =>
     setWidgets(widgets.map((w) => (w.id === id ? { ...w, config: { ...w.config, ...cfg } } : w)));
-  const setSpan = (id: string, span: number) =>
-    setWidgets(widgets.map((w) => (w.id === id ? { ...w, span } : w)));
   const remove = (id: string) => setWidgets(widgets.filter((w) => w.id !== id));
   const add = () => setWidgets([...widgets, newDashWidget(addType)]);
   const move = (fromId: string, toId: string) => {
@@ -56,6 +64,36 @@ export function Home({
     const [m] = next.splice(from, 1);
     if (m) next.splice(to, 0, m);
     setWidgets(next);
+  };
+
+  // 拖右下角手柄改变 w(列)×h(行)，按格吸附；松手才落库。
+  const startResize = (e: React.PointerEvent, wgt: DashWidget & { w: number; h: number }) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const grid = gridRef.current;
+    if (!grid) return;
+    const gap = 16;
+    const cellW = (grid.clientWidth - gap * (GRID_COLS - 1)) / GRID_COLS;
+    const sx = e.clientX;
+    const sy = e.clientY;
+    let lastW = wgt.w;
+    let lastH = wgt.h;
+    const onMove = (ev: PointerEvent) => {
+      const dw = Math.round((ev.clientX - sx) / (cellW + gap));
+      const dh = Math.round((ev.clientY - sy) / (ROW_HEIGHT + gap));
+      lastW = Math.min(GRID_COLS, Math.max(1, wgt.w + dw));
+      lastH = Math.min(3, Math.max(1, wgt.h + dh));
+      setResizing({ id: wgt.id, w: lastW, h: lastH });
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (lastW !== wgt.w || lastH !== wgt.h)
+        setWidgets(widgets.map((x) => (x.id === wgt.id ? { ...x, w: lastW, h: lastH } : x)));
+      setResizing(null);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
   };
 
   const toggleTodo = (id: string) =>
@@ -102,69 +140,97 @@ export function Home({
       </header>
 
       <div className="flex-1 overflow-auto p-6">
+        {editing && (
+          <p className="mb-3 text-xs text-gray-400">
+            编辑模式：拖卡片左上角手柄移动、拖右下角改变大小（1–4 列 × 1–3 行）。
+          </p>
+        )}
         {widgets.length === 0 ? (
           <p className="rounded-xl border border-dashed border-gray-200 py-16 text-center text-sm text-gray-400">
             没有卡片。点右上角「编辑布局 → 添加卡片」。
           </p>
         ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {widgets.map((w) => (
-              <div
-                key={w.id}
-                draggable={editing}
-                onDragStart={() => editing && setDragId(w.id)}
-                onDragOver={(e) => editing && e.preventDefault()}
-                onDrop={() => {
-                  if (editing && dragId) move(dragId, w.id);
-                  setDragId(null);
-                }}
-                onDragEnd={() => setDragId(null)}
-                className={cx(
-                  'min-w-0',
-                  SPAN_CLASS[w.span] ?? SPAN_CLASS[2],
-                  dragId === w.id && 'opacity-40',
-                )}
-              >
-                <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-gray-200 bg-surface">
-                  {editing && (
-                    <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-1.5 text-xs">
-                      <GripVertical size={14} className="cursor-grab text-gray-400" />
-                      <span className="font-medium text-gray-600">{WIDGET_LABELS[w.type]}</span>
-                      <div className="ml-auto flex items-center gap-1">
-                        <span className="text-gray-400">占</span>
-                        <select
-                          value={w.span}
-                          onChange={(e) => setSpan(w.id, Number(e.target.value))}
-                          className="rounded border border-gray-300 px-1 py-0.5 text-xs outline-none"
+          <div
+            ref={gridRef}
+            className="grid grid-flow-row-dense gap-4"
+            style={{
+              gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
+              gridAutoRows: `${ROW_HEIGHT}px`,
+            }}
+          >
+            {widgets.map((w) => {
+              const live = resizing && resizing.id === w.id ? resizing : w;
+              return (
+                <div
+                  key={w.id}
+                  onDragOver={(e) => {
+                    if (editing && dragId && dragId !== w.id) {
+                      e.preventDefault();
+                      setDragOverId(w.id);
+                    }
+                  }}
+                  onDragLeave={() => setDragOverId((c) => (c === w.id ? null : c))}
+                  onDrop={() => {
+                    if (editing && dragId) move(dragId, w.id);
+                    setDragId(null);
+                    setDragOverId(null);
+                  }}
+                  style={{ gridColumn: `span ${live.w}`, gridRow: `span ${live.h}` }}
+                  className={cx(
+                    'relative min-w-0',
+                    dragId === w.id && 'opacity-40',
+                    dragOverId === w.id && 'rounded-2xl ring-2 ring-brand-300',
+                  )}
+                >
+                  <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-gray-200 bg-surface shadow-sm">
+                    {editing && (
+                      <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-1.5 text-xs">
+                        <span
+                          draggable
+                          onDragStart={() => setDragId(w.id)}
+                          onDragEnd={() => {
+                            setDragId(null);
+                            setDragOverId(null);
+                          }}
+                          className="cursor-grab"
+                          title="拖动移动"
                         >
-                          {[1, 2, 3, 4].map((n) => (
-                            <option key={n} value={n}>
-                              {n} 格
-                            </option>
-                          ))}
-                        </select>
+                          <GripVertical size={14} className="text-gray-400" />
+                        </span>
+                        <span className="font-medium text-gray-600">{WIDGET_LABELS[w.type]}</span>
+                        <span className="text-gray-400">
+                          {live.w}×{live.h}
+                        </span>
                         <button
                           onClick={() => remove(w.id)}
                           title="移除"
-                          className="rounded p-0.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+                          className="ml-auto rounded p-0.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
                         >
                           <X size={14} />
                         </button>
                       </div>
+                    )}
+                    <div className="min-h-0 flex-1 overflow-auto p-4">
+                      <WidgetBody
+                        widget={w}
+                        data={data}
+                        editing={editing}
+                        onToggleTodo={toggleTodo}
+                        onConfig={(cfg) => updateConfig(w.id, cfg)}
+                      />
                     </div>
-                  )}
-                  <div className="min-h-0 flex-1 p-4">
-                    <WidgetBody
-                      widget={w}
-                      data={data}
-                      editing={editing}
-                      onToggleTodo={toggleTodo}
-                      onConfig={(cfg) => updateConfig(w.id, cfg)}
-                    />
                   </div>
+                  {editing && (
+                    <div
+                      onPointerDown={(e) => startResize(e, w)}
+                      title="拖动改变大小"
+                      style={{ touchAction: 'none' }}
+                      className="absolute bottom-1.5 right-1.5 h-3 w-3 cursor-se-resize border-b-2 border-r-2 border-gray-400 hover:border-brand-500"
+                    />
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
