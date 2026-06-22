@@ -10,6 +10,7 @@ import {
   GitBranch,
   GripVertical,
   Layers,
+  LayoutDashboard,
   Link as LinkIcon,
   Lock,
   LogIn,
@@ -62,6 +63,7 @@ import { AddMemo, MemoRow } from '@/components/MemoRow';
 import { AuditModal } from './AuditModal';
 import { BigScreen } from './BigScreen';
 import { CaptureModal } from './CaptureModal';
+import { Home } from './Home';
 import { DocsModal } from './DocsModal';
 import { MemoWidget } from './MemoWidget';
 import { AccountEditor, EnvEditor, LinkEditor, ProjectEditor } from './editors';
@@ -87,6 +89,7 @@ export default function App() {
 
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showHome, setShowHome] = useState(true);
   const [editing, setEditing] = useState<Editing>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showIO, setShowIO] = useState(false);
@@ -242,6 +245,21 @@ export default function App() {
           </div>
         </div>
 
+        <div className="px-2 pb-1">
+          <button
+            onClick={() => {
+              setShowHome(true);
+              setQuery('');
+            }}
+            className={cx(
+              'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium',
+              showHome && !searchResults ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-100',
+            )}
+          >
+            <LayoutDashboard size={16} /> 首页
+          </button>
+        </div>
+
         <div className="flex items-center justify-between px-4 py-1.5 text-xs font-medium text-gray-400">
           <span>项目（{projects.length}）</span>
           <button
@@ -283,13 +301,14 @@ export default function App() {
                 }}
                 onClick={() => {
                   setSelectedId(p.id);
+                  setShowHome(false);
                   setQuery('');
                 }}
                 className={cx(
                   'group mb-0.5 flex w-full items-center gap-1.5 rounded-lg px-2 py-2 text-left',
                   dragId === p.id && 'opacity-40',
                   dragOverId === p.id && 'ring-2 ring-brand-300',
-                  selected?.id === p.id && !searchResults
+                  selected?.id === p.id && !searchResults && !showHome
                     ? 'bg-brand-50 text-brand-700'
                     : 'hover:bg-gray-100',
                 )}
@@ -340,6 +359,8 @@ export default function App() {
       <main className="flex flex-1 flex-col overflow-hidden">
         {searchResults ? (
           <SearchView results={searchResults} onCopy={copy} onOpenLogin={openLogin} />
+        ) : showHome ? (
+          <Home data={data} onUpdate={update} />
         ) : selected ? (
           <ProjectView
             project={selected}

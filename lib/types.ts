@@ -112,6 +112,37 @@ export interface SyncState {
   lastError?: string;
 }
 
+/** 首页仪表盘卡片类型 */
+export type DashWidgetType =
+  | 'stats'
+  | 'todos'
+  | 'calendar'
+  | 'launcher'
+  | 'weather'
+  | 'image';
+
+export interface DashWidget {
+  id: string;
+  type: DashWidgetType;
+  /** 占几格（1-4 列） */
+  span: number;
+  /** 各卡片自有配置 */
+  config?: {
+    label?: string;
+    /** weather */
+    city?: string;
+    lat?: number;
+    lon?: number;
+    /** image */
+    dataUrl?: string;
+    caption?: string;
+  };
+}
+
+export interface DashboardConfig {
+  widgets: DashWidget[];
+}
+
 export interface VaultSettings {
   /** 空闲多少分钟后自动锁定；0 表示不自动锁定（不推荐） */
   autoLockMinutes: number;
@@ -121,6 +152,8 @@ export interface VaultSettings {
   autoSubmit?: boolean;
   /** 主题；undefined 视为跟随系统 */
   theme?: 'light' | 'dark' | 'system';
+  /** 首页仪表盘布局 */
+  dashboard?: DashboardConfig;
 }
 
 /** 解密后的保险箱明文数据（仅存在于内存中） */
