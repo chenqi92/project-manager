@@ -23,7 +23,7 @@ export default defineConfig({
     name: '项目环境管家',
     short_name: 'EnvManager',
     description:
-      '安全存储并自动填充公司各项目 / 环境 / 平台的登录凭据。数据本地端到端加密，零知识，不上传服务器。',
+      '安全存储并自动填充公司各项目 / 环境 / 平台的登录凭据。数据用主密码在本地端到端加密、仅存密文；可选的自托管同步也只传密文，服务器无法解密。',
     version: pkg.version,
     // 最小权限集：
     //  storage   - 保存加密金库（local）与内存密钥（session）

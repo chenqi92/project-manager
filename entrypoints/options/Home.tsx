@@ -54,6 +54,10 @@ export function Home({
   const updateConfig = (id: string, cfg: NonNullable<DashWidget['config']>) =>
     setWidgets(widgets.map((w) => (w.id === id ? { ...w, config: { ...w.config, ...cfg } } : w)));
   const remove = (id: string) => setWidgets(widgets.filter((w) => w.id !== id));
+  const enableWeather = () =>
+    onUpdate((d) => {
+      d.settings.weatherEnabled = true;
+    });
   const add = () => setWidgets([...widgets, newDashWidget(addType)]);
   const move = (fromId: string, toId: string) => {
     if (fromId === toId) return;
@@ -217,6 +221,7 @@ export function Home({
                         editing={editing}
                         onToggleTodo={toggleTodo}
                         onConfig={(cfg) => updateConfig(w.id, cfg)}
+                        onEnableWeather={enableWeather}
                       />
                     </div>
                   </div>
@@ -244,12 +249,14 @@ function WidgetBody({
   editing,
   onToggleTodo,
   onConfig,
+  onEnableWeather,
 }: {
   widget: DashWidget;
   data: VaultData;
   editing: boolean;
   onToggleTodo: (id: string) => void;
   onConfig: (cfg: NonNullable<DashWidget['config']>) => void;
+  onEnableWeather: () => void;
 }) {
   switch (widget.type) {
     case 'stats':
@@ -261,7 +268,15 @@ function WidgetBody({
     case 'launcher':
       return <LauncherWidget data={data} />;
     case 'weather':
-      return <WeatherWidget widget={widget} editing={editing} onConfig={onConfig} />;
+      return (
+        <WeatherWidget
+          widget={widget}
+          editing={editing}
+          enabled={data.settings.weatherEnabled === true}
+          onEnable={onEnableWeather}
+          onConfig={onConfig}
+        />
+      );
     case 'image':
       return <ImageWidget widget={widget} editing={editing} onConfig={onConfig} />;
   }
@@ -478,10 +493,14 @@ function LauncherWidget({ data }: { data: VaultData }) {
 function WeatherWidget({
   widget,
   editing,
+  enabled,
+  onEnable,
   onConfig,
 }: {
   widget: DashWidget;
   editing: boolean;
+  enabled: boolean;
+  onEnable: () => void;
   onConfig: (cfg: NonNullable<DashWidget['config']>) => void;
 }) {
   const city = widget.config?.city ?? '';
@@ -495,7 +514,8 @@ function WeatherWidget({
   }, [city]);
 
   useEffect(() => {
-    if (!city) {
+    // 默认关闭：未显式开启「联网天气」时绝不请求第三方服务。
+    if (!enabled || !city) {
       setState({ loading: false });
       return;
     }
@@ -514,7 +534,7 @@ function WeatherWidget({
     return () => {
       cancelled = true;
     };
-  }, [city]);
+  }, [enabled, city]);
 
   return (
     <>
@@ -532,7 +552,14 @@ function WeatherWidget({
           />
         </div>
       )}
-      {!city ? (
+      {!enabled ? (
+        <div className="py-3 text-center">
+          <p className="text-xs text-gray-400">天气需联网获取，默认关闭。</p>
+          <button onClick={onEnable} className="mt-1.5 text-xs text-brand-600 hover:underline">
+            开启联网天气
+          </button>
+        </div>
+      ) : !city ? (
         <p className="py-4 text-center text-xs text-gray-400">点「编辑布局」后填写城市</p>
       ) : state.loading ? (
         <p className="py-4 text-center text-xs text-gray-400">加载中…</p>

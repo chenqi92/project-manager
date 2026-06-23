@@ -28,6 +28,7 @@ export function Settings({
       <div className="flex flex-col gap-6">
         <AppearanceSection data={data} onSave={onSave} />
         <FillSection data={data} onSave={onSave} />
+        <WeatherSection data={data} onSave={onSave} />
         <SyncSection data={data} onSave={onSave} refresh={refresh} />
         <BiometricSection refresh={refresh} />
         <AutoLockSection data={data} onSave={onSave} />
@@ -322,6 +323,33 @@ function FillSection({
       </label>
       <p className="text-[11px] text-gray-400">
         关闭后只填账号密码、不自动提交，需你手动点登录。仅在网址 origin 完全一致的页面才会提交。
+      </p>
+    </section>
+  );
+}
+
+// --------------------------- 联网功能 ---------------------------
+
+function WeatherSection({
+  data,
+  onSave,
+}: {
+  data: VaultData;
+  onSave: (next: VaultData) => Promise<void>;
+}) {
+  const enabled = data.settings.weatherEnabled === true;
+  const toggle = async () => {
+    await onSave(produce(data, (d) => void (d.settings.weatherEnabled = !enabled)));
+  };
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold text-gray-800">联网功能</h3>
+      <label className="flex items-center gap-2 text-sm text-gray-700">
+        <input type="checkbox" checked={enabled} onChange={toggle} />
+        启用首页天气卡片（联网）
+      </label>
+      <p className="text-[11px] text-gray-400">
+        开启后，天气卡片会把你输入的城市名发送给第三方服务 open-meteo.com 获取天气；关闭则不进行任何联网请求。默认关闭。
       </p>
     </section>
   );

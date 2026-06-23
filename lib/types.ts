@@ -160,6 +160,8 @@ export interface VaultSettings {
   theme?: 'light' | 'dark' | 'system';
   /** 首页仪表盘布局 */
   dashboard?: DashboardConfig;
+  /** 首页天气卡片是否允许联网获取；默认关闭，仅在用户显式开启后才请求第三方天气服务 */
+  weatherEnabled?: boolean;
 }
 
 /** 解密后的保险箱明文数据（仅存在于内存中） */

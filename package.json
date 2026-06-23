@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.2.0",
   "type": "module",
-  "description": "Securely store and auto-fill login credentials for your company project environments. Local, end-to-end encrypted, zero-knowledge.",
+  "description": "Securely store and auto-fill login credentials across your projects, environments and platforms. Master-password, end-to-end encrypted locally; optional self-hosted sync stores ciphertext only.",
   "scripts": {
     "dev": "wxt",
     "dev:firefox": "wxt -b firefox",
