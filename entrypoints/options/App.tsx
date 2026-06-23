@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { LockScreen } from '@/components/LockScreen';
 import { TotpBadge } from '@/components/TotpBadge';
+import { Markdown } from '@/components/Markdown';
 import { Button, Input, cx } from '@/components/ui';
 import { useVault } from '@/hooks/useVault';
 import { getOrigin } from '@/lib/autofill';
@@ -709,27 +710,92 @@ function ProjectView(props: ProjectViewProps) {
         </div>
       </header>
 
-      <div className="flex-1 space-y-5 overflow-auto p-6">
-        {project.note && <p className="text-sm text-gray-500">{project.note}</p>}
+      <div className="flex-1 overflow-auto p-6">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
+          {/* 右侧窄栏：待办 + 说明（xl 下 order-last 移到右边，窄屏下置顶） */}
+          <aside className="flex w-full flex-col gap-5 xl:order-last xl:w-[380px] xl:shrink-0">
+            <MemoSection
+              memos={project.memos ?? []}
+              onAdd={props.onAddMemo}
+              onToggleDone={props.onToggleMemoDone}
+              onToggleUrgent={props.onToggleMemoUrgent}
+              onDelete={props.onDeleteMemo}
+            />
+            <DocsPanel docs={project.docs ?? []} onOpen={props.onOpenDocs} />
+          </aside>
 
-        <MemoSection
-          memos={project.memos ?? []}
-          onAdd={props.onAddMemo}
-          onToggleDone={props.onToggleMemoDone}
-          onToggleUrgent={props.onToggleMemoUrgent}
-          onDelete={props.onDeleteMemo}
-        />
-
-        {project.environments.length === 0 && (
-          <p className="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
-            还没有环境，点右上角「新建环境」
-          </p>
-        )}
-        {project.environments.map((env) => (
-          <EnvBlock key={env.id} env={env} {...props} />
-        ))}
+          {/* 主区：环境 / 链接 / 账号 */}
+          <div className="min-w-0 flex-1 space-y-5">
+            {project.note && <p className="text-sm text-gray-500">{project.note}</p>}
+            {project.environments.length === 0 && (
+              <p className="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
+                还没有环境，点右上角「新建环境」
+              </p>
+            )}
+            {project.environments.map((env) => (
+              <EnvBlock key={env.id} env={env} {...props} />
+            ))}
+          </div>
+        </div>
       </div>
     </>
+  );
+}
+
+function DocsPanel({ docs, onOpen }: { docs: ProjectDoc[]; onOpen: () => void }) {
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const active = docs.find((d) => d.id === activeId) ?? docs[0] ?? null;
+  return (
+    <section className="flex min-h-0 flex-col rounded-xl border border-gray-200 bg-surface">
+      <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-2.5">
+        <FileText size={15} className="text-brand-600" />
+        <span className="font-medium">说明</span>
+        {docs.length > 0 && (
+          <span className="rounded-full bg-gray-100 px-1.5 text-[11px] text-gray-500">{docs.length}</span>
+        )}
+        <button
+          onClick={onOpen}
+          className="ml-auto text-xs text-brand-600 hover:text-brand-700"
+        >
+          {docs.length ? '编辑 / 管理' : '新建文档'}
+        </button>
+      </div>
+      {docs.length === 0 ? (
+        <button
+          onClick={onOpen}
+          className="m-3 rounded-lg border border-dashed border-gray-200 py-6 text-center text-xs text-gray-400 hover:border-brand-300 hover:text-brand-600"
+        >
+          还没有说明文档，点此新建
+        </button>
+      ) : (
+        <>
+          {docs.length > 1 && (
+            <div className="flex flex-wrap gap-1 border-b border-gray-100 px-3 py-2">
+              {docs.map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => setActiveId(d.id)}
+                  title={d.title}
+                  className={cx(
+                    'max-w-[150px] truncate rounded-md px-2 py-1 text-xs',
+                    active?.id === d.id
+                      ? 'bg-brand-50 text-brand-700'
+                      : 'text-gray-500 hover:bg-gray-100',
+                  )}
+                >
+                  {d.title}
+                </button>
+              ))}
+            </div>
+          )}
+          {active && (
+            <div className="max-h-[55vh] overflow-auto p-4">
+              <Markdown source={active.content} />
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 
