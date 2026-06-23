@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { Download, Upload } from 'lucide-react';
+import { useDialog } from '@/components/Dialog';
 import { Banner, Button, Input, Label, Modal, Select, cx } from '@/components/ui';
 import { api } from '@/lib/messaging';
 import { decodeQrImage } from '@/lib/qr';
@@ -48,6 +49,7 @@ export function ImportExport({
 }
 
 function ExportTab({ data }: { data: VaultData }) {
+  const { confirm } = useDialog();
   const [pw, setPw] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
   const allIds = data.projects.map((p) => p.id);
@@ -81,6 +83,12 @@ function ExportTab({ data }: { data: VaultData }) {
   const exportPlain = async (mode: 'json' | 'csv') => {
     setMsg(null);
     if (selected.size === 0) return setMsg('请至少选择一个项目');
+    const ok = await confirm({
+      message: `即将导出明文 ${mode.toUpperCase()}${scopeNote}，文件内含可直接读取的密码。请确认并妥善保管、用后尽快删除。`,
+      danger: true,
+      confirmText: '仍要导出',
+    });
+    if (!ok) return;
     const res = await api.export(mode, undefined, scopeIds);
     download(res.filename, res.mime, res.content);
     setMsg(`已导出明文 ${mode.toUpperCase()}${scopeNote}`);
