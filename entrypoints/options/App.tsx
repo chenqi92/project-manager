@@ -67,6 +67,7 @@ import { CaptureModal } from './CaptureModal';
 import { Home } from './Home';
 import { DocsModal } from './DocsModal';
 import { MemoWidget } from './MemoWidget';
+import { OpenLoginModal } from './OpenLoginModal';
 import { AccountEditor, EnvEditor, LinkEditor, ProjectEditor } from './editors';
 import { ImportExport } from './ImportExport';
 import { Settings } from './Settings';
@@ -105,6 +106,12 @@ export default function App() {
     const p = new URLSearchParams(location.search);
     return p.get('capture') === '1'
       ? { url: p.get('url') ?? '', title: p.get('title') ?? '' }
+      : null;
+  });
+  const [loginHandoff, setLoginHandoff] = useState(() => {
+    const p = new URLSearchParams(location.search);
+    return p.get('openlogin') === '1'
+      ? { accountId: p.get('account') ?? '', url: p.get('url') ?? '' }
       : null;
   });
 
@@ -575,6 +582,31 @@ export default function App() {
             setCapture(null);
             history.replaceState(null, '', location.pathname);
             flash('已保存到保险箱');
+          }}
+        />
+      )}
+      {loginHandoff && (
+        <OpenLoginModal
+          data={data}
+          accountId={loginHandoff.accountId}
+          url={loginHandoff.url}
+          autoSubmit={data.settings.autoSubmit === true}
+          onClose={() => {
+            setLoginHandoff(null);
+            history.replaceState(null, '', location.pathname);
+          }}
+          onDone={async () => {
+            const t = await browser.tabs.getCurrent().catch(() => null);
+            if (t?.id) {
+              try {
+                await browser.tabs.remove(t.id);
+                return;
+              } catch {
+                /* 关不掉就退回到清掉弹窗 */
+              }
+            }
+            setLoginHandoff(null);
+            history.replaceState(null, '', location.pathname);
           }}
         />
       )}

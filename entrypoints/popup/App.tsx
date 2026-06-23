@@ -191,20 +191,25 @@ export default function App() {
     if (!origin) return flash('链接地址不合法');
     const pattern = origin + '/*';
     try {
-      // 已授权则直接继续（不弹窗、不会关闭 popup）；未授权才申请——首次申请会弹系统
-      // 权限框从而关闭 popup，授权后再点一次即可（此时已 contains，一步到位）。
-      const granted =
-        (await browser.permissions.contains({ origins: [pattern] })) ||
-        (await browser.permissions.request({ origins: [pattern] }));
-      if (!granted) return flash('未授权访问该网站');
-      const r = await api.openAndFill(
-        entry.url,
-        entry.username,
-        entry.password,
-        data?.settings.autoSubmit === true,
-      );
-      await recordUse(entry.accountId);
-      if (!r.filled && r.reason) flash(r.reason);
+      // 已授权：popup 内直接打开并填充（不弹系统框，popup 不会被关）。
+      if (await browser.permissions.contains({ origins: [pattern] })) {
+        const r = await api.openAndFill(
+          entry.url,
+          entry.username,
+          entry.password,
+          data?.settings.autoSubmit === true,
+        );
+        await recordUse(entry.accountId);
+        if (!r.filled && r.reason) flash(r.reason);
+        window.close();
+        return;
+      }
+      // 未授权：跳设置页完成授权 + 打开填充，避免系统权限框关闭 popup 后还要再点一次。
+      // 只传 accountId（不经 URL 传密码），设置页已解锁可查出明文。
+      const target =
+        browser.runtime.getURL('/options.html') +
+        `?openlogin=1&account=${encodeURIComponent(entry.accountId)}&url=${encodeURIComponent(entry.url)}`;
+      await browser.tabs.create({ url: target });
       window.close();
     } catch (e) {
       flash('打开失败：' + (e instanceof Error ? e.message : String(e)));

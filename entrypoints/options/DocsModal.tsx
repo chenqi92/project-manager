@@ -1,7 +1,19 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Eye, FileText, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  FileText,
+  List,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 import { Button, Input, cx } from '@/components/ui';
-import { Markdown } from '@/components/Markdown';
+import { Markdown, type TocItem } from '@/components/Markdown';
 import { useDialog } from '@/components/Dialog';
 import type { ProjectDoc } from '@/lib/types';
 import { newDoc } from '@/lib/vault-ops';
@@ -25,7 +37,14 @@ export function DocsModal({
   const [mode, setMode] = useState<DocMode>('read');
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [toc, setToc] = useState<TocItem[]>([]);
+  const [showToc, setShowToc] = useState(true);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [hits, setHits] = useState(0);
+  const [activeHit, setActiveHit] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  const readScrollRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<ProjectDoc[]>(docs);
   const onChangeRef = useRef(onChange);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -53,11 +72,41 @@ export function DocsModal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && mode === 'read') {
+        e.preventDefault();
+        setShowSearch(true);
+        return;
+      }
+      if (e.key === 'Escape') {
+        if (showSearch) {
+          setShowSearch(false);
+          setSearchTerm('');
+        } else onClose();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, showSearch, mode]);
+
+  // 切换文档/退出阅读：清掉搜索与目录态，避免高亮串到别的文档
+  useEffect(() => {
+    setShowSearch(false);
+    setSearchTerm('');
+    setActiveHit(0);
+    setHits(0);
+    setToc([]);
+  }, [activeId]);
+
+  const nextHit = () => {
+    if (hits) setActiveHit((i) => (i + 1) % hits);
+  };
+  const prevHit = () => {
+    if (hits) setActiveHit((i) => (i - 1 + hits) % hits);
+  };
+  const jumpTo = (id: string) => {
+    const target = readScrollRef.current?.querySelector(`#${CSS.escape(id)}`);
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   const active = list.find((d) => d.id === activeId) ?? null;
   const flush = async (next: ProjectDoc[] = listRef.current) => {
@@ -227,6 +276,32 @@ export function DocsModal({
                   >
                     {saveLabel}
                   </span>
+                  {mode === 'read' && (
+                    <>
+                      <button
+                        type="button"
+                        title="文档内搜索 (Ctrl+F)"
+                        onClick={() => setShowSearch((s) => !s)}
+                        className={cx(
+                          'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
+                          showSearch ? 'bg-brand-50 text-brand-700' : 'text-gray-500 hover:bg-gray-100',
+                        )}
+                      >
+                        <Search size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        title={showToc ? '隐藏目录' : '显示目录'}
+                        onClick={() => setShowToc((s) => !s)}
+                        className={cx(
+                          'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
+                          showToc ? 'bg-brand-50 text-brand-700' : 'text-gray-500 hover:bg-gray-100',
+                        )}
+                      >
+                        <List size={15} />
+                      </button>
+                    </>
+                  )}
                   <div className="flex shrink-0 rounded-lg border border-gray-200 bg-gray-50 p-0.5">
                     <ModeButton active={mode === 'read'} onClick={() => setMode('read')}>
                       <Eye size={14} /> 阅读
@@ -248,8 +323,92 @@ export function DocsModal({
                   </Button>
                 </div>
                 {mode === 'read' ? (
-                  <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 p-4">
-                    <Markdown source={active.content} />
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    {showSearch && (
+                      <div className="mb-2 flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5">
+                        <Search size={14} className="shrink-0 text-gray-400" />
+                        <input
+                          autoFocus
+                          value={searchTerm}
+                          onChange={(e) => {
+                            setSearchTerm(e.target.value);
+                            setActiveHit(0);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (e.shiftKey) prevHit();
+                              else nextHit();
+                            }
+                          }}
+                          placeholder="在本文档内搜索"
+                          className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                        />
+                        <span className="shrink-0 text-xs text-gray-400">
+                          {searchTerm ? `${hits ? activeHit + 1 : 0}/${hits}` : ''}
+                        </span>
+                        <button
+                          type="button"
+                          title="上一个 (Shift+Enter)"
+                          onClick={prevHit}
+                          disabled={!hits}
+                          className="flex h-6 w-6 items-center justify-center rounded text-gray-500 hover:bg-gray-200 disabled:opacity-40"
+                        >
+                          <ChevronUp size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          title="下一个 (Enter)"
+                          onClick={nextHit}
+                          disabled={!hits}
+                          className="flex h-6 w-6 items-center justify-center rounded text-gray-500 hover:bg-gray-200 disabled:opacity-40"
+                        >
+                          <ChevronDown size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          title="关闭搜索"
+                          onClick={() => {
+                            setShowSearch(false);
+                            setSearchTerm('');
+                          }}
+                          className="flex h-6 w-6 items-center justify-center rounded text-gray-500 hover:bg-gray-200"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    )}
+                    <div className="flex min-h-0 flex-1 gap-3">
+                      <div
+                        ref={readScrollRef}
+                        className="min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 p-4"
+                      >
+                        <Markdown
+                          source={active.content}
+                          onToc={setToc}
+                          searchTerm={searchTerm}
+                          searchActive={activeHit}
+                          onSearchHits={setHits}
+                        />
+                      </div>
+                      {showToc && toc.length > 1 && (
+                        <nav className="hidden w-52 shrink-0 overflow-auto rounded-xl border border-gray-200 bg-gray-50/50 p-2 lg:block">
+                          <div className="mb-1 px-1 text-xs font-medium text-gray-400">目录</div>
+                          {toc.map((t, i) => (
+                            <button
+                              key={`${t.id}-${i}`}
+                              type="button"
+                              onClick={() => jumpTo(t.id)}
+                              style={{ paddingLeft: `${(Math.max(t.level, 1) - 1) * 12 + 8}px` }}
+                              className="block w-full truncate rounded py-1 pr-2 text-left text-xs text-gray-600 hover:bg-gray-100 hover:text-brand-700"
+                              title={t.text}
+                            >
+                              {t.text}
+                            </button>
+                          ))}
+                        </nav>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div

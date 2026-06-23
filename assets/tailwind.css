@@ -113,6 +113,19 @@ html.dark {
   padding: 4px 8px;
   margin-bottom: 4px;
 }
+.md-body mark.md-hit {
+  background: #fde68a;
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.md-body mark.md-hit-active {
+  background: var(--color-brand-500);
+  color: #fff;
+}
+.md-body :where(h1, h2, h3, h4, h5, h6) {
+  scroll-margin-top: 0.5em;
+}
 
 /* 浮动备忘：紧急未完成项的抖动提醒 */
 @keyframes memo-shake {
