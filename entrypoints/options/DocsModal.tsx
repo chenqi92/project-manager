@@ -49,6 +49,8 @@ export function DocsModal({
   const onChangeRef = useRef(onChange);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveSeq = useRef(0);
+  // 串行链：把实际写入排队，避免防抖保存与 immediate 保存并发写 vault（不依赖外部串行化）。
+  const flushChain = useRef<Promise<void>>(Promise.resolve());
   const { confirm } = useDialog();
 
   useEffect(() => {
@@ -64,7 +66,10 @@ export function DocsModal({
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
-        void onChangeRef.current(listRef.current);
+        // 卸载时把未保存的防抖编辑排到串行链尾，避免与在途写入并发。
+        flushChain.current = flushChain.current
+          .then(() => onChangeRef.current(listRef.current))
+          .catch(() => {});
       }
     },
     [],
@@ -109,7 +114,7 @@ export function DocsModal({
   };
 
   const active = list.find((d) => d.id === activeId) ?? null;
-  const flush = async (next: ProjectDoc[] = listRef.current) => {
+  const flush = (next: ProjectDoc[] = listRef.current): Promise<void> => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
@@ -117,15 +122,18 @@ export function DocsModal({
     const seq = ++saveSeq.current;
     setSaveState('saving');
     setSaveError(null);
-    try {
-      await onChangeRef.current(next);
-      if (seq === saveSeq.current) setSaveState('saved');
-    } catch (e) {
-      if (seq === saveSeq.current) {
-        setSaveState('error');
-        setSaveError(e instanceof Error ? e.message : String(e));
+    flushChain.current = flushChain.current.then(async () => {
+      try {
+        await onChangeRef.current(next);
+        if (seq === saveSeq.current) setSaveState('saved');
+      } catch (e) {
+        if (seq === saveSeq.current) {
+          setSaveState('error');
+          setSaveError(e instanceof Error ? e.message : String(e));
+        }
       }
-    }
+    });
+    return flushChain.current;
   };
   const scheduleSave = (next: ProjectDoc[]) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);

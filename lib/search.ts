@@ -55,7 +55,9 @@ export function flatten(data: VaultData): FlatEntry[] {
   for (const p of data.projects)
     for (const e of p.environments)
       for (const l of e.links)
-        for (const a of l.accounts) out.push(buildEntry(p, e, l, a, l.url));
+        // 主网址为空时回退到「更多网址」的首个，保证多网址链接也能被「打开并登录」。
+        for (const a of l.accounts)
+          out.push(buildEntry(p, e, l, a, l.url || linkUrls(l)[0] || ''));
   return out;
 }
 
