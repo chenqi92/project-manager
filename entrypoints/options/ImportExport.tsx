@@ -211,7 +211,10 @@ function ImportTab({ onImported }: { onImported: () => Promise<void> }) {
         format === 'encrypted' ? pw : undefined,
       );
       await onImported();
-      setMsg({ tone: 'info', text: `导入成功，新增 ${imported} 个账号` });
+      setMsg({
+        tone: 'info',
+        text: mode === 'replace' ? `导入成功，共 ${imported} 个账号` : `导入成功，新增 ${imported} 个账号`,
+      });
       setContent('');
       clearFile();
     } catch (e) {

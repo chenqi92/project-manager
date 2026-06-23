@@ -34,7 +34,7 @@ import { useVault } from '@/hooks/useVault';
 import { getOrigin } from '@/lib/autofill';
 import { biometricUnlock } from '@/lib/bio-unlock';
 import { api } from '@/lib/messaging';
-import { applyTheme } from '@/lib/theme';
+import { applyTheme, watchSystemTheme } from '@/lib/theme';
 import { copyWithAutoClear } from '@/lib/clipboard';
 import { search, type FlatEntry } from '@/lib/search';
 import type {
@@ -110,6 +110,7 @@ export default function App() {
 
   useEffect(() => {
     applyTheme(data?.settings.theme);
+    return watchSystemTheme(() => data?.settings.theme);
   }, [data?.settings.theme]);
 
   const flash = (m: string) => {
@@ -119,7 +120,12 @@ export default function App() {
 
   const update = async (recipe: (d: VaultData) => void) => {
     if (!data) return;
-    await vault.save(produce(data, recipe));
+    try {
+      await vault.save(produce(data, recipe));
+    } catch (e) {
+      flash('保存失败：' + (e instanceof Error ? e.message : String(e)));
+      throw e;
+    }
   };
 
   const copy = async (text: string, what: string) => {
@@ -142,7 +148,7 @@ export default function App() {
         url,
         username,
         password,
-        data?.settings.autoSubmit !== false,
+        data?.settings.autoSubmit === true,
       );
       if (!r.filled && r.reason) flash(r.reason);
     } catch (e) {
@@ -1003,7 +1009,7 @@ function SearchRow({
             >
               <LogIn size={15} />
             </IconButton>
-            <IconButton title="打开链接" onClick={() => browser.tabs.create({ url: entry.url })}>
+            <IconButton title="打开链接" onClick={() => void browser.tabs.create({ url: entry.url }).catch(() => {})}>
               <ExternalLink size={15} />
             </IconButton>
           </>

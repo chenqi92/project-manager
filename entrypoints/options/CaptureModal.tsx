@@ -38,6 +38,7 @@ export function CaptureModal({
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   const project = data.projects.find((p) => p.id === projectId);
 
@@ -49,27 +50,34 @@ export function CaptureModal({
 
   const save = async () => {
     setBusy(true);
-    const next = produce(data, (d) => {
-      let proj =
-        projectId === NEW ? undefined : d.projects.find((p) => p.id === projectId);
-      if (!proj) {
-        proj = newProject({ name: newProjectName.trim() || '未命名项目' });
-        d.projects.push(proj);
-      }
-      let env = envId === NEW ? undefined : proj.environments.find((e) => e.id === envId);
-      if (!env) {
-        env = newEnvironment({ name: newEnvName.trim() || '默认', kind: envKind });
-        proj.environments.push(env);
-      }
-      const link = newLink({ name: linkName.trim() || url.trim(), url: url.trim() });
-      if (withAccount && (username.trim() || label.trim())) {
-        link.accounts.push(
-          newAccount({ label: label.trim(), username: username.trim(), password }),
-        );
-      }
-      env.links.push(link);
-    });
-    await onSave(next);
+    setErr(null);
+    try {
+      const next = produce(data, (d) => {
+        let proj =
+          projectId === NEW ? undefined : d.projects.find((p) => p.id === projectId);
+        if (!proj) {
+          proj = newProject({ name: newProjectName.trim() || '未命名项目' });
+          d.projects.push(proj);
+        }
+        let env = envId === NEW ? undefined : proj.environments.find((e) => e.id === envId);
+        if (!env) {
+          env = newEnvironment({ name: newEnvName.trim() || '默认', kind: envKind });
+          proj.environments.push(env);
+        }
+        const link = newLink({ name: linkName.trim() || url.trim(), url: url.trim() });
+        if (withAccount && (username.trim() || label.trim() || password)) {
+          link.accounts.push(
+            newAccount({ label: label.trim(), username: username.trim(), password }),
+          );
+        }
+        env.links.push(link);
+      });
+      await onSave(next);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -159,6 +167,7 @@ export function CaptureModal({
         )}
 
         {!url.trim() && <Banner tone="warn">网址为空，仍可保存但无法用于填充。</Banner>}
+        {err && <Banner tone="error">保存失败：{err}</Banner>}
       </div>
 
       <div className="mt-5 flex justify-end gap-2">

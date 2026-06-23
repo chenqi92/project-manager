@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import {
   Copy,
@@ -21,7 +21,7 @@ import { fillCredentialsInPage, getOrigin, originsMatch } from '@/lib/autofill';
 import { copyWithAutoClear } from '@/lib/clipboard';
 import { envSwitchTargets } from '@/lib/env-switch';
 import { api } from '@/lib/messaging';
-import { applyTheme } from '@/lib/theme';
+import { applyTheme, watchSystemTheme } from '@/lib/theme';
 import { flatten, matchForUrl, search, type FlatEntry } from '@/lib/search';
 import { getUsage, recordUse } from '@/lib/usage';
 import type { CapturePending, EnvKind } from '@/lib/types';
@@ -38,6 +38,7 @@ export default function App() {
   const [usage, setUsage] = useState<Record<string, number>>({});
   const [quickLinkId, setQuickLinkId] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   async function doSync() {
     if (syncing) return;
@@ -61,6 +62,7 @@ export default function App() {
 
   useEffect(() => {
     applyTheme(data?.settings.theme);
+    return watchSystemTheme(() => data?.settings.theme);
   }, [data?.settings.theme]);
 
   useEffect(() => {
@@ -72,7 +74,8 @@ export default function App() {
 
   const flash = (m: string) => {
     setToast(m);
-    setTimeout(() => setToast(null), 2200);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2200);
   };
 
   const matched = useMemo(
@@ -123,10 +126,17 @@ export default function App() {
       return;
     }
     try {
+      // 注入前以标签页「当前」URL 再复核一次 origin：popup 打开后页面可能已重定向，
+      // 缓存的 tab.url 只能作 UI 提示，不能作安全边界（防 TOCTOU 跨源填充）。
+      const liveTab = await browser.tabs.get(tab.id);
+      if (!liveTab.url || !originsMatch(entry.url, liveTab.url)) {
+        flash('当前页面网址已变化，已阻止填充');
+        return;
+      }
       await browser.scripting.executeScript({
         target: { tabId: tab.id },
         func: fillCredentialsInPage,
-        args: [entry.username, entry.password, data?.settings.autoSubmit !== false],
+        args: [entry.username, entry.password, data?.settings.autoSubmit === true],
       });
       await recordUse(entry.accountId);
       window.close();
@@ -149,9 +159,13 @@ export default function App() {
               l.updatedAt = Date.now();
             }
     });
-    await vault.save(next);
-    setQuickLinkId('');
-    flash('已加入，当前页现在可填充了');
+    try {
+      await vault.save(next);
+      setQuickLinkId('');
+      flash('已加入，当前页现在可填充了');
+    } catch (e) {
+      flash('保存失败：' + (e instanceof Error ? e.message : String(e)));
+    }
   }
 
   async function saveCurrentPage() {
@@ -164,8 +178,12 @@ export default function App() {
   }
 
   async function copy(text: string, what: string) {
-    await copyWithAutoClear(text);
-    flash(`${what}已复制（25 秒后自动清空）`);
+    try {
+      await copyWithAutoClear(text);
+      flash(`${what}已复制（25 秒后自动清空）`);
+    } catch {
+      flash('复制失败，请手动复制');
+    }
   }
 
   async function openLogin(entry: FlatEntry) {
@@ -183,7 +201,7 @@ export default function App() {
         entry.url,
         entry.username,
         entry.password,
-        data?.settings.autoSubmit !== false,
+        data?.settings.autoSubmit === true,
       );
       await recordUse(entry.accountId);
       if (!r.filled && r.reason) flash(r.reason);
@@ -265,10 +283,14 @@ export default function App() {
           <div className="flex gap-2">
             <Button
               onClick={async () => {
-                await api.captureSave();
-                setPending(null);
-                await vault.reload();
-                flash('已保存到保险箱');
+                try {
+                  await api.captureSave();
+                  setPending(null);
+                  await vault.reload();
+                  flash('已保存到保险箱');
+                } catch (e) {
+                  flash('保存失败：' + (e instanceof Error ? e.message : String(e)));
+                }
               }}
             >
               {pending.kind === 'update' ? '更新' : '保存'}
@@ -276,8 +298,12 @@ export default function App() {
             <Button
               variant="subtle"
               onClick={async () => {
-                await api.captureDismiss();
-                setPending(null);
+                try {
+                  await api.captureDismiss();
+                  setPending(null);
+                } catch (e) {
+                  flash('忽略失败：' + (e instanceof Error ? e.message : String(e)));
+                }
               }}
             >
               忽略

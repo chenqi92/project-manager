@@ -12,7 +12,7 @@ export async function geocodeCity(
   city: string,
 ): Promise<{ lat: number; lon: number; name: string } | null> {
   const u = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=zh&format=json`;
-  const r = await fetch(u);
+  const r = await fetch(u, { signal: AbortSignal.timeout(8000) });
   if (!r.ok) throw new Error('地理编码失败');
   const j = (await r.json()) as {
     results?: { latitude: number; longitude: number; name: string }[];
@@ -23,7 +23,7 @@ export async function geocodeCity(
 
 export async function fetchWeather(lat: number, lon: number, city: string): Promise<WeatherNow> {
   const u = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto`;
-  const r = await fetch(u);
+  const r = await fetch(u, { signal: AbortSignal.timeout(8000) });
   if (!r.ok) throw new Error('天气获取失败');
   const j = (await r.json()) as {
     current?: { temperature_2m: number; weather_code: number; wind_speed_10m: number };

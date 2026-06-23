@@ -11,7 +11,14 @@ import type {
   VaultData,
 } from './types';
 
-const PRUNE_MS = 90 * 24 * 60 * 60 * 1000; // 墓碑保留 90 天
+const PRUNE_MS = 365 * 24 * 60 * 60 * 1000; // 墓碑保留 365 天：长期离线的设备重连后，避免它带回的旧副本把已删项「复活」。
+
+// 取较新者：updatedAt 不同则取较大；相等时用确定性的内容序列化做 tiebreaker，
+// 保证两台设备对同一对版本合并出相同胜者，结果收敛、不会来回翻转。
+function newer<T extends { updatedAt: number }>(a: T, b: T): T {
+  if (a.updatedAt !== b.updatedAt) return a.updatedAt > b.updatedAt ? a : b;
+  return JSON.stringify(a) <= JSON.stringify(b) ? a : b;
+}
 
 export function mergeVaultData(
   local: VaultData,
@@ -24,21 +31,20 @@ export function mergeVaultData(
     tomb.set(t.id, Math.max(tomb.get(t.id) ?? 0, t.deletedAt));
   }
 
-  const mergeAccount = (a: Account, b: Account): Account =>
-    a.updatedAt >= b.updatedAt ? a : b;
+  const mergeAccount = (a: Account, b: Account): Account => newer(a, b);
 
   const mergeLink = (a: PlatformLink, b: PlatformLink): PlatformLink => {
-    const base = a.updatedAt >= b.updatedAt ? a : b;
+    const base = newer(a, b);
     return { ...base, accounts: mergeList(a.accounts, b.accounts, tomb, mergeAccount) };
   };
 
   const mergeEnv = (a: Environment, b: Environment): Environment => {
-    const base = a.updatedAt >= b.updatedAt ? a : b;
+    const base = newer(a, b);
     return { ...base, links: mergeList(a.links, b.links, tomb, mergeLink) };
   };
 
   const mergeProject = (a: Project, b: Project): Project => {
-    const base = a.updatedAt >= b.updatedAt ? a : b;
+    const base = newer(a, b);
     return {
       ...base,
       environments: mergeList(a.environments, b.environments, tomb, mergeEnv),

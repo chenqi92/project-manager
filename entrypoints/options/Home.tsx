@@ -566,10 +566,23 @@ function ImageWidget({
   const dataUrl = widget.config?.dataUrl;
   const caption = widget.config?.caption ?? '';
   const [captionInput, setCaptionInput] = useState(caption);
+  const [imgErr, setImgErr] = useState<string | null>(null);
   useEffect(() => setCaptionInput(caption), [caption]);
 
+  // 图片以 dataURL 形式存进加密保险箱，必须限制类型与大小，避免超大图撑爆存储/同步。
+  const MAX_IMG_BYTES = 1.5 * 1024 * 1024;
   const pick = (file: File) => {
+    setImgErr(null);
+    if (!file.type.startsWith('image/')) {
+      setImgErr('请选择图片文件');
+      return;
+    }
+    if (file.size > MAX_IMG_BYTES) {
+      setImgErr('图片过大（上限 1.5MB），请压缩后再上传');
+      return;
+    }
     const reader = new FileReader();
+    reader.onerror = () => setImgErr('图片读取失败，请重试');
     reader.onload = () => onConfig({ dataUrl: String(reader.result ?? '') });
     reader.readAsDataURL(file);
   };
@@ -611,6 +624,7 @@ function ImageWidget({
           />
         </div>
       )}
+      {imgErr && <p className="mt-1 text-center text-xs text-rose-500">{imgErr}</p>}
     </>
   );
 }

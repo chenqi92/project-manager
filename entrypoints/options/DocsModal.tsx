@@ -59,8 +59,12 @@ export function DocsModal({
   const importFiles = async (files: FileList) => {
     const added: ProjectDoc[] = [];
     for (const f of Array.from(files)) {
-      const text = await f.text();
-      added.push(newDoc({ title: f.name.replace(/\.(md|markdown|txt)$/i, ''), content: text }));
+      try {
+        const text = await f.text();
+        added.push(newDoc({ title: f.name.replace(/\.(md|markdown|txt)$/i, ''), content: text }));
+      } catch {
+        // 单个文件读取失败时跳过，不中断其余文件的导入。
+      }
     }
     if (added.length) {
       commit([...list, ...added]);

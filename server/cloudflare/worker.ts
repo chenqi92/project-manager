@@ -16,6 +16,17 @@ async function sha256hex(s: string): Promise<string> {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** 常量时间字符串比较（两个等长 hex 摘要），避免 token 校验的时序侧信道。 */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/** 单个保险箱密文 blob 的大小上限（5 MB），防止单账号无限写入耗尽 D1。 */
+const MAX_BLOB_BYTES = 5 * 1024 * 1024;
+
 const app = new Hono<{ Bindings: Env; Variables: { accountId: string } }>();
 
 app.get('/health', (c) => c.text('ok'));
@@ -27,8 +38,8 @@ app.use('/v1/*', async (c, next) => {
   let acct = await c.env.DB.prepare('SELECT account_id FROM accounts WHERE token_hash = ?')
     .bind(hash)
     .first<{ account_id: string }>();
-  // 自举：配了 SYNC_TOKEN 且本次正是它，但还没账号 -> 建一个。
-  if (!acct && c.env.SYNC_TOKEN && tok === c.env.SYNC_TOKEN) {
+  // 自举：配了 SYNC_TOKEN 且本次正是它，但还没账号 -> 建一个。常量时间比较其摘要。
+  if (!acct && c.env.SYNC_TOKEN && timingSafeEqual(hash, await sha256hex(c.env.SYNC_TOKEN))) {
     const accountId = crypto.randomUUID();
     await c.env.DB.prepare('INSERT INTO accounts (account_id, token_hash, created_at) VALUES (?, ?, ?)')
       .bind(accountId, hash, Date.now())
@@ -69,6 +80,9 @@ app.put('/v1/vault', async (c) => {
   };
   if (typeof baseRevision !== 'number' || !vault) return c.json({ error: 'bad_request' }, 400);
 
+  const blob = JSON.stringify(vault);
+  if (blob.length > MAX_BLOB_BYTES) return c.json({ error: 'too_large' }, 413);
+
   const cur = await c.env.DB.prepare('SELECT blob, revision FROM vaults WHERE account_id = ?')
     .bind(accountId)
     .first<{ blob: string; revision: number }>();
@@ -84,7 +98,7 @@ app.put('/v1/vault', async (c) => {
     `INSERT INTO vaults (account_id, blob, revision, updated_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(account_id) DO UPDATE SET blob = excluded.blob, revision = excluded.revision, updated_at = excluded.updated_at`,
   )
-    .bind(accountId, JSON.stringify(vault), next, Date.now())
+    .bind(accountId, blob, next, Date.now())
     .run();
   return c.json({ revision: next });
 });

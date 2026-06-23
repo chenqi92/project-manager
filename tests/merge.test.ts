@@ -86,9 +86,23 @@ describe('mergeVaultData', () => {
     expect(accounts.find((a) => a.id === 'a2')!.label).toBe('测试');
   });
 
-  it('过期墓碑（>90 天）被清理', () => {
-    const old = NOW - 100 * 24 * 60 * 60 * 1000;
+  it('过期墓碑（>365 天）被清理', () => {
+    const old = NOW - 400 * 24 * 60 * 60 * 1000;
     const m = mergeVaultData(vault([], [{ id: 'x', deletedAt: old }]), vault([]), NOW);
     expect(m.tombstones).toHaveLength(0);
+  });
+
+  it('未到保留期的墓碑（<365 天）被保留', () => {
+    const recent = NOW - 100 * 24 * 60 * 60 * 1000;
+    const m = mergeVaultData(vault([], [{ id: 'x', deletedAt: recent }]), vault([]), NOW);
+    expect(m.tombstones.find((t) => t.id === 'x')).toBeTruthy();
+  });
+
+  it('updatedAt 相等时合并结果与方向无关（收敛）', () => {
+    const a: Project = { ...newProject({ name: '甲' }), id: 'p1', updatedAt: 500 };
+    const b: Project = { ...newProject({ name: '乙' }), id: 'p1', updatedAt: 500 };
+    const ab = mergeVaultData(vault([a]), vault([b]), NOW);
+    const ba = mergeVaultData(vault([b]), vault([a]), NOW);
+    expect(ab.projects[0]!.name).toBe(ba.projects[0]!.name);
   });
 });

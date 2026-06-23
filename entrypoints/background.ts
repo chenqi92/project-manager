@@ -101,7 +101,7 @@ export default defineBackground(() => {
       entry.url,
       entry.username,
       entry.password,
-      cachedData.settings.autoSubmit !== false,
+      cachedData.settings.autoSubmit === true,
     );
   });
 
@@ -111,7 +111,7 @@ export default defineBackground(() => {
     else if (command === 'fill-current') await fillActiveTab();
   });
 
-  browser.runtime.onMessage.addListener((msg: Msg) => handle(msg));
+  browser.runtime.onMessage.addListener((msg: Msg, sender) => handle(msg, sender));
 });
 
 function escapeXml(s: string): string {
@@ -144,15 +144,24 @@ async function fillActiveTab(): Promise<void> {
   }
 }
 
-async function handle(msg: Msg): Promise<MsgResponse<unknown>> {
+/** 消息发送方的最小结构（来自 chrome.runtime.MessageSender）。 */
+type MsgSender = { url?: string; origin?: string; tab?: { id?: number } };
+
+async function handle(msg: Msg, sender?: MsgSender): Promise<MsgResponse<unknown>> {
+  // 来源校验：除登录捕获（由内容脚本从网页发出）外，其余特权消息只接受扩展自身页面
+  // （popup / options，chrome-extension://）发起，阻止被注入网页的脚本索取解密明文。
+  const senderUrl = sender?.url ?? '';
+  if ((senderUrl.startsWith('http://') || senderUrl.startsWith('https://')) && msg.type !== 'capture:login') {
+    return { ok: false, error: '来源不可信' };
+  }
   try {
-    return { ok: true, data: await route(msg) };
+    return { ok: true, data: await route(msg, sender) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
-async function route(msg: Msg): Promise<unknown> {
+async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
   switch (msg.type) {
     case 'vault:status':
       return getStatus();
@@ -335,9 +344,13 @@ async function route(msg: Msg): Promise<unknown> {
     case 'tab:openAndFill':
       return openAndFill(msg.url, msg.username, msg.password, msg.submit);
 
-    case 'capture:login':
-      await handleCaptureLogin(msg.origin, msg.url, msg.username, msg.password);
+    case 'capture:login': {
+      // 只信任 sender 的真实来源，丢弃消息体里可被伪造的 origin 字段；并要求 url 同源。
+      const trusted = sender?.origin ?? getOrigin(sender?.url ?? '');
+      if (!trusted || trusted !== getOrigin(msg.url)) return;
+      await handleCaptureLogin(trusted, msg.url, msg.username, msg.password);
       return;
+    }
     case 'capture:pending':
       return getPending();
     case 'capture:save':

@@ -29,8 +29,8 @@ export function TotpBadge({
       setCode(r.code);
       setRemaining(r.secondsRemaining);
     };
-    tick();
-    const timer = setInterval(tick, 1000);
+    void tick().catch(() => {});
+    const timer = setInterval(() => void tick().catch(() => {}), 1000);
     return () => {
       active = false;
       clearInterval(timer);
@@ -46,7 +46,7 @@ export function TotpBadge({
       className="inline-flex items-center gap-1.5 rounded-md bg-brand-50 px-2 py-1 font-mono text-sm text-brand-700 hover:bg-brand-100"
     >
       <span className="tracking-widest">
-        {code.slice(0, 3)} {code.slice(3)}
+        {code.slice(0, Math.ceil(code.length / 2))} {code.slice(Math.ceil(code.length / 2))}
       </span>
       <span className={cx('text-[10px]', remaining <= 5 ? 'text-rose-500' : 'text-brand-400')}>
         {remaining}s

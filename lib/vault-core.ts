@@ -22,7 +22,7 @@ export function emptyVaultData(): VaultData {
   return {
     version: VAULT_SCHEMA_VERSION,
     projects: [],
-    settings: { autoLockMinutes: 15, kdf: DEFAULT_KDF, autoSubmit: true },
+    settings: { autoLockMinutes: 15, kdf: DEFAULT_KDF, autoSubmit: false },
     tombstones: [],
   };
 }

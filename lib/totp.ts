@@ -53,8 +53,9 @@ export function parseTotp(input: string): TotpConfig | null {
   if (s.startsWith('otpauth://')) {
     try {
       const u = new URL(s);
-      const secret = u.searchParams.get('secret');
-      if (!secret) return null;
+      const secret = (u.searchParams.get('secret') ?? '').replace(/\s/g, '');
+      // 校验 secret 确为 base32，避免把空 / 非法密钥当成有效 TOTP 静默存下。
+      if (!/^[A-Za-z2-7]+=*$/.test(secret) || secret.length < 8) return null;
       const algo = (u.searchParams.get('algorithm') || 'SHA1').toUpperCase();
       return {
         secret,
@@ -75,8 +76,11 @@ export async function generateTotp(
   cfg: TotpConfig,
   nowMs: number,
 ): Promise<{ code: string; secondsRemaining: number }> {
+  // 对异常配置做兜底：digits 限制在 6–10，period 必须为正，避免产出错误码长或除零。
+  const digits = Number.isInteger(cfg.digits) && cfg.digits >= 6 && cfg.digits <= 10 ? cfg.digits : 6;
+  const period = cfg.period > 0 ? cfg.period : 30;
   const key = base32Decode(cfg.secret);
-  const counter = Math.floor(nowMs / 1000 / cfg.period);
+  const counter = Math.floor(nowMs / 1000 / period);
   const buf = new ArrayBuffer(8);
   const view = new DataView(buf);
   view.setUint32(0, Math.floor(counter / 2 ** 32), false);
@@ -96,7 +100,7 @@ export async function generateTotp(
     ((hmac[offset + 1]! & 0xff) << 16) |
     ((hmac[offset + 2]! & 0xff) << 8) |
     (hmac[offset + 3]! & 0xff);
-  const code = (bin % 10 ** cfg.digits).toString().padStart(cfg.digits, '0');
-  const secondsRemaining = cfg.period - Math.floor((nowMs / 1000) % cfg.period);
+  const code = (bin % 10 ** digits).toString().padStart(digits, '0');
+  const secondsRemaining = period - Math.floor((nowMs / 1000) % period);
   return { code, secondsRemaining };
 }

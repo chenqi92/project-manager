@@ -309,7 +309,7 @@ function FillSection({
   data: VaultData;
   onSave: (next: VaultData) => Promise<void>;
 }) {
-  const autoSubmit = data.settings.autoSubmit !== false;
+  const autoSubmit = data.settings.autoSubmit === true;
   const toggle = async () => {
     await onSave(produce(data, (d) => void (d.settings.autoSubmit = !autoSubmit)));
   };
