@@ -198,6 +198,7 @@ export default function App() {
     update((d) => {
       const p = d.projects.find((x) => x.id === projectId);
       if (p) {
+        if ((p.memos ?? []).some((m) => m.id === memoId)) addTombstone(d, memoId);
         p.memos = (p.memos ?? []).filter((m) => m.id !== memoId);
         p.updatedAt = Date.now();
       }
@@ -546,7 +547,11 @@ export default function App() {
             update((d) => {
               const p = d.projects.find((x) => x.id === docsProject.id);
               if (p) {
-                p.docs = docs;
+                const nextIds = new Set(docs.map((doc) => doc.id));
+                for (const old of p.docs ?? []) {
+                  if (!nextIds.has(old.id)) addTombstone(d, old.id);
+                }
+                p.docs = docs.map((doc) => ({ ...doc }));
                 p.updatedAt = Date.now();
               }
             })

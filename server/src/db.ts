@@ -83,4 +83,8 @@ export class Store {
   deleteVault(accountId: string): void {
     this.db.prepare('DELETE FROM vaults WHERE account_id = ?').run(accountId);
   }
+
+  close(): void {
+    this.db.close();
+  }
 }

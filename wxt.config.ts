@@ -27,11 +27,21 @@ export default defineConfig({
     version: pkg.version,
     // 最小权限集：
     //  storage   - 保存加密金库（local）与内存密钥（session）
-    //  activeTab - 仅在用户点击扩展时临时获得当前标签页访问权，用于填充
-    //  scripting - 在用户授权的当前页注入一次性填充函数
-    //  idle      - 空闲自动锁定
+    //  activeTab      - 仅在用户点击扩展时临时获得当前标签页访问权，用于填充
+    //  scripting      - 在用户授权的当前页注入一次性填充函数
+    //  idle           - 空闲自动锁定
+    //  offscreen      - popup 关闭后仍可清空剪贴板
+    //  clipboardWrite - 复制密码后定时清空剪贴板
     // 不申请 <all_urls> / host_permissions，最大限度降低审核摩擦与攻击面。
-    permissions: ['storage', 'activeTab', 'scripting', 'idle', 'contextMenus'],
+    permissions: [
+      'storage',
+      'activeTab',
+      'scripting',
+      'idle',
+      'contextMenus',
+      'offscreen',
+      'clipboardWrite',
+    ],
     // 可选站点访问权：基础清单里不申请，由用户在运行时按需对单个来源授权
     // （chrome.permissions.request），审核更友好。两种场景会用到：
     //  - 自托管同步：对用户自己的服务器地址授权。

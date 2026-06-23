@@ -5,7 +5,7 @@ import { cx } from '@/components/ui';
 import { AddMemo, MemoRow } from '@/components/MemoRow';
 import type { MemoItem, VaultData } from '@/lib/types';
 import { isAlarming, sortMemos } from '@/lib/memo';
-import { newMemo } from '@/lib/vault-ops';
+import { addTombstone, newMemo } from '@/lib/vault-ops';
 
 const KEY = 'memoWidget';
 interface WidgetState {
@@ -124,6 +124,7 @@ export function MemoWidget({
     onUpdate((d) => {
       for (const p of d.projects) {
         if ((p.memos ?? []).some((m) => m.id === id)) {
+          addTombstone(d, id);
           p.memos = (p.memos ?? []).filter((m) => m.id !== id);
           p.updatedAt = Date.now();
         }

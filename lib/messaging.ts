@@ -38,6 +38,7 @@ export type Msg =
     }
   | { type: 'vault:reset' }
   | { type: 'activity' }
+  | { type: 'clipboard:clearLater'; clearMs: number }
   // 生物识别
   | { type: 'vault:bioEnrollments' }
   | { type: 'vault:unlockWithPrf'; enrollmentId: string; prfOutput: string }

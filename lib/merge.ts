@@ -6,8 +6,10 @@
 import type {
   Account,
   Environment,
+  MemoItem,
   PlatformLink,
   Project,
+  ProjectDoc,
   VaultData,
 } from './types';
 
@@ -32,6 +34,8 @@ export function mergeVaultData(
   }
 
   const mergeAccount = (a: Account, b: Account): Account => newer(a, b);
+  const mergeDoc = (a: ProjectDoc, b: ProjectDoc): ProjectDoc => newer(a, b);
+  const mergeMemo = (a: MemoItem, b: MemoItem): MemoItem => newer(a, b);
 
   const mergeLink = (a: PlatformLink, b: PlatformLink): PlatformLink => {
     const base = newer(a, b);
@@ -47,6 +51,8 @@ export function mergeVaultData(
     const base = newer(a, b);
     return {
       ...base,
+      docs: mergeList(a.docs ?? [], b.docs ?? [], tomb, mergeDoc),
+      memos: mergeList(a.memos ?? [], b.memos ?? [], tomb, mergeMemo),
       environments: mergeList(a.environments, b.environments, tomb, mergeEnv),
     };
   };

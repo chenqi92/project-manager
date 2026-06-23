@@ -3,6 +3,9 @@ import type { Store } from './db';
 
 type Env = { Variables: { accountId: string } };
 
+/** 单个保险箱密文 blob 的大小上限（5 MB），防止单账号无限写入耗尽存储。 */
+const MAX_BLOB_BYTES = 5 * 1024 * 1024;
+
 /**
  * 零知识同步 API。
  *   GET  /v1/vault/meta  -> { exists, revision, updatedAt }   便宜的轮询
@@ -71,8 +74,10 @@ export function createApp(store: Store): Hono<Env> {
     }
 
     // 服务器只用独立的列 revision 做并发令牌，绝不改写密文 blob 内部字段。
+    const blob = JSON.stringify(vault);
+    if (blob.length > MAX_BLOB_BYTES) return c.json({ error: 'too_large' }, 413);
     const next = curRev + 1;
-    store.putVault(accountId, JSON.stringify(vault), next);
+    store.putVault(accountId, blob, next);
     return c.json({ revision: next });
   });
 

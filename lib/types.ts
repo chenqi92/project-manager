@@ -154,7 +154,7 @@ export interface VaultSettings {
   sync?: SyncConfig;
   /** 内容修改后是否自动同步；undefined 视为开启 */
   syncAuto?: boolean;
-  /** 填充后是否自动提交直接登录；undefined 视为开启 */
+  /** 填充后是否自动提交直接登录；只有 true 才开启 */
   autoSubmit?: boolean;
   /** 主题；undefined 视为跟随系统 */
   theme?: 'light' | 'dark' | 'system';

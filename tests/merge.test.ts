@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mergeVaultData } from '../lib/merge';
 import type { Project, VaultData } from '../lib/types';
-import { newAccount, newEnvironment, newLink, newProject } from '../lib/vault-ops';
+import { newAccount, newDoc, newEnvironment, newLink, newMemo, newProject } from '../lib/vault-ops';
 
 function vault(projects: Project[], tombstones: VaultData['tombstones'] = []): VaultData {
   return {
@@ -63,6 +63,62 @@ describe('mergeVaultData', () => {
     const m = mergeVaultData(vault([a]), vault([b]), NOW);
     expect(m.projects[0]!.name).toBe('改后的名'); // 较新字段
     expect(m.projects[0]!.environments.map((e) => e.name)).toEqual(['生产']); // 另一边的环境
+  });
+
+  it('递归合并：同一项目的文档和备忘不会被项目级较新字段覆盖', () => {
+    const doc = { ...newDoc({ title: '说明' }), id: 'd1', updatedAt: 150 };
+    const memo = { ...newMemo({ text: '上线前检查' }), id: 'm1', updatedAt: 160 };
+    const a: Project = {
+      ...newProject({ name: '改后的名' }),
+      id: 'p1',
+      updatedAt: 500,
+      docs: [doc],
+      memos: [],
+      environments: [],
+    };
+    const b: Project = {
+      ...newProject({ name: '原名' }),
+      id: 'p1',
+      updatedAt: 100,
+      docs: [],
+      memos: [memo],
+      environments: [],
+    };
+    const m = mergeVaultData(vault([a]), vault([b]), NOW);
+    expect(m.projects[0]!.name).toBe('改后的名');
+    expect(m.projects[0]!.docs?.map((d) => d.title)).toEqual(['说明']);
+    expect(m.projects[0]!.memos?.map((x) => x.text)).toEqual(['上线前检查']);
+  });
+
+  it('文档和备忘删除墓碑会阻止旧副本复活', () => {
+    const doc = { ...newDoc({ title: '旧文档' }), id: 'd1', updatedAt: NOW - 2000 };
+    const memo = { ...newMemo({ text: '旧待办' }), id: 'm1', updatedAt: NOW - 2000 };
+    const remote: Project = {
+      ...newProject({ name: 'P' }),
+      id: 'p1',
+      updatedAt: NOW - 3000,
+      docs: [doc],
+      memos: [memo],
+      environments: [],
+    };
+    const local: Project = {
+      ...newProject({ name: 'P' }),
+      id: 'p1',
+      updatedAt: NOW - 1000,
+      docs: [],
+      memos: [],
+      environments: [],
+    };
+    const m = mergeVaultData(
+      vault([local], [
+        { id: 'd1', deletedAt: NOW - 1000 },
+        { id: 'm1', deletedAt: NOW - 1000 },
+      ]),
+      vault([remote]),
+      NOW,
+    );
+    expect(m.projects[0]!.docs).toEqual([]);
+    expect(m.projects[0]!.memos).toEqual([]);
   });
 
   it('账号级合并：两个不同账号都在，重名账号取较新', () => {

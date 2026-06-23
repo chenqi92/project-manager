@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Eye, FileText, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
 import { Button, Input, cx } from '@/components/ui';
 import { Markdown } from '@/components/Markdown';
 import { useDialog } from '@/components/Dialog';
 import type { ProjectDoc } from '@/lib/types';
 import { newDoc } from '@/lib/vault-ops';
+
+type DocMode = 'read' | 'split' | 'source';
+type SaveState = 'saved' | 'pending' | 'saving' | 'error';
 
 export function DocsModal({
   projectName,
@@ -15,13 +18,38 @@ export function DocsModal({
   projectName: string;
   docs: ProjectDoc[];
   onClose: () => void;
-  onChange: (docs: ProjectDoc[]) => void;
+  onChange: (docs: ProjectDoc[]) => void | Promise<void>;
 }) {
   const [list, setList] = useState<ProjectDoc[]>(docs);
   const [activeId, setActiveId] = useState<string | null>(docs[0]?.id ?? null);
-  const [editing, setEditing] = useState(false);
+  const [mode, setMode] = useState<DocMode>('read');
+  const [saveState, setSaveState] = useState<SaveState>('saved');
+  const [saveError, setSaveError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<ProjectDoc[]>(docs);
+  const onChangeRef = useRef(onChange);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveSeq = useRef(0);
   const { confirm } = useDialog();
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    listRef.current = list;
+  }, [list]);
+
+  useEffect(
+    () => () => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+        void onChangeRef.current(listRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -32,24 +60,52 @@ export function DocsModal({
   }, [onClose]);
 
   const active = list.find((d) => d.id === activeId) ?? null;
-  const commit = (next: ProjectDoc[]) => {
+  const flush = async (next: ProjectDoc[] = listRef.current) => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    const seq = ++saveSeq.current;
+    setSaveState('saving');
+    setSaveError(null);
+    try {
+      await onChangeRef.current(next);
+      if (seq === saveSeq.current) setSaveState('saved');
+    } catch (e) {
+      if (seq === saveSeq.current) {
+        setSaveState('error');
+        setSaveError(e instanceof Error ? e.message : String(e));
+      }
+    }
+  };
+  const scheduleSave = (next: ProjectDoc[]) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setSaveState('pending');
+    setSaveError(null);
+    saveTimer.current = setTimeout(() => {
+      void flush(next);
+    }, 600);
+  };
+  const commit = (next: ProjectDoc[], opts: { immediate?: boolean } = {}) => {
     setList(next);
-    onChange(next);
+    listRef.current = next;
+    if (opts.immediate) void flush(next);
+    else scheduleSave(next);
   };
 
   const addDoc = () => {
     const d = newDoc({ title: '未命名文档', content: '# 标题\n\n在这里写项目说明，支持代码块与 mermaid 流程图。' });
-    commit([...list, d]);
+    commit([...list, d], { immediate: true });
     setActiveId(d.id);
-    setEditing(true);
+    setMode('split');
   };
   const delDoc = async (id: string) => {
     if (!(await confirm({ message: '删除该文档？', danger: true }))) return;
     const next = list.filter((d) => d.id !== id);
-    commit(next);
+    commit(next, { immediate: true });
     if (activeId === id) {
       setActiveId(next[0]?.id ?? null);
-      setEditing(false);
+      setMode('read');
     }
   };
   const updateActive = (patch: Partial<ProjectDoc>) => {
@@ -67,11 +123,20 @@ export function DocsModal({
       }
     }
     if (added.length) {
-      commit([...list, ...added]);
+      commit([...list, ...added], { immediate: true });
       setActiveId(added[0]!.id);
-      setEditing(false);
+      setMode('read');
     }
   };
+
+  const saveLabel =
+    saveState === 'pending'
+      ? '待保存'
+      : saveState === 'saving'
+        ? '保存中...'
+        : saveState === 'error'
+          ? `保存失败：${saveError ?? ''}`
+          : '已保存';
 
   return (
     <div className="fixed inset-0 z-50 flex bg-black/20" onMouseDown={onClose}>
@@ -119,7 +184,7 @@ export function DocsModal({
                     key={d.id}
                     onClick={() => {
                       setActiveId(d.id);
-                      setEditing(false);
+                      setMode('read');
                     }}
                     className={cx(
                       'mb-0.5 flex w-full items-center gap-1.5 truncate rounded-lg px-2 py-1.5 text-left text-sm',
@@ -141,54 +206,38 @@ export function DocsModal({
                 <FileText size={32} />
                 <p className="text-sm">新建或导入一个 Markdown 文档</p>
               </div>
-            ) : editing ? (
-              <>
-                <div className="mb-2 flex items-center gap-2">
-                  <Input
-                    value={active.title}
-                    onChange={(e) => updateActive({ title: e.target.value })}
-                    placeholder="文档标题"
-                    className="min-w-0 flex-1"
-                  />
-                  <Button
-                    variant="subtle"
-                    className="shrink-0 whitespace-nowrap"
-                    onClick={() => setEditing(false)}
-                  >
-                    <Eye size={15} /> 预览
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    className="shrink-0"
-                    title="删除"
-                    onClick={() => delDoc(active.id)}
-                  >
-                    <Trash2 size={15} />
-                  </Button>
-                </div>
-                <div className="grid min-h-0 flex-1 grid-cols-2 gap-3">
-                  <textarea
-                    value={active.content}
-                    onChange={(e) => updateActive({ content: e.target.value })}
-                    className="resize-none overflow-auto rounded-xl border border-gray-300 p-3 font-mono text-xs leading-relaxed outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                    placeholder="# Markdown 源文&#10;&#10;```mermaid&#10;graph TD; A-->B;&#10;```"
-                  />
-                  <div className="overflow-auto rounded-xl border border-gray-200 p-3">
-                    <Markdown source={active.content} />
-                  </div>
-                </div>
-              </>
             ) : (
               <>
                 <div className="mb-2 flex items-center gap-2">
-                  <h3 className="min-w-0 flex-1 truncate text-base font-semibold text-gray-900">{active.title}</h3>
-                  <Button
-                    variant="subtle"
-                    className="shrink-0 whitespace-nowrap"
-                    onClick={() => setEditing(true)}
+                  {mode === 'read' ? (
+                    <h3 className="min-w-0 flex-1 truncate text-base font-semibold text-gray-900">{active.title}</h3>
+                  ) : (
+                    <Input
+                      value={active.title}
+                      onChange={(e) => updateActive({ title: e.target.value })}
+                      placeholder="文档标题"
+                      className="min-w-0 flex-1"
+                    />
+                  )}
+                  <span
+                    className={cx(
+                      'shrink-0 text-xs',
+                      saveState === 'error' ? 'text-rose-600' : 'text-gray-400',
+                    )}
                   >
-                    <Pencil size={15} /> 编辑
-                  </Button>
+                    {saveLabel}
+                  </span>
+                  <div className="flex shrink-0 rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+                    <ModeButton active={mode === 'read'} onClick={() => setMode('read')}>
+                      <Eye size={14} /> 阅读
+                    </ModeButton>
+                    <ModeButton active={mode === 'split'} onClick={() => setMode('split')}>
+                      <Pencil size={14} /> 分屏
+                    </ModeButton>
+                    <ModeButton active={mode === 'source'} onClick={() => setMode('source')}>
+                      源码
+                    </ModeButton>
+                  </div>
                   <Button
                     variant="ghost"
                     className="shrink-0"
@@ -198,14 +247,58 @@ export function DocsModal({
                     <Trash2 size={15} />
                   </Button>
                 </div>
-                <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 p-4">
-                  <Markdown source={active.content} />
-                </div>
+                {mode === 'read' ? (
+                  <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-gray-200 p-4">
+                    <Markdown source={active.content} />
+                  </div>
+                ) : (
+                  <div
+                    className={cx(
+                      'grid min-h-0 flex-1 gap-3',
+                      mode === 'split' ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1',
+                    )}
+                  >
+                    <textarea
+                      value={active.content}
+                      onChange={(e) => updateActive({ content: e.target.value })}
+                      className="resize-none overflow-auto rounded-xl border border-gray-300 p-3 font-mono text-xs leading-relaxed outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                      placeholder="# Markdown 源文&#10;&#10;```mermaid&#10;graph TD; A-->B;&#10;```"
+                    />
+                    {mode === 'split' && (
+                      <div className="overflow-auto rounded-xl border border-gray-200 p-3">
+                        <Markdown source={active.content} />
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function ModeButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cx(
+        'flex h-7 items-center gap-1 rounded-md px-2 text-xs',
+        active ? 'bg-surface text-brand-700 shadow-sm' : 'text-gray-500 hover:text-gray-800',
+      )}
+    >
+      {children}
+    </button>
   );
 }

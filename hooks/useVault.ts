@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/messaging';
 import type { VaultData, VaultStatus } from '@/lib/types';
 
@@ -18,6 +18,7 @@ export function useVault(): VaultController {
   const [status, setStatus] = useState<VaultStatus | null>(null);
   const [data, setData] = useState<VaultData | null>(null);
   const [loading, setLoading] = useState(true);
+  const saveChain = useRef(Promise.resolve());
 
   const syncData = useCallback(async (s: VaultStatus) => {
     if (s.initialized && !s.locked) setData(await api.get());
@@ -60,7 +61,9 @@ export function useVault(): VaultController {
   }, []);
 
   const save = useCallback(async (next: VaultData) => {
-    await api.save(next);
+    const op = saveChain.current.catch(() => {}).then(() => api.save(next));
+    saveChain.current = op.catch(() => {});
+    await op;
     setData(next);
   }, []);
 

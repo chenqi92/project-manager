@@ -14,7 +14,7 @@ import type {
   VaultData,
   VaultStatus,
 } from '@/lib/types';
-import { newAccount, newEnvironment, newLink, newProject } from '@/lib/vault-ops';
+import { linkUrls, newAccount, newEnvironment, newLink, newProject } from '@/lib/vault-ops';
 import {
   createEncryptedVault,
   decryptVaultData,
@@ -37,6 +37,8 @@ let cachedData: VaultData | null = null;
 let autoLockMinutes = 15;
 let lockTimer: ReturnType<typeof setTimeout> | null = null;
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
+let clipboardClearTimer: ReturnType<typeof setTimeout> | null = null;
+let clipboardOffscreenReady = false;
 let pendingCapture: CapturePending | null = null;
 
 export default defineBackground(() => {
@@ -45,7 +47,7 @@ export default defineBackground(() => {
     .catch(() => {});
 
   browser.idle.onStateChanged.addListener((state) => {
-    if (state !== 'active') lock();
+    if (autoLockMinutes > 0 && state !== 'active') lock();
   });
 
   // 右键菜单：在任意页面/链接上保存到保险箱。
@@ -111,7 +113,10 @@ export default defineBackground(() => {
     else if (command === 'fill-current') await fillActiveTab();
   });
 
-  browser.runtime.onMessage.addListener((msg: Msg, sender) => handle(msg, sender));
+  browser.runtime.onMessage.addListener((msg: Msg | { type?: string }, sender) => {
+    if (msg.type === 'offscreen:clipboardWrite') return false;
+    return handle(msg as Msg, sender);
+  });
 });
 
 function escapeXml(s: string): string {
@@ -137,7 +142,7 @@ async function fillActiveTab(): Promise<void> {
     await browser.scripting.executeScript({
       target: { tabId: tab.id },
       func: fillCredentialsInPage,
-      args: [m.username, m.password, cachedData.settings.autoSubmit !== false],
+      args: [m.username, m.password, cachedData.settings.autoSubmit === true],
     });
   } else {
     browser.action.openPopup?.().catch(() => {});
@@ -247,6 +252,10 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
 
     case 'activity':
       resetLockTimer();
+      return;
+
+    case 'clipboard:clearLater':
+      scheduleClipboardClear(msg.clearMs);
       return;
 
     // ---------------- 生物识别 ----------------
@@ -398,7 +407,7 @@ async function handleCaptureLogin(
   for (const proj of cachedData.projects) {
     for (const env of proj.environments) {
       for (const link of env.links) {
-        if (!link.url || getOrigin(link.url) !== origin) continue;
+        if (!linkUrls(link).some((u) => getOrigin(u) === origin)) continue;
         for (const acc of link.accounts) {
           if (acc.username && username && acc.username.toLowerCase() === username.toLowerCase()) {
             matchAccountId = acc.id;
@@ -437,7 +446,7 @@ async function applyCapture(): Promise<void> {
     for (const proj of data.projects)
       for (const env of proj.environments)
         for (const link of env.links)
-          if (link.url && getOrigin(link.url) === p.origin) target = link;
+          if (linkUrls(link).some((u) => getOrigin(u) === p.origin)) target = link;
 
     if (!target) {
       let proj = data.projects.find((x) => x.name === '捕获');
@@ -534,6 +543,70 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
     };
     browser.tabs.onUpdated.addListener(onUpdated);
   });
+}
+
+// --------------------------- 剪贴板清空 ---------------------------
+
+function scheduleClipboardClear(clearMs: number): void {
+  if (clipboardClearTimer) clearTimeout(clipboardClearTimer);
+  const delay = Math.min(Math.max(Math.floor(clearMs) || 0, 0), 5 * 60_000);
+  if (delay <= 0) return;
+  clipboardClearTimer = setTimeout(() => {
+    clipboardClearTimer = null;
+    clearClipboardViaOffscreen().catch(() => {});
+  }, delay);
+}
+
+async function clearClipboardViaOffscreen(): Promise<void> {
+  await ensureClipboardOffscreen();
+  const res = (await browser.runtime.sendMessage({
+    type: 'offscreen:clipboardWrite',
+    text: '',
+  })) as { ok?: boolean; error?: string } | undefined;
+  if (!res?.ok) throw new Error(res?.error ?? '剪贴板清空失败');
+}
+
+async function ensureClipboardOffscreen(): Promise<void> {
+  const offscreen = (browser as unknown as { offscreen?: OffscreenApi }).offscreen;
+  if (!offscreen) throw new Error('当前浏览器不支持 offscreen document');
+  if (clipboardOffscreenReady || (await hasClipboardOffscreen())) {
+    clipboardOffscreenReady = true;
+    return;
+  }
+  try {
+    await offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['CLIPBOARD'],
+      justification: 'Clear copied credentials from the clipboard after a short delay.',
+    });
+  } catch (e) {
+    if (!/single offscreen|only.*offscreen/i.test(String(e))) throw e;
+  }
+  clipboardOffscreenReady = true;
+}
+
+async function hasClipboardOffscreen(): Promise<boolean> {
+  const runtime = browser.runtime as unknown as RuntimeWithContexts;
+  if (!runtime.getContexts) return false;
+  const contexts = await runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+  });
+  return contexts.length > 0;
+}
+
+interface OffscreenApi {
+  createDocument(opts: {
+    url: string;
+    reasons: string[];
+    justification: string;
+  }): Promise<void>;
+}
+
+interface RuntimeWithContexts {
+  getContexts?: (opts: {
+    contextTypes: string[];
+    documentUrls?: string[];
+  }) => Promise<unknown[]>;
 }
 
 // --------------------------- 状态 / 锁 ---------------------------

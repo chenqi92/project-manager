@@ -72,6 +72,7 @@ async function main(): Promise<void> {
   r = await app.fetch(new Request(base + '/v1/vault', { headers: H }));
   assert(r.status === 404, '删除后 pull 应 404');
 
+  store.close();
   rmSync(dir, { recursive: true, force: true });
   console.log('✅ SERVER SMOKE TESTS PASSED');
 }
