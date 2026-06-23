@@ -55,7 +55,12 @@ export async function enrollBiometricCredential(): Promise<EnrollResult> {
     authenticatorSelection: {
       authenticatorAttachment: 'platform',
       userVerification: 'required',
-      residentKey: 'preferred',
+      // 不可发现凭据：本扩展自存 credentialId、解锁时用 allowCredentials 传回，
+      // 不需要 passkey。用 'discouraged' 可避免被 1Password/Bitwarden 等「密钥提供方」
+      // 拦截并弹出「保存密钥」——它们只对可发现凭据(passkey)弹保存，从而让注册直接
+      // 落到平台授权器(Windows Hello / Touch ID)。PRF(hmac-secret) 对非驻留凭据同样有效。
+      residentKey: 'discouraged',
+      requireResidentKey: false,
     },
     timeout: 60_000,
     extensions: { prf: {} } as unknown as AuthenticationExtensionsClientInputs,
