@@ -9,7 +9,11 @@
 
 export function getOrigin(url: string): string | null {
   try {
-    return new URL(url).origin;
+    const u = new URL(url);
+    // 只认 http(s)：凭据填充/授权只对网页有意义，file:// chrome:// 等一律视为无效，
+    // 避免后续对不可授权的 scheme 申请权限报错或误打开标签页。
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return u.origin;
   } catch {
     return null;
   }

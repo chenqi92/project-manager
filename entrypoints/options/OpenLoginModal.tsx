@@ -52,8 +52,8 @@ export function OpenLoginModal({
       }
       const r = await api.openAndFill(targetUrl, entry.username, entry.password, autoSubmit);
       await recordUse(entry.accountId);
-      if (!r.filled && r.reason) {
-        setError(r.reason);
+      if (!r.filled) {
+        setError(r.reason ?? '未能完成填充，请重试');
         setBusy(false);
         return;
       }

@@ -1,9 +1,25 @@
+let clearTimer = null;
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type !== 'offscreen:clipboardWrite') return false;
-  clipboardWrite(String(msg.text ?? ''))
-    .then(() => sendResponse({ ok: true }))
-    .catch((e) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));
-  return true;
+  if (msg?.type === 'offscreen:clipboardWrite') {
+    clipboardWrite(String(msg.text ?? ''))
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));
+    return true;
+  }
+  if (msg?.type === 'offscreen:clearAfter') {
+    // 在 offscreen 文档内计时并清空；offscreen 不受 service worker 约 30 秒空闲回收影响，
+    // 故 SW 即便被终止，到点仍会执行清空。新的复制会重置该计时器。
+    if (clearTimer) clearTimeout(clearTimer);
+    const delay = Math.max(Number(msg.delayMs) || 0, 0);
+    clearTimer = setTimeout(() => {
+      clearTimer = null;
+      clipboardWrite('').catch(() => {});
+    }, delay);
+    sendResponse({ ok: true });
+    return true;
+  }
+  return false;
 });
 
 async function clipboardWrite(text) {

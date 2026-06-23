@@ -37,7 +37,6 @@ let cachedData: VaultData | null = null;
 let autoLockMinutes = 15;
 let lockTimer: ReturnType<typeof setTimeout> | null = null;
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
-let clipboardClearTimer: ReturnType<typeof setTimeout> | null = null;
 let clipboardOffscreenReady = false;
 let pendingCapture: CapturePending | null = null;
 
@@ -255,7 +254,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       return;
 
     case 'clipboard:clearLater':
-      scheduleClipboardClear(msg.clearMs);
+      await scheduleClipboardClear(msg.clearMs);
       return;
 
     // ---------------- 生物识别 ----------------
@@ -547,23 +546,13 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
 
 // --------------------------- 剪贴板清空 ---------------------------
 
-function scheduleClipboardClear(clearMs: number): void {
-  if (clipboardClearTimer) clearTimeout(clipboardClearTimer);
+async function scheduleClipboardClear(clearMs: number): Promise<void> {
   const delay = Math.min(Math.max(Math.floor(clearMs) || 0, 0), 5 * 60_000);
   if (delay <= 0) return;
-  clipboardClearTimer = setTimeout(() => {
-    clipboardClearTimer = null;
-    clearClipboardViaOffscreen().catch(() => {});
-  }, delay);
-}
-
-async function clearClipboardViaOffscreen(): Promise<void> {
   await ensureClipboardOffscreen();
-  const res = (await browser.runtime.sendMessage({
-    type: 'offscreen:clipboardWrite',
-    text: '',
-  })) as { ok?: boolean; error?: string } | undefined;
-  if (!res?.ok) throw new Error(res?.error ?? '剪贴板清空失败');
+  // 计时与清空都交给 offscreen 文档：它不像 service worker 那样会被约 30 秒空闲回收，
+  // 即使 SW 在此期间被终止，到点后仍会可靠地清空剪贴板（替代 SW 内不可靠的 setTimeout）。
+  await browser.runtime.sendMessage({ type: 'offscreen:clearAfter', delayMs: delay });
 }
 
 async function ensureClipboardOffscreen(): Promise<void> {
