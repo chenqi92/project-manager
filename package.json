@@ -1,7 +1,7 @@
 {
   "name": "project-env-manager",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "Securely store and auto-fill login credentials across your projects, environments and platforms. Master-password, end-to-end encrypted locally; optional self-hosted sync stores ciphertext only.",
   "scripts": {
@@ -10,6 +10,7 @@
     "build": "wxt build",
     "build:firefox": "wxt build -b firefox",
     "zip": "wxt zip",
+    "zip:store": "cross-env STORE_BUILD=1 wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "test": "vitest run",
     "compile": "tsc --noEmit",
@@ -31,6 +32,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@wxt-dev/module-react": "^1.2.2",
+    "cross-env": "^10.1.0",
     "jsdom": "^29.1.1",
     "puppeteer-core": "^25.1.0",
     "tailwindcss": "^4.3.1",
