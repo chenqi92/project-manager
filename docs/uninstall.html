@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>项目环境管家 · 卸载与数据恢复</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        max-width: 760px; margin: 0 auto; padding: 40px 20px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        line-height: 1.7; color: #1f2937;
+      }
+      h1 { font-size: 1.6rem; }
+      h2 { font-size: 1.15rem; margin-top: 2rem; border-top: 1px solid #e5e7eb; padding-top: 1.2rem; }
+      code, .mono { font-family: ui-monospace, Menlo, monospace; background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
+      .meta { color: #6b7280; font-size: .9rem; }
+      .note { background: #eef2ff; border-radius: 8px; padding: 12px 16px; font-size: .9rem; }
+      .warn { background: #fef3c7; border-radius: 8px; padding: 12px 16px; font-size: .95rem; }
+      a { color: #4f46e5; }
+      @media (prefers-color-scheme: dark) {
+        body { color: #e5e7eb; background: #0b0f17; }
+        h2 { border-color: #374151; }
+        code, .mono { background: #1f2937; }
+        .note { background: #1e1b4b; }
+        .warn { background: #3f2d0a; }
+        a { color: #a5b4fc; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>项目环境管家 · 卸载与数据恢复</h1>
+    <p class="meta">你已卸载本扩展，或正在查看卸载相关说明。</p>
+
+    <p class="warn">
+      <strong>重要：</strong>Chrome 在卸载扩展时会<strong>立即清空该扩展的本地数据</strong>。
+      这是浏览器的统一行为，并非本扩展可以阻止。如果你<strong>没有事先导出备份、也没有开启同步</strong>，
+      被卸载时清除的数据将<strong>无法找回</strong>——由于全部数据端到端加密、不上传任何第三方服务器，
+      开发者同样无法帮你恢复。
+    </p>
+
+    <h2>升级不需要卸载重装</h2>
+    <p>
+      Chrome 扩展会<strong>自动从应用商店更新</strong>，更新过程<strong>保留你的全部数据</strong>。
+      你<strong>无需、也不应该</strong>为了升级而卸载后重新安装——那样会丢掉数据。
+    </p>
+
+    <h2>如果你之前开启了同步</h2>
+    <p>数据可以恢复：</p>
+    <ol>
+      <li>重新安装本扩展。</li>
+      <li>在解锁页选择「<strong>已有同步保险箱？从同步服务器恢复</strong>」。</li>
+      <li>填入你的<strong>同步服务器地址</strong>与<strong>令牌</strong>，拉取后用原<strong>主密码</strong>解锁即可。</li>
+    </ol>
+
+    <h2>如果你之前导出过加密备份</h2>
+    <p>数据可以恢复：</p>
+    <ol>
+      <li>重新安装本扩展，创建（或解锁）保险箱。</li>
+      <li>进入「<strong>导入 / 导出 → 导入</strong>」，来源格式选「<strong>加密备份</strong>」。</li>
+      <li>选择此前导出的备份文件，输入<strong>备份密码</strong>导入。</li>
+    </ol>
+
+    <h2>以后如何避免再次丢失</h2>
+    <ul>
+      <li><strong>开启自托管同步</strong>：密文实时保存在你自己的服务器，换机/重装都能恢复。</li>
+      <li><strong>定期导出加密备份</strong>：备份文件即使泄露也无法被解密，请妥善保管。</li>
+      <li>换电脑或重装系统前，务必先完成上述任一项。</li>
+    </ul>
+
+    <p class="note">
+      隐私说明见 <a href="./index.html">隐私政策</a>。本扩展不收集任何遥测或个人数据。
+    </p>
+  </body>
+</html>

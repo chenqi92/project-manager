@@ -20,10 +20,13 @@ export function ImportExport({
   data,
   onClose,
   onImported,
+  onBackedUp,
 }: {
   data: VaultData;
   onClose: () => void;
   onImported: () => Promise<void>;
+  /** 成功导出一份加密备份后回调（用于记录上次备份时间）。 */
+  onBackedUp?: () => void;
 }) {
   const [tab, setTab] = useState<'export' | 'import'>('export');
 
@@ -43,12 +46,16 @@ export function ImportExport({
           </button>
         ))}
       </div>
-      {tab === 'export' ? <ExportTab data={data} /> : <ImportTab onImported={onImported} />}
+      {tab === 'export' ? (
+        <ExportTab data={data} onBackedUp={onBackedUp} />
+      ) : (
+        <ImportTab onImported={onImported} />
+      )}
     </Modal>
   );
 }
 
-function ExportTab({ data }: { data: VaultData }) {
+function ExportTab({ data, onBackedUp }: { data: VaultData; onBackedUp?: () => void }) {
   const { confirm } = useDialog();
   const [pw, setPw] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
@@ -78,6 +85,8 @@ function ExportTab({ data }: { data: VaultData }) {
     if (pw.length < 8) return setMsg('备份密码至少 8 位');
     const res = await api.export('encrypted', pw, scopeIds);
     download(res.filename, res.mime, res.content);
+    // 只有整库备份才算「有了一份完整后路」；部分项目导出不重置备份提醒。
+    if (!scopeIds) onBackedUp?.();
     setMsg(`已导出加密备份${scopeNote}`);
   };
   const exportPlain = async (mode: 'json' | 'csv') => {

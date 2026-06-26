@@ -31,13 +31,21 @@ import {
 import { flatMemos, sortMemos } from '@/lib/memo';
 import { ENV_KIND_COLORS, ENV_KIND_LABELS } from '@/lib/vault-ops';
 import { fetchWeather, geocodeCity, weatherLabel, type WeatherNow } from '@/lib/weather';
+import { BACKUP_SNOOZE_MS, shouldRemindBackup } from '@/lib/backup';
+import { BackupReminder } from './BackupGuard';
 
 export function Home({
   data,
   onUpdate,
+  syncEnabled,
+  onOpenExport,
+  onOpenSettings,
 }: {
   data: VaultData;
   onUpdate: (recipe: (d: VaultData) => void) => Promise<void>;
+  syncEnabled: boolean;
+  onOpenExport: () => void;
+  onOpenSettings: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [addType, setAddType] = useState<DashWidgetType>('weather');
@@ -144,6 +152,25 @@ export function Home({
       </header>
 
       <div className="flex-1 overflow-auto p-6">
+        {shouldRemindBackup(
+          {
+            syncEnabled,
+            projectCount: data.projects.length,
+            lastBackupAt: data.settings.lastBackupAt,
+            snoozeUntil: data.settings.backupSnoozeUntil,
+          },
+          Date.now(),
+        ) && (
+          <BackupReminder
+            onExport={onOpenExport}
+            onEnableSync={onOpenSettings}
+            onSnooze={() =>
+              onUpdate((d) => {
+                d.settings.backupSnoozeUntil = Date.now() + BACKUP_SNOOZE_MS;
+              })
+            }
+          />
+        )}
         {editing && (
           <p className="mb-3 text-xs text-gray-400">
             编辑模式：拖卡片左上角手柄移动、拖右下角改变大小（1–4 列 × 1–3 行）。

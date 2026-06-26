@@ -28,6 +28,7 @@ export function Settings({
       <div className="flex flex-col gap-6">
         <AppearanceSection data={data} onSave={onSave} />
         <FillSection data={data} onSave={onSave} />
+        <MemoWidgetSection data={data} onSave={onSave} />
         <WeatherSection data={data} onSave={onSave} />
         <SyncSection data={data} onSave={onSave} refresh={refresh} />
         <BiometricSection refresh={refresh} />
@@ -323,6 +324,33 @@ function FillSection({
       </label>
       <p className="text-[11px] text-gray-400">
         关闭后只填账号密码、不自动提交，需你手动点登录。仅在网址 origin 完全一致的页面才会提交。
+      </p>
+    </section>
+  );
+}
+
+// --------------------------- 待办悬浮窗 ---------------------------
+
+function MemoWidgetSection({
+  data,
+  onSave,
+}: {
+  data: VaultData;
+  onSave: (next: VaultData) => Promise<void>;
+}) {
+  const hidden = data.settings.floatingMemoHidden === true;
+  const toggle = async () => {
+    await onSave(produce(data, (d) => void (d.settings.floatingMemoHidden = !hidden)));
+  };
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold text-gray-800">待办悬浮窗</h3>
+      <label className="flex items-center gap-2 text-sm text-gray-700">
+        <input type="checkbox" checked={!hidden} onChange={toggle} />
+        在页面右下角显示可拖动的待办悬浮窗
+      </label>
+      <p className="text-[11px] text-gray-400">
+        关闭后彻底隐藏悬浮窗；项目页右侧栏的待办不受影响。
       </p>
     </section>
   );

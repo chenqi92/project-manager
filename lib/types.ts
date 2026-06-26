@@ -162,6 +162,14 @@ export interface VaultSettings {
   dashboard?: DashboardConfig;
   /** 首页天气卡片是否允许联网获取；默认关闭，仅在用户显式开启后才请求第三方天气服务 */
   weatherEnabled?: boolean;
+  /** 是否已展示过首次创建后的备份引导（一次性强提示）；undefined 视为未展示 */
+  onboardedBackup?: boolean;
+  /** 上次成功导出加密备份的时间（epoch ms）；用于提醒久未备份 */
+  lastBackupAt?: number;
+  /** 备份提醒「稍后再说」的静默截止时间（epoch ms）；在此之前不再提醒 */
+  backupSnoozeUntil?: number;
+  /** 是否彻底隐藏右下角的待办悬浮窗；undefined / false 视为显示 */
+  floatingMemoHidden?: boolean;
 }
 
 /** 解密后的保险箱明文数据（仅存在于内存中） */

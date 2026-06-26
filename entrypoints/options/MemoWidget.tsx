@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { GripVertical, StickyNote, X } from 'lucide-react';
 import { cx } from '@/components/ui';
@@ -32,6 +32,7 @@ export function MemoWidget({
   const [addProjectId, setAddProjectId] = useState('');
   const posRef = useRef(pos);
   posRef.current = pos;
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     browser.storage.local
@@ -50,6 +51,25 @@ export function MemoWidget({
   const save = (s: WidgetState) => {
     browser.storage.local.set({ [KEY]: s }).catch(() => {});
   };
+
+  // 展开时把面板夹回视口内：收起态小圆按钮可能停在右/下边缘，若仍以左上角为锚点展开，
+  // 面板会越界、显示不全。这里按实际面板尺寸把锚点向左/上回移，使其完整可见
+  //（等价于在右下角时以右下角为基准展开）。在 useLayoutEffect 里于绘制前修正，无闪烁。
+  useLayoutEffect(() => {
+    if (collapsed) return;
+    const el = panelRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const margin = 8;
+    const maxLeft = Math.max(margin, window.innerWidth - rect.width - margin);
+    const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
+    const nx = Math.min(Math.max(posRef.current.x, margin), maxLeft);
+    const ny = Math.min(Math.max(posRef.current.y, margin), maxTop);
+    if (nx !== posRef.current.x || ny !== posRef.current.y) {
+      setPos({ x: nx, y: ny });
+      save({ x: nx, y: ny, collapsed: false });
+    }
+  }, [collapsed]);
 
   const startDrag = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -139,7 +159,7 @@ export function MemoWidget({
       }
     });
 
-  if (data.projects.length === 0 || !loaded) return null;
+  if (data.projects.length === 0 || !loaded || data.settings.floatingMemoHidden) return null;
 
   const now = Date.now();
   const groups = data.projects
@@ -171,6 +191,7 @@ export function MemoWidget({
 
   return (
     <div
+      ref={panelRef}
       style={{ left: pos.x, top: pos.y }}
       className="fixed z-40 flex max-h-[72vh] w-96 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-surface shadow-2xl"
     >

@@ -21,7 +21,7 @@ import {
   Settings as SettingsIcon,
   ShieldCheck,
   Star,
-  StickyNote,
+  Terminal,
   Trash2,
   UploadCloud,
   UserPlus,
@@ -29,7 +29,6 @@ import {
 } from 'lucide-react';
 import { LockScreen } from '@/components/LockScreen';
 import { TotpBadge } from '@/components/TotpBadge';
-import { Markdown } from '@/components/Markdown';
 import { Button, Input, cx } from '@/components/ui';
 import { useVault } from '@/hooks/useVault';
 import { getOrigin } from '@/lib/autofill';
@@ -41,10 +40,10 @@ import { search, type FlatEntry } from '@/lib/search';
 import type {
   Account,
   Environment,
+  GitRepo,
   MemoItem,
   PlatformLink,
   Project,
-  ProjectDoc,
   VaultData,
 } from '@/lib/types';
 import {
@@ -59,8 +58,6 @@ import {
   newProject,
   produce,
 } from '@/lib/vault-ops';
-import { sortMemos } from '@/lib/memo';
-import { AddMemo, MemoRow } from '@/components/MemoRow';
 import { useDialog } from '@/components/Dialog';
 import { AuditModal } from './AuditModal';
 import { BigScreen } from './BigScreen';
@@ -72,6 +69,8 @@ import { OpenLoginModal } from './OpenLoginModal';
 import { AccountEditor, EnvEditor, LinkEditor, ProjectEditor } from './editors';
 import { ImportExport } from './ImportExport';
 import { Settings } from './Settings';
+import { SidePanel } from './SidePanel';
+import { BackupOnboardingModal } from './BackupGuard';
 
 type Editing =
   | { kind: 'project'; project?: Project }
@@ -163,6 +162,12 @@ export default function App() {
       flash('打开失败：' + (e instanceof Error ? e.message : String(e)));
     }
   };
+
+  // 备份引导相关的轻量写入（失败不影响主流程）：标记已展示一次性强提示；记录一次成功备份的时间。
+  const ackOnboardBackup = () =>
+    update((d) => void (d.settings.onboardedBackup = true)).catch(() => {});
+  const recordBackup = () =>
+    update((d) => void (d.settings.lastBackupAt = Date.now())).catch(() => {});
 
   const projects = data?.projects ?? [];
   // 显示顺序 = 数组顺序（可拖拽调整）；收藏星标只作标记，不再自动置顶。
@@ -377,7 +382,13 @@ export default function App() {
         {searchResults ? (
           <SearchView results={searchResults} onCopy={copy} onOpenLogin={openLogin} />
         ) : showHome ? (
-          <Home data={data} onUpdate={update} />
+          <Home
+            data={data}
+            onUpdate={update}
+            syncEnabled={status?.syncEnabled === true}
+            onOpenExport={() => setShowIO(true)}
+            onOpenSettings={() => setShowSettings(true)}
+          />
         ) : selected ? (
           <ProjectView
             project={selected}
@@ -543,7 +554,12 @@ export default function App() {
         />
       )}
       {showIO && (
-        <ImportExport data={data} onClose={() => setShowIO(false)} onImported={vault.reload} />
+        <ImportExport
+          data={data}
+          onClose={() => setShowIO(false)}
+          onImported={vault.reload}
+          onBackedUp={recordBackup}
+        />
       )}
       {showAudit && <AuditModal data={data} onClose={() => setShowAudit(false)} />}
       {docsProject && (
@@ -611,6 +627,25 @@ export default function App() {
           }}
         />
       )}
+
+      {/* 首次创建保险箱后的一次性强提示：本地数据无兜底，引导备份或开同步。
+          已开同步（已有云端副本）或正在走捕获 / 登录交接流程时不打扰。 */}
+      {status?.syncEnabled !== true &&
+        !data.settings.onboardedBackup &&
+        !capture &&
+        !loginHandoff && (
+          <BackupOnboardingModal
+            onExport={() => {
+              ackOnboardBackup();
+              setShowIO(true);
+            }}
+            onEnableSync={() => {
+              ackOnboardBackup();
+              setShowSettings(true);
+            }}
+            onAck={ackOnboardBackup}
+          />
+        )}
 
       <MemoWidget data={data} selectedProjectId={selected?.id ?? null} onUpdate={update} />
 
@@ -710,138 +745,31 @@ function ProjectView(props: ProjectViewProps) {
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto p-6">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
-          {/* 右侧窄栏：待办 + 说明（xl 下 order-last 移到右边，窄屏下置顶） */}
-          <aside className="flex w-full flex-col gap-5 xl:order-last xl:w-[380px] xl:shrink-0">
-            <MemoSection
-              memos={project.memos ?? []}
-              onAdd={props.onAddMemo}
-              onToggleDone={props.onToggleMemoDone}
-              onToggleUrgent={props.onToggleMemoUrgent}
-              onDelete={props.onDeleteMemo}
-            />
-            <DocsPanel docs={project.docs ?? []} onOpen={props.onOpenDocs} />
-          </aside>
-
-          {/* 主区：环境 / 链接 / 账号 */}
-          <div className="min-w-0 flex-1 space-y-5">
-            {project.note && <p className="text-sm text-gray-500">{project.note}</p>}
-            {project.environments.length === 0 && (
-              <p className="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
-                还没有环境，点右上角「新建环境」
-              </p>
-            )}
-            {project.environments.map((env) => (
-              <EnvBlock key={env.id} env={env} {...props} />
-            ))}
-          </div>
+      <div className="flex min-h-0 flex-1">
+        {/* 主区：环境 / 链接 / 账号（独立滚动，宽度随右栏拖拽而变） */}
+        <div className="min-w-0 flex-1 space-y-5 overflow-auto p-6">
+          {project.note && <p className="text-sm text-gray-500">{project.note}</p>}
+          {project.environments.length === 0 && (
+            <p className="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
+              还没有环境，点右上角「新建环境」
+            </p>
+          )}
+          {project.environments.map((env) => (
+            <EnvBlock key={env.id} env={env} {...props} />
+          ))}
         </div>
+
+        {/* 右栏：待办 + 说明（可拖拽宽度/高度、可折叠、可整栏收起到右侧边） */}
+        <SidePanel
+          project={project}
+          onOpenDocs={props.onOpenDocs}
+          onAddMemo={props.onAddMemo}
+          onToggleMemoDone={props.onToggleMemoDone}
+          onToggleMemoUrgent={props.onToggleMemoUrgent}
+          onDeleteMemo={props.onDeleteMemo}
+        />
       </div>
     </>
-  );
-}
-
-function DocsPanel({ docs, onOpen }: { docs: ProjectDoc[]; onOpen: () => void }) {
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const active = docs.find((d) => d.id === activeId) ?? docs[0] ?? null;
-  return (
-    <section className="flex min-h-0 flex-col rounded-xl border border-gray-200 bg-surface">
-      <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-2.5">
-        <FileText size={15} className="text-brand-600" />
-        <span className="font-medium">说明</span>
-        {docs.length > 0 && (
-          <span className="rounded-full bg-gray-100 px-1.5 text-[11px] text-gray-500">{docs.length}</span>
-        )}
-        <button
-          onClick={onOpen}
-          className="ml-auto text-xs text-brand-600 hover:text-brand-700"
-        >
-          {docs.length ? '编辑 / 管理' : '新建文档'}
-        </button>
-      </div>
-      {docs.length === 0 ? (
-        <button
-          onClick={onOpen}
-          className="m-3 rounded-lg border border-dashed border-gray-200 py-6 text-center text-xs text-gray-400 hover:border-brand-300 hover:text-brand-600"
-        >
-          还没有说明文档，点此新建
-        </button>
-      ) : (
-        <>
-          {docs.length > 1 && (
-            <div className="flex flex-wrap gap-1 border-b border-gray-100 px-3 py-2">
-              {docs.map((d) => (
-                <button
-                  key={d.id}
-                  onClick={() => setActiveId(d.id)}
-                  title={d.title}
-                  className={cx(
-                    'max-w-[150px] truncate rounded-md px-2 py-1 text-xs',
-                    active?.id === d.id
-                      ? 'bg-brand-50 text-brand-700'
-                      : 'text-gray-500 hover:bg-gray-100',
-                  )}
-                >
-                  {d.title}
-                </button>
-              ))}
-            </div>
-          )}
-          {active && (
-            <div className="max-h-[55vh] overflow-auto p-4">
-              <Markdown source={active.content} />
-            </div>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
-function MemoSection({
-  memos,
-  onAdd,
-  onToggleDone,
-  onToggleUrgent,
-  onDelete,
-}: {
-  memos: MemoItem[];
-  onAdd: (text: string, dueAt: number | undefined, urgent: boolean) => void;
-  onToggleDone: (id: string) => void;
-  onToggleUrgent: (id: string) => void;
-  onDelete: (id: string) => void;
-}) {
-  const sorted = sortMemos(memos);
-  const pending = memos.filter((m) => !m.done).length;
-  return (
-    <section className="rounded-xl border border-gray-200 bg-surface">
-      <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-2.5">
-        <StickyNote size={15} className="text-brand-600" />
-        <span className="font-medium">待办</span>
-        {pending > 0 && (
-          <span className="rounded-full bg-gray-100 px-1.5 text-[11px] text-gray-500">待办 {pending}</span>
-        )}
-      </div>
-      <div className="space-y-2.5 p-3">
-        <AddMemo onAdd={onAdd} />
-        {sorted.length === 0 ? (
-          <p className="py-1 text-center text-xs text-gray-400">还没有待办，上方添加</p>
-        ) : (
-          <div className="flex flex-col gap-1.5">
-            {sorted.map((m) => (
-              <MemoRow
-                key={m.id}
-                memo={m}
-                onToggleDone={() => onToggleDone(m.id)}
-                onToggleUrgent={() => onToggleUrgent(m.id)}
-                onDelete={() => onDelete(m.id)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
   );
 }
 
@@ -870,18 +798,7 @@ function EnvBlock({ env, ...props }: { env: Environment } & ProjectViewProps) {
       {env.gitRepos && env.gitRepos.length > 0 && (
         <div className="flex flex-wrap gap-1.5 border-b border-gray-100 px-4 py-2">
           {env.gitRepos.map((r) => (
-            <button
-              key={r.id}
-              title={`点击复制：${gitCloneCommand(r)}`}
-              onClick={() => props.onCopy(gitCloneCommand(r), 'git clone 命令')}
-              className="flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] text-gray-600 hover:border-brand-300"
-            >
-              <GitBranch size={12} className="shrink-0 text-gray-400" />
-              <span className="max-w-[220px] truncate font-mono">{r.url}</span>
-              {r.branch && (
-                <span className="shrink-0 rounded bg-brand-50 px-1 text-brand-600">{r.branch}</span>
-              )}
-            </button>
+            <GitRepoChip key={r.id} repo={r} onCopy={props.onCopy} />
           ))}
         </div>
       )}
@@ -943,18 +860,7 @@ function LinkBlock({
       {link.gitRepos && link.gitRepos.length > 0 && (
         <div className="flex flex-wrap gap-1.5 border-t border-gray-100 px-3 py-2">
           {link.gitRepos.map((r) => (
-            <button
-              key={r.id}
-              title={`点击复制：${gitCloneCommand(r)}`}
-              onClick={() => props.onCopy(gitCloneCommand(r), 'git clone 命令')}
-              className="flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] text-gray-600 hover:border-brand-300"
-            >
-              <GitBranch size={12} className="shrink-0 text-gray-400" />
-              <span className="max-w-[220px] truncate font-mono">{r.url}</span>
-              {r.branch && (
-                <span className="shrink-0 rounded bg-brand-50 px-1 text-brand-600">{r.branch}</span>
-              )}
-            </button>
+            <GitRepoChip key={r.id} repo={r} onCopy={props.onCopy} />
           ))}
         </div>
       )}
@@ -1118,6 +1024,38 @@ function SearchRow({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// Git 仓库小标签：左半（图标 + 地址）复制仓库地址；右半（分支 + 终端图标）复制 git clone 命令。
+function GitRepoChip({
+  repo,
+  onCopy,
+}: {
+  repo: GitRepo;
+  onCopy: (text: string, what: string) => void;
+}) {
+  return (
+    <div className="flex items-center overflow-hidden rounded-md border border-gray-200 bg-gray-50 text-[11px] text-gray-600">
+      <button
+        title={`点击复制仓库地址：${repo.url}`}
+        onClick={() => onCopy(repo.url, '仓库地址')}
+        className="flex min-w-0 items-center gap-1 px-2 py-1 hover:bg-gray-100"
+      >
+        <GitBranch size={12} className="shrink-0 text-gray-400" />
+        <span className="max-w-[220px] truncate font-mono">{repo.url}</span>
+      </button>
+      <button
+        title={`点击复制 clone 命令：${gitCloneCommand(repo)}`}
+        onClick={() => onCopy(gitCloneCommand(repo), 'git clone 命令')}
+        className="flex shrink-0 items-center gap-1 self-stretch border-l border-gray-200 px-2 py-1 hover:bg-gray-100"
+      >
+        {repo.branch && (
+          <span className="rounded bg-brand-50 px-1 text-brand-600">{repo.branch}</span>
+        )}
+        <Terminal size={12} className="shrink-0 text-gray-400" />
+      </button>
     </div>
   );
 }

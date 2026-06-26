@@ -45,6 +45,10 @@ export default defineBackground(() => {
     .setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' })
     .catch(() => {});
 
+  // 卸载时打开说明页：解释「卸载会清空本地数据」以及如何用同步/备份恢复。
+  // 仅是事后告知（数据此时已被 Chrome 清除），帮助用户避免再次误删并指引恢复路径。
+  browser.runtime.setUninstallURL?.('https://envmanager.yzs.ai/uninstall.html').catch(() => {});
+
   browser.idle.onStateChanged.addListener((state) => {
     if (autoLockMinutes > 0 && state !== 'active') lock();
   });

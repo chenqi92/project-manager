@@ -12,6 +12,19 @@
 - **导入导出**：加密备份（推荐）、明文 JSON / CSV，支持从 Chrome、Bitwarden 的 CSV 迁移。
 - **全局搜索**、密码生成器、空闲自动锁定。
 
+## 升级与数据安全（重要）
+
+数据默认只存在本机 `chrome.storage.local`（密文）。请注意 Chrome 的行为：
+
+- **升级是自动的，无需卸载重装**：扩展会自动从应用商店更新，更新<strong>保留</strong>全部数据。
+- **卸载会清空数据**：Chrome 在卸载扩展时立即清除其本地数据。因此<strong>「卸载 → 重新安装」会丢失全部数据</strong>，且因端到端加密、无服务器副本，<strong>不可恢复</strong>。
+- **换电脑 / 重装系统 / 重置浏览器前**，务必先做下面任一项留后路：
+  - 开启<strong>自托管同步</strong>（密文存到你自己的服务器，换机后可恢复）；
+  - 或在「导入 / 导出」里<strong>导出一份加密备份</strong>文件并妥善保管。
+- 扩展内有相应引导：首次创建保险箱会提示设置备份/同步；久未备份且未开同步时，首页会显示提醒。
+
+恢复方式见卸载说明页 [`docs/uninstall.html`](docs/uninstall.html)。
+
 ## 技术栈
 
 WXT · React 19 · TypeScript · Tailwind v4 · Web Crypto（AES-GCM）· hash-wasm（Argon2id）。后端：Hono · SQLite。
