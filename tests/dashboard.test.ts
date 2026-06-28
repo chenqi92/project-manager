@@ -6,13 +6,13 @@ import { weatherLabel } from '../lib/weather';
 describe('dashboard defaults', () => {
   it('默认 4 张卡片、尺寸合法、id 唯一', () => {
     const d = defaultDashboard();
-    expect(d.widgets.map((w) => w.type)).toEqual(['stats', 'todos', 'calendar', 'launcher']);
+    expect(d.widgets!.map((w) => w.type)).toEqual(['stats', 'search', 'launcher', 'todos']);
     expect(
-      d.widgets.every(
+      d.widgets!.every(
         (w) => (w.w ?? 0) >= 1 && (w.w ?? 0) <= 4 && (w.h ?? 0) >= 1 && (w.h ?? 0) <= 3,
       ),
     ).toBe(true);
-    expect(new Set(d.widgets.map((w) => w.id)).size).toBe(4);
+    expect(new Set(d.widgets!.map((w) => w.id)).size).toBe(4);
   });
 
   it('newDashWidget 默认尺寸', () => {

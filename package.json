@@ -1,7 +1,7 @@
 {
   "name": "project-env-manager",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Securely store and auto-fill login credentials across your projects, environments and platforms. Master-password, end-to-end encrypted locally; optional self-hosted sync stores ciphertext only.",
   "scripts": {
@@ -9,6 +9,7 @@
     "dev:firefox": "wxt -b firefox",
     "build": "wxt build",
     "build:firefox": "wxt build -b firefox",
+    "build:unpacked": "wxt build && rsync -a --delete .output/chrome-mv3/ ../project-manager-unpacked/",
     "zip": "wxt zip",
     "zip:store": "cross-env STORE_BUILD=1 wxt zip",
     "zip:firefox": "wxt zip -b firefox",
@@ -39,5 +40,15 @@
     "typescript": "^6.0.3",
     "vitest": "^4.1.9",
     "wxt": "^0.20.26"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "web-ext-run": {
+      "fx-runner": "1.5.0",
+      "tmp": "0.2.7"
+    },
+    "node-notifier": {
+      "uuid": "11.1.1"
+    }
   }
 }

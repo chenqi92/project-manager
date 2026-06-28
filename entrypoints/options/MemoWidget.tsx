@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
-import { GripVertical, StickyNote, X } from 'lucide-react';
+import { EyeOff, ListChecks, Minus } from 'lucide-react';
 import { cx } from '@/components/ui';
 import { AddMemo, MemoRow } from '@/components/MemoRow';
 import type { MemoItem, VaultData } from '@/lib/types';
@@ -12,6 +12,8 @@ interface WidgetState {
   x: number;
   y: number;
   collapsed: boolean;
+  /** 组件内「隐藏」（眼睛按钮）→ 只剩右下角圆形 FAB 可复显；区别于设置里的整体隐藏。 */
+  hidden: boolean;
 }
 
 export function MemoWidget({
@@ -24,10 +26,11 @@ export function MemoWidget({
   onUpdate: (recipe: (d: VaultData) => void) => Promise<void>;
 }) {
   const [pos, setPos] = useState(() => ({
-    x: Math.max(8, window.innerWidth - 400),
+    x: Math.max(8, window.innerWidth - 340),
     y: Math.max(8, window.innerHeight - 540),
   }));
   const [collapsed, setCollapsed] = useState(true); // 默认收起，遮挡隐私
+  const [hidden, setHidden] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [addProjectId, setAddProjectId] = useState('');
   const posRef = useRef(pos);
@@ -38,10 +41,11 @@ export function MemoWidget({
     browser.storage.local
       .get(KEY)
       .then((r) => {
-        const s = r[KEY] as WidgetState | undefined;
+        const s = r[KEY] as Partial<WidgetState> | undefined;
         if (s) {
-          setPos({ x: s.x, y: s.y });
-          setCollapsed(s.collapsed);
+          if (typeof s.x === 'number' && typeof s.y === 'number') setPos({ x: s.x, y: s.y });
+          setCollapsed(s.collapsed ?? true);
+          setHidden(s.hidden ?? false);
         }
         setLoaded(true);
       })
@@ -53,10 +57,9 @@ export function MemoWidget({
   };
 
   // 展开时把面板夹回视口内：收起态小圆按钮可能停在右/下边缘，若仍以左上角为锚点展开，
-  // 面板会越界、显示不全。这里按实际面板尺寸把锚点向左/上回移，使其完整可见
-  //（等价于在右下角时以右下角为基准展开）。在 useLayoutEffect 里于绘制前修正，无闪烁。
+  // 面板会越界、显示不全。这里按实际面板尺寸把锚点向左/上回移，使其完整可见。
   useLayoutEffect(() => {
-    if (collapsed) return;
+    if (collapsed || hidden) return;
     const el = panelRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
@@ -67,10 +70,11 @@ export function MemoWidget({
     const ny = Math.min(Math.max(posRef.current.y, margin), maxTop);
     if (nx !== posRef.current.x || ny !== posRef.current.y) {
       setPos({ x: nx, y: ny });
-      save({ x: nx, y: ny, collapsed: false });
+      save({ x: nx, y: ny, collapsed: false, hidden: false });
     }
-  }, [collapsed]);
+  }, [collapsed, hidden]);
 
+  // 面板顶栏拖动：纯移动。
   const startDrag = (e: React.PointerEvent) => {
     e.preventDefault();
     const sx = e.clientX;
@@ -88,7 +92,7 @@ export function MemoWidget({
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
-      save({ x: last.x, y: last.y, collapsed });
+      save({ x: last.x, y: last.y, collapsed, hidden });
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -97,13 +101,13 @@ export function MemoWidget({
   const toggleCollapsed = () => {
     setCollapsed((c) => {
       const n = !c;
-      save({ ...posRef.current, collapsed: n });
+      save({ ...posRef.current, collapsed: n, hidden });
       return n;
     });
   };
 
-  // 收起态小圆按钮：可拖动移动；几乎没移动则当作点击 → 展开。
-  const startPillDrag = (e: React.PointerEvent) => {
+  // 小圆按钮 / FAB：可拖动移动；几乎没移动则当作点击（执行 onTap）。
+  const startMoveOrTap = (e: React.PointerEvent, onTap: () => void) => {
     const sx = e.clientX;
     const sy = e.clientY;
     const ox = posRef.current.x;
@@ -121,11 +125,20 @@ export function MemoWidget({
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      if (moved) save({ x: last.x, y: last.y, collapsed: true });
-      else toggleCollapsed();
+      if (moved) save({ x: last.x, y: last.y, collapsed, hidden });
+      else onTap();
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+  };
+
+  const hide = () => {
+    setHidden(true);
+    save({ ...posRef.current, collapsed, hidden: true });
+  };
+  const show = () => {
+    setHidden(false);
+    save({ ...posRef.current, collapsed, hidden: false });
   };
 
   const mutate = (id: string, fn: (m: MemoItem) => void) =>
@@ -170,54 +183,83 @@ export function MemoWidget({
   const alarmCount = allMemos.filter((m) => isAlarming(m, now)).length;
   const addPid = addProjectId || selectedProjectId || data.projects[0]?.id || '';
 
+  // 组件内隐藏：右下角圆形 FAB（teal），点击复显；可拖动。
+  if (hidden) {
+    return (
+      <button
+        onPointerDown={(e) => startMoveOrTap(e, show)}
+        style={{ left: pos.x, top: pos.y, touchAction: 'none' }}
+        className={cx(
+          'fixed z-40 flex h-[46px] w-[46px] items-center justify-center rounded-full text-white shadow-[0_12px_28px_-8px_rgba(13,148,136,.45)] active:cursor-grabbing',
+          alarmCount > 0 ? 'memo-shake bg-rose-600' : 'bg-brand-600',
+        )}
+        title="显示待办（拖动可移动）"
+      >
+        <ListChecks size={20} />
+      </button>
+    );
+  }
+
+  // 收起态：胶囊按钮（拖动移动 / 点击展开）。
   if (collapsed) {
     return (
       <button
-        onPointerDown={startPillDrag}
+        onPointerDown={(e) => startMoveOrTap(e, toggleCollapsed)}
         style={{ left: pos.x, top: pos.y, touchAction: 'none' }}
         className={cx(
-          'fixed z-40 flex cursor-grab items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium text-white shadow-lg active:cursor-grabbing',
-          alarmCount > 0 ? 'memo-shake bg-rose-600' : 'bg-brand-600',
+          'fixed z-40 flex cursor-grab items-center gap-2 rounded-full border bg-surface px-4 py-2.5 text-[12.5px] font-semibold shadow-[0_12px_30px_-10px_rgba(20,26,40,.3)] active:cursor-grabbing',
+          alarmCount > 0 ? 'memo-shake border-rose-200' : 'border-gray-200',
         )}
         title="拖动移动 / 点击展开"
       >
-        <StickyNote size={16} /> 待办
-        {pendingTotal > 0 && (
-          <span className="rounded-full bg-white/25 px-1.5 text-xs">{pendingTotal}</span>
+        <ListChecks size={16} className="text-warn" />
+        <span className="text-gray-800">待办</span>
+        {alarmCount > 0 ? (
+          <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold text-white">
+            {alarmCount}
+          </span>
+        ) : (
+          pendingTotal > 0 && (
+            <span className="rounded-full bg-gray-100 px-1.5 text-[11px] text-gray-500">
+              {pendingTotal}
+            </span>
+          )
         )}
       </button>
     );
   }
 
+  // 展开态：面板。
   return (
     <div
       ref={panelRef}
       style={{ left: pos.x, top: pos.y }}
-      className="fixed z-40 flex max-h-[72vh] w-96 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-surface shadow-2xl"
+      className="fixed z-40 flex max-h-[72vh] w-[300px] flex-col overflow-hidden rounded-[14px] border border-gray-200 bg-surface shadow-[0_18px_44px_-12px_rgba(20,26,40,.32)]"
     >
       <div
         onPointerDown={startDrag}
-        className="flex cursor-move touch-none items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2"
+        className="flex cursor-move touch-none items-center gap-2.5 border-b border-gray-200 bg-gray-50 px-3.5 py-3"
       >
-        <GripVertical size={15} className="text-gray-400" />
-        <StickyNote size={15} className="text-brand-600" />
-        <span className="text-sm font-semibold text-gray-800">待办任务</span>
-        {pendingTotal > 0 && (
-          <span
-            className={cx(
-              'rounded-full px-1.5 text-[11px] font-medium',
-              alarmCount > 0 ? 'bg-rose-100 text-rose-700' : 'bg-gray-200 text-gray-600',
-            )}
-          >
-            待办 {pendingTotal}
+        <ListChecks size={16} className="text-warn" />
+        <span className="flex-1 text-[12.5px] font-bold text-gray-800">待办</span>
+        {alarmCount > 0 && (
+          <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold text-white">
+            {alarmCount} 紧急
           </span>
         )}
         <button
           onClick={toggleCollapsed}
-          className="ml-auto rounded-md p-1 text-gray-400 hover:bg-gray-200"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-gray-500 hover:bg-gray-200"
           title="收起"
         >
-          <X size={16} />
+          <Minus size={14} />
+        </button>
+        <button
+          onClick={hide}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-gray-500 hover:bg-gray-200"
+          title="隐藏（右下角可复显）"
+        >
+          <EyeOff size={14} />
         </button>
       </div>
 
@@ -228,7 +270,7 @@ export function MemoWidget({
         ) : (
           groups.map((g) => (
             <div key={g.id} className="mb-2">
-              <div className="px-1 pb-1 text-[11px] font-medium text-gray-400">{g.name}</div>
+              <div className="px-1 pb-1 text-[11px] font-semibold text-gray-400">{g.name}</div>
               <div className="flex flex-col gap-1">
                 {g.memos.map((m) => (
                   <MemoRow

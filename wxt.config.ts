@@ -9,11 +9,12 @@ const pkg = JSON.parse(
   readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8'),
 ) as { version: string };
 
-// 固定扩展 ID 的公钥（非机密）：本地 dev / e2e 保持稳定的 chrome-extension://<id>，
-// 即 WebAuthn 的 RP ID，避免重载后生物识别凭据失效。
-// 首次上传到 Chrome 商店时不能带 key（商店会自己分配），用 STORE_BUILD=1 构建即可去掉。
+// 固定扩展 ID 的公钥（非机密）：让本地 dev / e2e 的 chrome-extension://<id> 与
+// 「商店上架版」一致（ID = oiijkibofmpjgiojfidjagnndojplkdm），从而 WebAuthn RP ID 稳定、
+// 且 OAuth 重定向 URI（https://<id>.chromiumapp.org/）本地与线上同一个。
+// 此公钥即上架项的 CRX 公钥；首次上传商店不能带 key，用 STORE_BUILD=1 构建即去掉。
 const EXT_KEY =
-  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnf9yn/JCMTch4zNKUigDrl0VbjuWlPb6X/BNtTHG/CwMVmUxK18LL/Ntb+jAPGwp5M7gJSOD6DgkDo1LIodQf3n9Dr2XkizT8WL1dJla1SIBN7kvjdt151tPnjqWt9PagNeePSl8nnB488ZJ6GN6l+Y8Lew2PXm1IA6jOai/edrUleA1yzjvVdYXjUfzuCdz4snjK1pTFRNBgws5DX+ClZ2EV3SFSSTgKzVQzBlW0/xjvKl3QIai9ssrpNg5Qr1q83PyaissR18fW84TC8fcXCYhdY1GmFZvCK3pvHkOAELmyhl8EomNjooYysj5sCfBEovqIKYrFUl1jukYvuTIfwIDAQAB';
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2GNVj5csTV9OvcVzMn4tzYW7rPvBZN2twUeZVe4fitMpD09sKzEDezOWIpndXL2b5VSj0nImWVfvP4YAf65HjwFhfiLoPWHvztViMr1RoANBF92N5uCJkVYDmYs3MNv2RZFJYJmn2rzQbv16THthLfTRzAv/tzRysuL4IRFKB3Z8V3xyZMvEOwNiLdCc+bKDUToD3tkhkqFbkyVwa1UD2fh1ktrs/S8bq9R9rlMO7gMK6JDSYK9PgjUF5DuAqryYlWYePVPbgYfnlxtX2ndis2v08REv9mOq9NhUEZ7bu5d/msMe98QLWfNEjbgbP1LeLANbfUAdPRFUD8SVmdPrkwIDAQAB';
 const STORE_BUILD = process.env.STORE_BUILD === '1';
 
 // WXT config. https://wxt.dev
@@ -41,6 +42,13 @@ export default defineConfig({
       'contextMenus',
       'offscreen',
       'clipboardWrite',
+      // identity - 网盘（Google Drive / OneDrive）同步走 launchWebAuthFlow 的 OAuth 授权
+      'identity',
+      // declarativeNetRequestWithHostAccess - 仅对「已授权主机」改请求头：去掉发往
+      // 微软令牌端点(login.microsoftonline.com)的 Origin 头。否则微软对「移动和桌面」
+      // 客户端的跨源令牌兑换报 AADSTS90023。规则见 public/rules/msft-oauth.json，
+      // 仅作用于 XHR/fetch、不碰授权页导航，不读改任何网页内容。
+      'declarativeNetRequestWithHostAccess',
     ],
     // 可选站点访问权：基础清单里不申请，由用户在运行时按需对单个来源授权
     // （chrome.permissions.request），审核更友好。两种场景会用到：
@@ -67,6 +75,10 @@ export default defineConfig({
         suggested_key: { default: 'Alt+Shift+F' },
         description: '填充当前页',
       },
+    },
+    // 去掉发往微软令牌端点的 Origin 头（见上方 declarativeNetRequestWithHostAccess 注释）。
+    declarative_net_request: {
+      rule_resources: [{ id: 'msft_oauth_origin', enabled: true, path: 'rules/msft-oauth.json' }],
     },
     // 严格 CSP：禁止内联脚本与远程代码（MV3 默认已禁远程代码）。
     // 需 'wasm-unsafe-eval' 以允许 Argon2id（hash-wasm）在扩展页/SW 里运行 WebAssembly。

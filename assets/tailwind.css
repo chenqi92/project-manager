@@ -1,13 +1,40 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-50: #eff6ff;
-  --color-brand-100: #dbeafe;
-  --color-brand-500: #3b82f6;
-  --color-brand-600: #2563eb;
-  --color-brand-700: #1d4ed8;
+  /* 品牌主色：teal（对齐重设计稿 --pri #0d9488 / --priD #0f766e / --priBg #e3f5f1） */
+  --color-brand-50: #e3f5f1;
+  --color-brand-100: #c8ece5;
+  --color-brand-200: #9bdcd1;
+  --color-brand-500: #0d9488;
+  --color-brand-600: #0d9488;
+  --color-brand-700: #0f766e;
+
+  /* 语义色（设计 token：含浅底 *bg 变体）。深色见 .dark 重映射。
+   * 定义在 @theme 里 → 自动生成 text-pri / bg-pribg / border-ok 等工具类。 */
+  --color-pri: #0d9488;
+  --color-prid: #0f766e;
+  --color-pribg: #e3f5f1;
+  --color-ok: #15a34a;
+  --color-okbg: #e9f8ee;
+  --color-warn: #d97706;
+  --color-warnbg: #fff3e2;
+  --color-danger: #dc2626;
+  --color-dangerbg: #fdecec;
+
   /* 卡片/面板表面色（亮色为白，暗色翻转见 .dark） */
   --color-surface: #ffffff;
+
+  /* 中性档对齐设计（--bg/--bd/--bd2/--tx/--tx2/--tx3）；深色见 .dark 翻转 */
+  --color-gray-50: #f5f6f8;
+  --color-gray-100: #eef1f4;
+  --color-gray-200: #e8eaef;
+  --color-gray-300: #d7dbe2;
+  --color-gray-400: #969eaa;
+  --color-gray-500: #737b88;
+  --color-gray-600: #5b6472;
+  --color-gray-700: #424a57;
+  --color-gray-800: #2b313b;
+  --color-gray-900: #1a1d23;
 }
 
 /*
@@ -28,6 +55,16 @@
   --color-gray-700: #d1d5db;
   --color-gray-800: #e5e7eb;
   --color-gray-900: #f3f4f6;
+
+  /* 语义浅底在深色上要变暗；前景色略提亮以在深色背景上清晰 */
+  --color-prid: #5eead4;
+  --color-pribg: #0c2b29;
+  --color-ok: #34d399;
+  --color-okbg: #0f2a1c;
+  --color-warn: #fbbf24;
+  --color-warnbg: #2c2410;
+  --color-danger: #f87171;
+  --color-dangerbg: #2c1517;
 }
 
 html,
@@ -43,14 +80,63 @@ html.dark {
   color-scheme: dark;
 }
 
-/* slim scrollbar */
+/* 需要可滚动但不露出滚动条的区域：首页看板、看板页签、磁贴内部等。 */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* ---- 仪表盘磁贴：玻璃拟态外壳 ----
+ * 背景透明度与模糊由 JS 内联 style 注入（外观面板可调，主题感知）；
+ * 这里只放圆角/描边/阴影/悬浮态。fallback：无内联背景时退回不透明 surface。 */
+.tile-glass {
+  background-color: var(--color-surface);
+  border-radius: 1rem;
+  border: 1px solid rgb(255 255 255 / 0.5);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.04),
+    0 8px 24px -12px rgb(0 0 0 / 0.18);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    border-color 0.15s ease;
+}
+.dark .tile-glass {
+  border-color: rgb(255 255 255 / 0.08);
+}
+.tile-glass:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 2px 4px rgb(0 0 0 / 0.06),
+    0 14px 32px -12px rgb(0 0 0 / 0.28);
+}
+
+/* slim scrollbar（对齐设计：细、圆角、留边） */
 *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 *::-webkit-scrollbar-thumb {
-  background: rgb(128 128 128 / 0.35);
+  background: rgb(17 24 39 / 0.16);
   border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(17 24 39 / 0.3);
+  background-clip: padding-box;
+}
+.dark *::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.16);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* ---- Markdown 渲染样式（项目说明文档）---- */
@@ -126,6 +212,23 @@ html.dark {
 .md-body :where(h1, h2, h3, h4, h5, h6) {
   scroll-margin-top: 0.5em;
 }
+
+/* 设计稿入场 / toast 动画 */
+@keyframes pem-pop {
+  0% { opacity: 0; transform: translateY(8px) scale(0.985); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes pem-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes pem-toast {
+  0% { opacity: 0; transform: translate(-50%, 12px); }
+  100% { opacity: 1; transform: translate(-50%, 0); }
+}
+.pem-pop { animation: pem-pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.05); }
+.pem-rise { animation: pem-rise 0.22s ease-out; }
+.pem-toast { animation: pem-toast 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
 
 /* 浮动备忘：紧急未完成项的抖动提醒 */
 @keyframes memo-shake {

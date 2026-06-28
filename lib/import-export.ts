@@ -127,8 +127,9 @@ export function mergeVaults(
 ): MergeResult {
   if (mode === 'replace') {
     const data: VaultData = {
-      ...base,
-      projects: incoming.projects.map(reidProject),
+      ...incoming,
+      settings: incoming.settings ?? base.settings,
+      tombstones: incoming.tombstones ?? [],
     };
     return { data, imported: countAccounts(incoming) };
   }
@@ -425,8 +426,9 @@ class VaultBuilder {
 
 function csvCell(v: string): string {
   if (v === '') return '';
-  if (/[",\r\n]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
-  return v;
+  const safe = /^[\s]*[=+\-@]/.test(v) ? "'" + v : v;
+  if (/[",\r\n]/.test(safe)) return '"' + safe.replace(/"/g, '""') + '"';
+  return safe;
 }
 
 /** 解析 CSV，返回表头(小写)与数据行。支持引号、转义双引号、换行。 */
@@ -486,24 +488,68 @@ function hostOf(url: string): string {
 
 function normalize(data: VaultData): VaultData {
   const out = emptyVaultData();
+  out.version = data.version ?? out.version;
   out.settings = data.settings ?? out.settings;
-  out.projects = (data.projects ?? []).map((p) =>
-    newProject({
-      ...p,
-      environments: (p.environments ?? []).map((e) =>
-        newEnvironment({
-          ...e,
-          links: (e.links ?? []).map((l) =>
-            newLink({
-              ...l,
-              accounts: (l.accounts ?? []).map((a) => newAccount(a as Account)),
-            }),
-          ),
-        }),
-      ),
-    }),
-  );
+  out.tombstones = data.tombstones ?? out.tombstones;
+  out.projects = (data.projects ?? []).map(normalizeProject);
   return out;
+}
+
+function normalizeProject(p: Project): Project {
+  const base = newProject({
+    ...p,
+    docs: (p.docs ?? []).map((d) => ({
+      id: d.id || uid(),
+      title: d.title ?? '未命名文档',
+      content: d.content ?? '',
+      updatedAt: d.updatedAt ?? Date.now(),
+    })),
+    memos: (p.memos ?? []).map((m) => {
+      const t = Date.now();
+      return {
+        id: m.id || uid(),
+        text: m.text ?? '',
+        done: m.done ?? false,
+        urgent: m.urgent,
+        dueAt: m.dueAt,
+        createdAt: m.createdAt ?? t,
+        updatedAt: m.updatedAt ?? t,
+      };
+    }),
+    environments: (p.environments ?? []).map(normalizeEnv),
+  });
+  return {
+    ...base,
+    id: p.id || base.id,
+    createdAt: p.createdAt ?? base.createdAt,
+    updatedAt: p.updatedAt ?? base.updatedAt,
+  };
+}
+
+function normalizeEnv(e: Environment): Environment {
+  const base = newEnvironment({
+    ...e,
+    links: (e.links ?? []).map(normalizeLink),
+  });
+  return { ...base, id: e.id || base.id };
+}
+
+function normalizeLink(l: PlatformLink): PlatformLink {
+  const base = newLink({
+    ...l,
+    accounts: (l.accounts ?? []).map(normalizeAccount),
+  });
+  return { ...base, id: l.id || base.id };
+}
+
+function normalizeAccount(a: Account): Account {
+  const base = newAccount(a);
+  return {
+    ...base,
+    id: a.id || base.id,
+    createdAt: a.createdAt ?? base.createdAt,
+    updatedAt: a.updatedAt ?? base.updatedAt,
+  };
 }
 
 function reidProject(p: Project): Project {

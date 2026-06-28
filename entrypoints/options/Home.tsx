@@ -1,38 +1,40 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
+import { Check, Palette, Pencil, Plus, Settings2, Trash2, Wand2, X } from 'lucide-react';
+import { Button, Modal, cx } from '@/components/ui';
+import { useDialog } from '@/components/Dialog';
+import type { DashAppearance, DashWidget, DashWidgetType, VaultData } from '@/lib/types';
 import {
-  CalendarDays,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  GripVertical,
-  Image as ImageIcon,
-  Layers,
-  Link as LinkIcon,
-  ListTodo,
-  Pencil,
-  Plus,
-  StickyNote,
-  Upload,
-  Users,
-  X,
-} from 'lucide-react';
-import { Button, Input, cx } from '@/components/ui';
-import { MemoRow } from '@/components/MemoRow';
-import type { DashWidget, DashWidgetType, VaultData } from '@/lib/types';
-import {
+  GAP,
   GRID_COLS,
   ROW_HEIGHT,
-  WIDGET_LABELS,
-  defaultDashboard,
+  appearanceBackground,
+  applyLayoutToWidgets,
+  baseLayout,
+  layoutForCols,
+  minWH,
+  newBoard,
   newDashWidget,
+  normAppearance,
+  normDashboard,
   normWidget,
+  toStoredBoards,
+  type NormBoard,
 } from '@/lib/dashboard';
-import { flatMemos, sortMemos } from '@/lib/memo';
-import { ENV_KIND_COLORS, ENV_KIND_LABELS } from '@/lib/vault-ops';
-import { fetchWeather, geocodeCity, weatherLabel, type WeatherNow } from '@/lib/weather';
+import { applyChange, colsForWidth, flowPack, layoutRows, placeNew, type GridItem } from '@/lib/grid-engine';
 import { BACKUP_SNOOZE_MS, shouldRemindBackup } from '@/lib/backup';
 import { BackupReminder } from './BackupGuard';
+import { REGISTRY, WIDGET_DESC, WIDGET_ORDER, WidgetBody, widgetLabel } from './widgets/registry';
+import { tileSurfaceStyle, type WidgetCtx } from './widgets/Tile';
+import { ConfigModal } from './widgets/ConfigModal';
+import { AppearancePanel } from './widgets/AppearancePanel';
+
+interface DragState {
+  id: string;
+  mode: 'move' | 'resize';
+  live: { left: number; top: number; w: number; h: number };
+  preview: GridItem[];
+}
 
 export function Home({
   data,
@@ -40,118 +42,306 @@ export function Home({
   syncEnabled,
   onOpenExport,
   onOpenSettings,
+  onOpenCnb,
+  onCopy,
+  onOpenLogin,
 }: {
   data: VaultData;
   onUpdate: (recipe: (d: VaultData) => void) => Promise<void>;
   syncEnabled: boolean;
   onOpenExport: () => void;
   onOpenSettings: () => void;
+  onOpenCnb: () => void;
+  onCopy: (text: string, what: string) => void;
+  onOpenLogin: (url: string, username: string, password: string) => void;
 }) {
+  const { confirm, prompt } = useDialog();
   const [editing, setEditing] = useState(false);
-  const [addType, setAddType] = useState<DashWidgetType>('weather');
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [dragOverId, setDragOverId] = useState<string | null>(null);
-  const [resizing, setResizing] = useState<{ id: string; w: number; h: number } | null>(null);
-  const gridRef = useRef<HTMLDivElement>(null);
+  const [localActive, setLocalActive] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [showAppearance, setShowAppearance] = useState(false);
+  const [configId, setConfigId] = useState<string | null>(null);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const [width, setWidth] = useState(0);
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const roRef = useRef<ResizeObserver | null>(null);
 
-  const widgets = (data.settings.dashboard?.widgets ?? defaultDashboard().widgets).map(normWidget);
-  const setWidgets = (next: DashWidget[]) =>
+  // 看板：把（可能旧版的）配置归一化为多看板视图。
+  const { boards, activeBoardId } = useMemo(
+    () => normDashboard(data.settings.dashboard),
+    [data.settings.dashboard],
+  );
+  const activeId = localActive && boards.some((b) => b.id === localActive) ? localActive : activeBoardId;
+  const board = boards.find((b) => b.id === activeId) ?? boards[0]!;
+  const widgets = board.widgets;
+  const appearance = normAppearance(board.appearance);
+
+  // 响应式列数：窄屏由基准布局派生且只读（仅基准 4 列下可编辑落库）。
+  // 用回调 ref 让网格挂载/卸载时正确接上 ResizeObserver（空看板→加卡时也能测宽）。
+  const setGridEl = useCallback((el: HTMLDivElement | null) => {
+    gridRef.current = el;
+    roRef.current?.disconnect();
+    if (el) {
+      setWidth(el.clientWidth);
+      const ro = new ResizeObserver((es) => setWidth(es[0]?.contentRect.width ?? el.clientWidth));
+      ro.observe(el);
+      roRef.current = ro;
+    }
+  }, []);
+  const cols = width ? colsForWidth(width) : GRID_COLS;
+  const canEdit = editing && cols === GRID_COLS;
+
+  // 像素换算
+  const cellW = width ? (width - GAP * (cols - 1)) / cols : 0;
+  const pxLeft = (x: number) => x * (cellW + GAP);
+  const pxTop = (y: number) => y * (ROW_HEIGHT + GAP);
+  const pxW = (w: number) => w * cellW + (w - 1) * GAP;
+  const pxH = (h: number) => h * ROW_HEIGHT + (h - 1) * GAP;
+
+  // --- 持久化 ---------------------------------------------------------------
+  const persist = (nextBoards: NormBoard[], nextActive = activeId) =>
     onUpdate((d) => {
-      d.settings.dashboard = { widgets: next };
+      d.settings.dashboard = toStoredBoards(nextBoards, nextActive);
     });
+  const updateBoard = (id: string, fn: (b: NormBoard) => NormBoard) =>
+    persist(boards.map((b) => (b.id === id ? fn(b) : b)));
+  const setWidgets = (next: NormBoard['widgets']) => updateBoard(board.id, (b) => ({ ...b, widgets: next }));
+  const setAppearance = (a: DashAppearance) => updateBoard(board.id, (b) => ({ ...b, appearance: a }));
+
+  const addWidget = (type: DashWidgetType) => {
+    const wdg = normWidget(newDashWidget(type));
+    const base = baseLayout(widgets);
+    const placed = placeNew(base, wdg.w, wdg.h, GRID_COLS, wdg.id);
+    setWidgets(applyLayoutToWidgets([...widgets, wdg], [...base, placed]));
+    setShowAdd(false);
+  };
+  const removeWidget = (id: string) => setWidgets(widgets.filter((w) => w.id !== id));
+  // 一键自动排版：按当前阅读顺序（上→下、左→右）紧凑回填，消除空隙，免去逐个手动调。
+  const autoArrange = () => {
+    if (!canEdit) return;
+    const base = baseLayout(widgets);
+    const ordered = [...base].sort((a, b) => a.y - b.y || a.x - b.x);
+    const packed = flowPack(
+      ordered.map((i) => ({ id: i.id, w: i.w, h: i.h })),
+      GRID_COLS,
+    );
+    setWidgets(applyLayoutToWidgets(widgets, packed));
+  };
   const updateConfig = (id: string, cfg: NonNullable<DashWidget['config']>) =>
     setWidgets(widgets.map((w) => (w.id === id ? { ...w, config: { ...w.config, ...cfg } } : w)));
-  const remove = (id: string) => setWidgets(widgets.filter((w) => w.id !== id));
-  const enableWeather = () =>
-    onUpdate((d) => {
-      d.settings.weatherEnabled = true;
-    });
-  const add = () => setWidgets([...widgets, newDashWidget(addType)]);
-  const move = (fromId: string, toId: string) => {
-    if (fromId === toId) return;
-    const from = widgets.findIndex((w) => w.id === fromId);
-    const to = widgets.findIndex((w) => w.id === toId);
-    if (from < 0 || to < 0) return;
-    const next = [...widgets];
-    const [m] = next.splice(from, 1);
-    if (m) next.splice(to, 0, m);
-    setWidgets(next);
+
+  // --- 看板增删改 -----------------------------------------------------------
+  const addBoard = async () => {
+    const name = await prompt({ title: '新看板', message: '看板名称', placeholder: '如：运维 / 前端' });
+    if (name == null) return;
+    const b = newBoard(name.trim() || `看板 ${boards.length + 1}`);
+    await persist([...boards, b], b.id);
+    setLocalActive(b.id);
+  };
+  const renameBoard = async (id: string) => {
+    const cur = boards.find((b) => b.id === id);
+    const name = await prompt({ title: '重命名看板', defaultValue: cur?.name });
+    if (name == null) return;
+    updateBoard(id, (b) => ({ ...b, name: name.trim() || b.name }));
+  };
+  const deleteBoard = async (id: string) => {
+    if (boards.length <= 1) return;
+    const cur = boards.find((b) => b.id === id);
+    if (!(await confirm({ message: `删除看板「${cur?.name}」及其卡片？`, danger: true }))) return;
+    const next = boards.filter((b) => b.id !== id);
+    const nextActive = next[0]!.id;
+    await persist(next, nextActive);
+    setLocalActive(nextActive);
   };
 
-  // 拖右下角手柄改变 w(列)×h(行)，按格吸附；松手才落库。
-  const startResize = (e: React.PointerEvent, wgt: DashWidget & { w: number; h: number }) => {
+  // --- 拖拽：指针跟随 + 自动让位 + 边缘自动滚动（松手才落库）----------------
+  const beginDrag = (e: React.PointerEvent, id: string, mode: 'move' | 'resize') => {
+    if (!canEdit || !width) return;
     e.preventDefault();
     e.stopPropagation();
+    const base = baseLayout(widgets);
+    const start = base.find((i) => i.id === id);
     const grid = gridRef.current;
-    if (!grid) return;
-    const gap = 16;
-    const cellW = (grid.clientWidth - gap * (GRID_COLS - 1)) / GRID_COLS;
-    const sx = e.clientX;
-    const sy = e.clientY;
-    let lastW = wgt.w;
-    let lastH = wgt.h;
+    if (!start || !grid) return;
+    const [minW, minH] = minWH(widgets.find((w) => w.id === id)!.type);
+    const r0 = grid.getBoundingClientRect();
+    const grabDX = e.clientX - r0.left - pxLeft(start.x);
+    const grabDY = e.clientY - r0.top - pxTop(start.y);
+    const ptr = { x: e.clientX, y: e.clientY };
+    let latest = base;
+    let raf = 0;
+
+    const compute = () => {
+      const g = gridRef.current;
+      if (!g) return;
+      const r = g.getBoundingClientRect();
+      const cx = ptr.x - r.left;
+      const cy = ptr.y - r.top;
+      let rect: GridItem;
+      let live: DragState['live'];
+      if (mode === 'move') {
+        const left = cx - grabDX;
+        const top = cy - grabDY;
+        const sx = Math.max(0, Math.min(GRID_COLS - start.w, Math.round(left / (cellW + GAP))));
+        const sy = Math.max(0, Math.round(top / (ROW_HEIGHT + GAP)));
+        rect = { id, x: sx, y: sy, w: start.w, h: start.h };
+        live = { left, top, w: pxW(start.w), h: pxH(start.h) };
+      } else {
+        const left = pxLeft(start.x);
+        const top = pxTop(start.y);
+        const wpx = Math.max(cellW * 0.6, cx - left);
+        const hpx = Math.max(ROW_HEIGHT * 0.6, cy - top);
+        const sw = Math.max(minW, Math.min(GRID_COLS - start.x, Math.round((wpx + GAP) / (cellW + GAP))));
+        const sh = Math.max(minH, Math.round((hpx + GAP) / (ROW_HEIGHT + GAP)));
+        rect = { id, x: start.x, y: start.y, w: sw, h: sh };
+        live = { left, top, w: wpx, h: hpx };
+      }
+      latest = applyChange(base, id, rect, GRID_COLS);
+      setDrag({ id, mode, live, preview: latest });
+    };
+
+    const autoScroll = () => {
+      const sc = scrollRef.current;
+      if (sc) {
+        const r = sc.getBoundingClientRect();
+        const EDGE = 64;
+        const SPEED = 16;
+        let dy = 0;
+        if (ptr.y < r.top + EDGE) dy = -SPEED;
+        else if (ptr.y > r.bottom - EDGE) dy = SPEED;
+        if (dy) {
+          const before = sc.scrollTop;
+          sc.scrollTop = Math.max(0, before + dy);
+          if (sc.scrollTop !== before) compute();
+        }
+      }
+      raf = requestAnimationFrame(autoScroll);
+    };
     const onMove = (ev: PointerEvent) => {
-      const dw = Math.round((ev.clientX - sx) / (cellW + gap));
-      const dh = Math.round((ev.clientY - sy) / (ROW_HEIGHT + gap));
-      lastW = Math.min(GRID_COLS, Math.max(1, wgt.w + dw));
-      lastH = Math.min(3, Math.max(1, wgt.h + dh));
-      setResizing({ id: wgt.id, w: lastW, h: lastH });
+      ptr.x = ev.clientX;
+      ptr.y = ev.clientY;
+      compute();
     };
     const onUp = () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      if (lastW !== wgt.w || lastH !== wgt.h)
-        setWidgets(widgets.map((x) => (x.id === wgt.id ? { ...x, w: lastW, h: lastH } : x)));
-      setResizing(null);
+      setDrag(null);
+      setWidgets(applyLayoutToWidgets(widgets, latest));
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    raf = requestAnimationFrame(autoScroll);
+    setDrag({
+      id,
+      mode,
+      live: { left: pxLeft(start.x), top: pxTop(start.y), w: pxW(start.w), h: pxH(start.h) },
+      preview: base,
+    });
   };
 
-  const toggleTodo = (id: string) =>
-    onUpdate((d) => {
-      for (const p of d.projects) {
-        const m = (p.memos ?? []).find((x) => x.id === id);
-        if (m) {
-          m.done = !m.done;
-          m.updatedAt = Date.now();
-          p.updatedAt = Date.now();
-          return;
+  // --- 上下文与布局 ---------------------------------------------------------
+  const ctx: WidgetCtx = {
+    onCopy,
+    onOpenLogin,
+    onOpenExport,
+    onOpenSettings,
+    onOpenCnb,
+    onOpenTab: (url) => void browser.tabs.create({ url }).catch(() => {}),
+    onToggleTodo: (id) =>
+      onUpdate((d) => {
+        for (const p of d.projects) {
+          const m = (p.memos ?? []).find((x) => x.id === id);
+          if (m) {
+            m.done = !m.done;
+            m.updatedAt = Date.now();
+            p.updatedAt = Date.now();
+            return;
+          }
         }
-      }
-    });
+      }),
+    onEnableWeather: () =>
+      onUpdate((d) => {
+        d.settings.weatherEnabled = true;
+      }),
+    weatherEnabled: data.settings.weatherEnabled === true,
+  };
+
+  const layout = drag ? drag.preview : layoutForCols(widgets, cols);
+  const layoutById = new Map(layout.map((l) => [l.id, l]));
+  const rows = layoutRows(layout);
+  const contentH = (rows > 0 ? pxH(rows) : ROW_HEIGHT) + (canEdit ? ROW_HEIGHT + GAP : 0);
+  const glass = tileSurfaceStyle(appearance);
+  const bg = appearanceBackground(appearance);
+  const configWidget = configId ? widgets.find((w) => w.id === configId) : null;
+  const dragSnap = drag ? layoutById.get(drag.id) : null;
 
   return (
     <>
-      <header className="flex items-center gap-2 border-b border-gray-200 bg-surface px-6 py-4">
-        <h1 className="text-lg font-semibold">首页</h1>
-        <span className="text-xs text-gray-400">仪表盘</span>
-        <div className="ml-auto flex items-center gap-2">
-          {editing && (
-            <>
-              <select
-                value={addType}
-                onChange={(e) => setAddType(e.target.value as DashWidgetType)}
-                className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500"
+      {/* 看板页签 + 编辑控制（页面标题在 App 统一顶栏） */}
+      <div className="flex items-center gap-2.5 px-6 pb-1 pt-[18px]">
+        <div className="no-scrollbar flex items-center gap-0.5 overflow-x-auto rounded-[9px] border border-gray-200 bg-gray-50 p-[3px]">
+          {boards.map((b) => (
+            <div key={b.id} className="flex shrink-0 items-center">
+              <button
+                onClick={() => setLocalActive(b.id)}
+                onDoubleClick={() => editing && renameBoard(b.id)}
+                className={cx(
+                  'rounded-md px-3 py-1 text-[12.5px] font-semibold transition-colors',
+                  b.id === activeId
+                    ? 'bg-surface text-gray-900 shadow-sm'
+                    : 'text-gray-400 hover:text-gray-600',
+                )}
+                title={editing ? '双击重命名' : undefined}
               >
-                {(Object.keys(WIDGET_LABELS) as DashWidgetType[]).map((t) => (
-                  <option key={t} value={t}>
-                    {WIDGET_LABELS[t]}
-                  </option>
-                ))}
-              </select>
-              <Button variant="subtle" onClick={add}>
-                <Plus size={15} /> 添加卡片
-              </Button>
-            </>
+                {b.name}
+              </button>
+              {editing && b.id === activeId && boards.length > 1 && (
+                <button
+                  onClick={() => deleteBoard(b.id)}
+                  title="删除看板"
+                  className="ml-0.5 rounded p-0.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          ))}
+          {editing && (
+            <button
+              onClick={addBoard}
+              title="新建看板"
+              className="flex w-7 shrink-0 items-center justify-center rounded-md py-1 text-gray-400 hover:text-gray-600"
+            >
+              <Plus size={14} />
+            </button>
           )}
-          <Button variant={editing ? 'primary' : 'subtle'} onClick={() => setEditing((e) => !e)}>
-            {editing ? <Check size={15} /> : <Pencil size={15} />} {editing ? '完成' : '编辑布局'}
-          </Button>
         </div>
-      </header>
+        <div className="flex-1" />
+        {editing && (
+          <>
+            <Button variant="outline" onClick={() => setShowAdd(true)}>
+              <Plus size={15} /> 添加磁贴
+            </Button>
+            <Button variant="outline" onClick={() => setShowAppearance(true)}>
+              <Palette size={15} /> 外观
+            </Button>
+            <Button variant="outline" onClick={autoArrange} disabled={!canEdit} title="按当前顺序紧凑回填，消除空隙">
+              <Wand2 size={15} /> 自动排版
+            </Button>
+          </>
+        )}
+        <Button variant={editing ? 'primary' : 'outline'} onClick={() => setEditing((e) => !e)}>
+          {editing ? <Check size={15} /> : <Pencil size={15} />} {editing ? '完成' : '编辑看板'}
+        </Button>
+      </div>
 
-      <div className="flex-1 overflow-auto p-6">
+      <div
+        ref={scrollRef}
+        className={cx('no-scrollbar flex-1 overflow-auto p-6', drag && 'select-none')}
+        style={bg ? { background: bg } : undefined}
+      >
         {shouldRemindBackup(
           {
             syncEnabled,
@@ -171,514 +361,197 @@ export function Home({
             }
           />
         )}
-        {editing && (
-          <p className="mb-3 text-xs text-gray-400">
-            编辑模式：拖卡片左上角手柄移动、拖右下角改变大小（1–4 列 × 1–3 行）。
+
+        {editing && cols !== GRID_COLS && (
+          <p className="mb-3 inline-block rounded-lg bg-amber-50 px-2.5 py-1 text-xs text-amber-700">
+            当前为窄屏自适应视图（只读）。请在更宽的窗口下编辑布局。
           </p>
         )}
+        {canEdit && (
+          <p className="mb-3 inline-block rounded-lg bg-black/5 px-2.5 py-1 text-xs text-gray-500 backdrop-blur">
+            编辑模式：拖动磁贴移动、拖右下角手柄改变大小；其它磁贴会自动让位。
+          </p>
+        )}
+
         {widgets.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-gray-200 py-16 text-center text-sm text-gray-400">
-            没有卡片。点右上角「编辑布局 → 添加卡片」。
+          <p className="rounded-xl border border-dashed border-gray-300 bg-surface/60 py-16 text-center text-sm text-gray-400 backdrop-blur">
+            这个看板还没有磁贴。点右上角「{editing ? '添加磁贴' : '编辑看板'}」开始。
           </p>
         ) : (
-          <div
-            ref={gridRef}
-            className="grid grid-flow-row-dense gap-4"
-            style={{
-              gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
-              gridAutoRows: `${ROW_HEIGHT}px`,
-            }}
-          >
-            {widgets.map((w) => {
-              const live = resizing && resizing.id === w.id ? resizing : w;
-              return (
-                <div
-                  key={w.id}
-                  onDragOver={(e) => {
-                    if (editing && dragId && dragId !== w.id) {
-                      e.preventDefault();
-                      setDragOverId(w.id);
-                    }
-                  }}
-                  onDragLeave={() => setDragOverId((c) => (c === w.id ? null : c))}
-                  onDrop={() => {
-                    if (editing && dragId) move(dragId, w.id);
-                    setDragId(null);
-                    setDragOverId(null);
-                  }}
-                  style={{ gridColumn: `span ${live.w}`, gridRow: `span ${live.h}` }}
-                  className={cx(
-                    'relative min-w-0',
-                    dragId === w.id && 'opacity-40',
-                    dragOverId === w.id && 'rounded-2xl ring-2 ring-brand-300',
-                  )}
-                >
-                  <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-gray-200 bg-surface shadow-sm">
-                    {editing && (
-                      <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-1.5 text-xs">
-                        <span
-                          draggable
-                          onDragStart={() => setDragId(w.id)}
-                          onDragEnd={() => {
-                            setDragId(null);
-                            setDragOverId(null);
-                          }}
-                          className="cursor-grab"
-                          title="拖动移动"
-                        >
-                          <GripVertical size={14} className="text-gray-400" />
-                        </span>
-                        <span className="font-medium text-gray-600">{WIDGET_LABELS[w.type]}</span>
-                        <span className="text-gray-400">
-                          {live.w}×{live.h}
-                        </span>
-                        <button
-                          onClick={() => remove(w.id)}
-                          title="移除"
-                          className="ml-auto rounded p-0.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
-                        >
-                          <X size={14} />
-                        </button>
+          <div ref={setGridEl} className="relative w-full" style={{ height: contentH }}>
+            {/* 拖拽时的落点虚位 */}
+            {drag && dragSnap && (
+              <div
+                className="pointer-events-none absolute rounded-2xl border-2 border-dashed border-brand-400/70 bg-brand-400/5"
+                style={{
+                  left: 0,
+                  top: 0,
+                  width: pxW(dragSnap.w),
+                  height: pxH(dragSnap.h),
+                  transform: `translate(${pxLeft(dragSnap.x)}px, ${pxTop(dragSnap.y)}px)`,
+                  transition: 'transform .12s ease',
+                }}
+              />
+            )}
+            {width > 0 &&
+              widgets.map((w) => {
+                const l = layoutById.get(w.id);
+                if (!l) return null;
+                const meta = REGISTRY[w.type];
+                const dragged = drag?.id === w.id;
+                const left = dragged ? drag!.live.left : pxLeft(l.x);
+                const top = dragged ? drag!.live.top : pxTop(l.y);
+                const wpx = dragged ? drag!.live.w : pxW(l.w);
+                const hpx = dragged ? drag!.live.h : pxH(l.h);
+                return (
+                  <div
+                    key={w.id}
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      width: wpx,
+                      height: hpx,
+                      transform: `translate(${left}px, ${top}px)`,
+                      transition: dragged ? 'none' : 'transform .18s ease, width .18s ease, height .18s ease',
+                      zIndex: dragged ? 30 : undefined,
+                    }}
+                  >
+                    <div
+                      onPointerDown={canEdit ? (e) => beginDrag(e, w.id, 'move') : undefined}
+                      style={{ ...glass, touchAction: canEdit ? 'none' : undefined }}
+                      className={cx(
+                        'tile-glass relative flex h-full flex-col overflow-hidden',
+                        canEdit && 'cursor-move ring-1 ring-brand-300/60',
+                        dragged && 'scale-[1.01] shadow-2xl ring-2 ring-brand-400',
+                      )}
+                    >
+                      {canEdit && (
+                        <>
+                          <div className="absolute right-1.5 top-1.5 z-10 flex items-center gap-1">
+                            {meta.configurable && (
+                              <button
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={() => setConfigId(w.id)}
+                                title="配置磁贴"
+                                className="flex h-[22px] w-[22px] items-center justify-center rounded-[7px] border border-gray-200 bg-surface text-gray-500 hover:text-gray-800"
+                              >
+                                <Settings2 size={13} />
+                              </button>
+                            )}
+                            <button
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={() => removeWidget(w.id)}
+                              title="移除磁贴"
+                              className="flex h-[22px] w-[22px] items-center justify-center rounded-[7px] bg-dangerbg text-danger hover:brightness-95"
+                            >
+                              <X size={13} />
+                            </button>
+                          </div>
+                          <button
+                            onPointerDown={(e) => {
+                              e.stopPropagation();
+                              beginDrag(e, w.id, 'resize');
+                            }}
+                            title="拖动调整大小"
+                            style={{ touchAction: 'none' }}
+                            className="absolute bottom-1.5 right-1.5 z-10 flex h-[18px] w-6 cursor-nwse-resize items-center justify-center rounded-md border border-gray-200 bg-surface text-gray-400 hover:text-brand-600"
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+                              <path
+                                d="M9 4H4v5M15 20h5v-5M4 4l6 6M20 20l-6-6"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </button>
+                        </>
+                      )}
+                      <div
+                        className={cx(
+                          'no-scrollbar min-h-0 flex-1 overflow-auto p-4',
+                          canEdit && 'pointer-events-none select-none',
+                        )}
+                      >
+                        <WidgetBody
+                          widget={w}
+                          data={data}
+                          editing={editing}
+                          onConfig={(cfg) => updateConfig(w.id, cfg)}
+                          ctx={ctx}
+                        />
                       </div>
-                    )}
-                    <div className="min-h-0 flex-1 overflow-auto p-4">
-                      <WidgetBody
-                        widget={w}
-                        data={data}
-                        editing={editing}
-                        onToggleTodo={toggleTodo}
-                        onConfig={(cfg) => updateConfig(w.id, cfg)}
-                        onEnableWeather={enableWeather}
-                      />
                     </div>
                   </div>
-                  {editing && (
-                    <div
-                      onPointerDown={(e) => startResize(e, w)}
-                      title="拖动改变大小"
-                      style={{ touchAction: 'none' }}
-                      className="absolute bottom-1.5 right-1.5 h-3 w-3 cursor-se-resize border-b-2 border-r-2 border-gray-400 hover:border-brand-500"
-                    />
-                  )}
-                </div>
+                );
+              })}
+          </div>
+        )}
+      </div>
+
+      {showAdd && (
+        <Modal title="添加磁贴" onClose={() => setShowAdd(false)} wide>
+          <div className="mb-3 text-[11.5px] text-gray-400">
+            选择一种磁贴添加到当前看板，之后可拖拽调整位置与大小。
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {WIDGET_ORDER.map((t) => {
+              const Icon = REGISTRY[t].Icon;
+              return (
+                <button
+                  key={t}
+                  onClick={() => addWidget(t)}
+                  className="group flex items-start gap-3 rounded-xl border border-gray-200 bg-surface p-3 text-left transition hover:border-brand-500 hover:shadow-[0_6px_16px_-8px_rgba(20,26,40,.18)]"
+                >
+                  <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[10px] bg-brand-50 text-brand-600">
+                    <Icon size={18} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-semibold">{widgetLabel(t)}</div>
+                    <div className="mt-0.5 text-[11px] leading-snug text-gray-400">
+                      {WIDGET_DESC[t]}
+                    </div>
+                  </div>
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] bg-gray-50 text-brand-600">
+                    <Plus size={14} />
+                  </span>
+                </button>
               );
             })}
           </div>
-        )}
-      </div>
-    </>
-  );
-}
-
-function WidgetBody({
-  widget,
-  data,
-  editing,
-  onToggleTodo,
-  onConfig,
-  onEnableWeather,
-}: {
-  widget: DashWidget;
-  data: VaultData;
-  editing: boolean;
-  onToggleTodo: (id: string) => void;
-  onConfig: (cfg: NonNullable<DashWidget['config']>) => void;
-  onEnableWeather: () => void;
-}) {
-  switch (widget.type) {
-    case 'stats':
-      return <StatsWidget data={data} />;
-    case 'todos':
-      return <TodosWidget data={data} onToggle={onToggleTodo} />;
-    case 'calendar':
-      return <CalendarWidget data={data} />;
-    case 'launcher':
-      return <LauncherWidget data={data} />;
-    case 'weather':
-      return (
-        <WeatherWidget
-          widget={widget}
-          editing={editing}
-          enabled={data.settings.weatherEnabled === true}
-          onEnable={onEnableWeather}
-          onConfig={onConfig}
+        </Modal>
+      )}
+      {configWidget && (
+        <ConfigModal
+          widget={configWidget}
+          data={data}
+          onClose={() => setConfigId(null)}
+          onConfig={(cfg) => updateConfig(configWidget.id, cfg)}
         />
-      );
-    case 'image':
-      return <ImageWidget widget={widget} editing={editing} onConfig={onConfig} />;
-  }
-}
-
-function WidgetTitle({ icon, children }: { icon: ReactNode; children: ReactNode }) {
-  return (
-    <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-gray-700">
-      {icon}
-      {children}
-    </div>
-  );
-}
-
-function StatsWidget({ data }: { data: VaultData }) {
-  const envs = data.projects.reduce((n, p) => n + p.environments.length, 0);
-  const accts = data.projects.reduce(
-    (n, p) => n + p.environments.reduce((m, e) => m + e.links.reduce((k, l) => k + l.accounts.length, 0), 0),
-    0,
-  );
-  const pending = data.projects.reduce((n, p) => n + (p.memos ?? []).filter((m) => !m.done).length, 0);
-  const cells: { icon: ReactNode; label: string; value: number; accent?: boolean }[] = [
-    { icon: <Layers size={18} />, label: '项目', value: data.projects.length },
-    { icon: <Layers size={18} />, label: '环境', value: envs },
-    { icon: <Users size={18} />, label: '账号', value: accts },
-    { icon: <ListTodo size={18} />, label: '待办', value: pending, accent: pending > 0 },
-  ];
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {cells.map((c) => (
-        <div
-          key={c.label}
-          className={cx(
-            'flex items-center gap-2.5 rounded-xl border px-3 py-2.5',
-            c.accent ? 'border-rose-200 bg-rose-50' : 'border-gray-200 bg-gray-50',
-          )}
-        >
-          <span className={c.accent ? 'text-rose-600' : 'text-brand-600'}>{c.icon}</span>
-          <div>
-            <div className={cx('text-xl font-bold leading-none', c.accent ? 'text-rose-700' : 'text-gray-900')}>
-              {c.value}
-            </div>
-            <div className="mt-0.5 text-[11px] text-gray-500">{c.label}</div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TodosWidget({ data, onToggle }: { data: VaultData; onToggle: (id: string) => void }) {
-  const todos = sortMemos(flatMemos(data.projects).filter((m) => !m.done)).slice(0, 30);
-  return (
-    <>
-      <WidgetTitle icon={<ListTodo size={15} className="text-brand-600" />}>待办</WidgetTitle>
-      {todos.length === 0 ? (
-        <p className="py-6 text-center text-xs text-gray-400">没有待办，去项目里添加</p>
-      ) : (
-        <div className="flex flex-col gap-1.5">
-          {todos.map((m) => (
-            <div key={m.id} className="flex items-center gap-1.5">
-              <span className="max-w-[5rem] shrink-0 truncate rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
-                {m.projectName}
-              </span>
-              <div className="min-w-0 flex-1">
-                <MemoRow memo={m} onToggleDone={() => onToggle(m.id)} />
-              </div>
-            </div>
-          ))}
-        </div>
+      )}
+      {showAppearance && (
+        <AppearancePanel
+          appearance={board.appearance}
+          onChange={setAppearance}
+          onClose={() => setShowAppearance(false)}
+        />
       )}
     </>
   );
 }
 
-function CalendarWidget({ data }: { data: VaultData }) {
-  const now = new Date();
-  const [cursor, setCursor] = useState({ y: now.getFullYear(), m: now.getMonth() });
-  const [selected, setSelected] = useState<string | null>(null);
-
-  const dueMemos = flatMemos(data.projects).filter((m) => m.dueAt && !m.done);
-  const dayKey = (ts: number) => {
-    const d = new Date(ts);
-    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-  };
-  const byDay = new Map<string, number>();
-  for (const m of dueMemos) byDay.set(dayKey(m.dueAt!), (byDay.get(dayKey(m.dueAt!)) ?? 0) + 1);
-
-  const first = new Date(cursor.y, cursor.m, 1);
-  const startWeekday = first.getDay();
-  const daysInMonth = new Date(cursor.y, cursor.m + 1, 0).getDate();
-  const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
-  const cells: (number | null)[] = [];
-  for (let i = 0; i < startWeekday; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-
-  const shift = (delta: number) => {
-    const m = cursor.m + delta;
-    setCursor({ y: cursor.y + Math.floor(m / 12), m: ((m % 12) + 12) % 12 });
-    setSelected(null);
-  };
-  const selectedMemos = selected
-    ? sortMemos(dueMemos.filter((m) => dayKey(m.dueAt!) === selected))
-    : [];
-
+/** 拖拽手柄的点阵图标。 */
+function GripDots() {
   return (
-    <>
-      <div className="mb-2 flex items-center gap-2">
-        <CalendarDays size={15} className="text-brand-600" />
-        <span className="text-sm font-semibold text-gray-700">
-          {cursor.y} 年 {cursor.m + 1} 月
-        </span>
-        <div className="ml-auto flex items-center gap-1">
-          <button onClick={() => shift(-1)} className="rounded p-1 text-gray-400 hover:bg-gray-100">
-            <ChevronLeft size={15} />
-          </button>
-          <button onClick={() => shift(1)} className="rounded p-1 text-gray-400 hover:bg-gray-100">
-            <ChevronRight size={15} />
-          </button>
-        </div>
-      </div>
-      <div className="grid grid-cols-7 gap-0.5 text-center text-[10px] text-gray-400">
-        {['日', '一', '二', '三', '四', '五', '六'].map((w) => (
-          <div key={w} className="py-1">
-            {w}
-          </div>
-        ))}
-        {cells.map((d, i) => {
-          if (d === null) return <div key={`e${i}`} />;
-          const key = `${cursor.y}-${cursor.m}-${d}`;
-          const count = byDay.get(key) ?? 0;
-          const isToday = key === todayKey;
-          const isSel = key === selected;
-          return (
-            <button
-              key={key}
-              onClick={() => setSelected(isSel ? null : key)}
-              className={cx(
-                'relative flex h-8 flex-col items-center justify-center rounded-lg text-xs',
-                isSel ? 'bg-brand-100 text-brand-700' : isToday ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-100',
-              )}
-            >
-              {d}
-              {count > 0 && (
-                <span className="absolute bottom-0.5 h-1.5 w-1.5 rounded-full bg-rose-500" title={`${count} 项待办`} />
-              )}
-            </button>
-          );
-        })}
-      </div>
-      {selected && (
-        <div className="mt-2 flex flex-col gap-1 border-t border-gray-100 pt-2">
-          {selectedMemos.length === 0 ? (
-            <p className="text-center text-[11px] text-gray-400">这天没有待办</p>
-          ) : (
-            selectedMemos.map((m) => (
-              <div key={m.id} className="flex items-center gap-1.5 text-xs">
-                <span className="max-w-[5rem] shrink-0 truncate rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
-                  {m.projectName}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-gray-700">{m.text}</span>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-    </>
-  );
-}
-
-function LauncherWidget({ data }: { data: VaultData }) {
-  const links: { id: string; name: string; url: string; host: string; kind: string }[] = [];
-  for (const p of data.projects)
-    for (const e of p.environments)
-      for (const l of e.links) {
-        if (!l.url) continue;
-        let host = l.url;
-        try {
-          host = new URL(l.url).host;
-        } catch {
-          /* keep */
-        }
-        links.push({ id: l.id, name: l.name || host, url: l.url, host, kind: e.kind });
-      }
-  return (
-    <>
-      <WidgetTitle icon={<LinkIcon size={15} className="text-brand-600" />}>快捷导航</WidgetTitle>
-      {links.length === 0 ? (
-        <p className="py-6 text-center text-xs text-gray-400">还没有链接</p>
-      ) : (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-          {links.map((l) => (
-            <button
-              key={l.id}
-              onClick={() => browser.tabs.create({ url: l.url })}
-              title={l.url}
-              className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-2 text-left hover:border-brand-300"
-            >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
-                {(l.name[0] ?? '·').toUpperCase()}
-              </span>
-              <div className="min-w-0">
-                <div className="truncate text-xs font-medium text-gray-800">{l.name}</div>
-                <div className="truncate text-[10px] text-gray-400">{l.host}</div>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
-
-function WeatherWidget({
-  widget,
-  editing,
-  enabled,
-  onEnable,
-  onConfig,
-}: {
-  widget: DashWidget;
-  editing: boolean;
-  enabled: boolean;
-  onEnable: () => void;
-  onConfig: (cfg: NonNullable<DashWidget['config']>) => void;
-}) {
-  const city = widget.config?.city ?? '';
-  const [cityInput, setCityInput] = useState(city);
-  const [state, setState] = useState<{ loading: boolean; data?: WeatherNow; err?: string }>({
-    loading: false,
-  });
-
-  useEffect(() => {
-    setCityInput(city);
-  }, [city]);
-
-  useEffect(() => {
-    // 默认关闭：未显式开启「联网天气」时绝不请求第三方服务。
-    if (!enabled || !city) {
-      setState({ loading: false });
-      return;
-    }
-    let cancelled = false;
-    setState({ loading: true });
-    (async () => {
-      try {
-        const geo = await geocodeCity(city);
-        if (!geo) throw new Error('找不到该城市');
-        const w = await fetchWeather(geo.lat, geo.lon, geo.name);
-        if (!cancelled) setState({ loading: false, data: w });
-      } catch (e) {
-        if (!cancelled) setState({ loading: false, err: e instanceof Error ? e.message : String(e) });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, city]);
-
-  return (
-    <>
-      <WidgetTitle icon={<span>🌦️</span>}>天气</WidgetTitle>
-      {editing && (
-        <div className="mb-2">
-          <Input
-            value={cityInput}
-            onChange={(e) => setCityInput(e.target.value)}
-            onBlur={() => cityInput.trim() !== city && onConfig({ city: cityInput.trim() })}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') onConfig({ city: cityInput.trim() });
-            }}
-            placeholder="输入城市，如 北京 / Shanghai"
-          />
-        </div>
-      )}
-      {!enabled ? (
-        <div className="py-3 text-center">
-          <p className="text-xs text-gray-400">天气需联网获取，默认关闭。</p>
-          <button onClick={onEnable} className="mt-1.5 text-xs text-brand-600 hover:underline">
-            开启联网天气
-          </button>
-        </div>
-      ) : !city ? (
-        <p className="py-4 text-center text-xs text-gray-400">点「编辑布局」后填写城市</p>
-      ) : state.loading ? (
-        <p className="py-4 text-center text-xs text-gray-400">加载中…</p>
-      ) : state.err ? (
-        <p className="py-4 text-center text-xs text-rose-500">{state.err}</p>
-      ) : state.data ? (
-        <div className="flex items-center gap-3">
-          <span className="text-4xl">{weatherLabel(state.data.code).emoji}</span>
-          <div>
-            <div className="text-3xl font-bold text-gray-900">{Math.round(state.data.temp)}°</div>
-            <div className="text-xs text-gray-500">
-              {state.data.city} · {weatherLabel(state.data.code).text} · 风 {Math.round(state.data.wind)} km/h
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </>
-  );
-}
-
-function ImageWidget({
-  widget,
-  editing,
-  onConfig,
-}: {
-  widget: DashWidget;
-  editing: boolean;
-  onConfig: (cfg: NonNullable<DashWidget['config']>) => void;
-}) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const dataUrl = widget.config?.dataUrl;
-  const caption = widget.config?.caption ?? '';
-  const [captionInput, setCaptionInput] = useState(caption);
-  const [imgErr, setImgErr] = useState<string | null>(null);
-  useEffect(() => setCaptionInput(caption), [caption]);
-
-  // 图片以 dataURL 形式存进加密保险箱，必须限制类型与大小，避免超大图撑爆存储/同步。
-  const MAX_IMG_BYTES = 1.5 * 1024 * 1024;
-  const pick = (file: File) => {
-    setImgErr(null);
-    if (!file.type.startsWith('image/')) {
-      setImgErr('请选择图片文件');
-      return;
-    }
-    if (file.size > MAX_IMG_BYTES) {
-      setImgErr('图片过大（上限 1.5MB），请压缩后再上传');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onerror = () => setImgErr('图片读取失败，请重试');
-    reader.onload = () => onConfig({ dataUrl: String(reader.result ?? '') });
-    reader.readAsDataURL(file);
-  };
-
-  return (
-    <>
-      <WidgetTitle icon={<ImageIcon size={15} className="text-brand-600" />}>图片 / 图表</WidgetTitle>
-      {dataUrl ? (
-        <img src={dataUrl} alt={caption || 'image'} className="max-h-64 w-full rounded-lg object-contain" />
-      ) : (
-        <p className="py-6 text-center text-xs text-gray-400">
-          {editing ? '点下方上传一张图片/图表' : '点「编辑布局」上传图片'}
-        </p>
-      )}
-      {(caption || (!editing && dataUrl)) && (
-        <p className="mt-1 text-center text-xs text-gray-500">{caption}</p>
-      )}
-      {editing && (
-        <div className="mt-2 flex items-center gap-2">
-          <Button variant="subtle" onClick={() => fileRef.current?.click()}>
-            <Upload size={14} /> 上传
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = '';
-              if (f) pick(f);
-            }}
-          />
-          <Input
-            value={captionInput}
-            onChange={(e) => setCaptionInput(e.target.value)}
-            onBlur={() => captionInput !== caption && onConfig({ caption: captionInput })}
-            placeholder="说明（可选）"
-          />
-        </div>
-      )}
-      {imgErr && <p className="mt-1 text-center text-xs text-rose-500">{imgErr}</p>}
-    </>
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden>
+      <circle cx="3" cy="2.5" r="1" />
+      <circle cx="9" cy="2.5" r="1" />
+      <circle cx="3" cy="6" r="1" />
+      <circle cx="9" cy="6" r="1" />
+      <circle cx="3" cy="9.5" r="1" />
+      <circle cx="9" cy="9.5" r="1" />
+    </svg>
   );
 }

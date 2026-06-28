@@ -112,6 +112,121 @@ export interface SyncState {
   lastError?: string;
 }
 
+// ---------------------------------------------------------------------------
+// 多端同步：同一个保险箱可同时配置多个后端（自托管 / WebDAV / Git / 网盘），
+// 每个目标各自独立推/拉。配置（含密钥）随保险箱一起加密存储并在设备间同步；
+// 运行期的同步状态（tag/时间戳/错误）按目标 id 存在本地，不加密、不参与同步。
+// ---------------------------------------------------------------------------
+
+export type SyncTargetType =
+  | 'self-hosted'
+  | 'webdav'
+  | 'github'
+  | 'gitlab'
+  | 'google-drive'
+  | 'onedrive'
+  | 'dropbox'
+  | 'synology';
+
+interface SyncTargetCommon {
+  /** 目标 id（创建时生成，作为本地同步状态 map 的键） */
+  id: string;
+  type: SyncTargetType;
+  /** 用户自定义显示名 */
+  label: string;
+  /** 是否参与「同步全部」与修改后的自动同步 */
+  enabled: boolean;
+}
+
+/** 自托管服务器：复用现有 /v1/vault 协议 */
+export interface SelfHostedTarget extends SyncTargetCommon {
+  type: 'self-hosted';
+  serverUrl: string;
+  token: string;
+}
+
+/** 通用 WebDAV（Nextcloud / 坚果云 / 群晖等） */
+export interface WebDavTarget extends SyncTargetCommon {
+  type: 'webdav';
+  /** 目录或文件所在的基础 URL（不含文件名时与 filePath 拼接） */
+  url: string;
+  username: string;
+  password: string;
+  /** 保险箱密文文件名/相对路径，默认 vault.enc */
+  filePath: string;
+}
+
+/** GitHub / GitLab 仓库（走各自的文件内容 API） */
+export interface GitTarget extends SyncTargetCommon {
+  type: 'github' | 'gitlab';
+  /** 自建实例的 API base，留空用官方默认 */
+  apiBase?: string;
+  /** GitHub: owner；GitLab: 命名空间（用于展示，实际用 projectId/owner+repo） */
+  owner: string;
+  repo: string;
+  branch: string;
+  /** 仓库内的密文文件路径，默认 vault.enc */
+  filePath: string;
+  /** Personal Access Token */
+  token: string;
+}
+
+/** Google Drive / OneDrive / Dropbox：OAuth(PKCE)，client_id 由用户自带（或内置默认） */
+export interface OAuthDriveTarget extends SyncTargetCommon {
+  type: 'google-drive' | 'onedrive' | 'dropbox';
+  clientId: string;
+  /** Google：必填（Web 应用客户端即便用 PKCE 也强制要 client_secret）；OneDrive：留空（公共客户端） */
+  clientSecret?: string;
+  /** 授权后获得，用于离线刷新 access token */
+  refreshToken?: string;
+  /** Google Drive 文件 id（首次创建后缓存） */
+  fileId?: string;
+  /** 密文文件名，默认 vault.enc */
+  fileName: string;
+}
+
+/** 群晖 NAS：走 DSM FileStation Web API，登录支持两步验证(OTP)+受信设备令牌 */
+export interface SynologyTarget extends SyncTargetCommon {
+  type: 'synology';
+  /** DSM 地址，含协议与端口，如 https://nas.example.com:5001 */
+  baseUrl: string;
+  account: string;
+  password: string;
+  /** 受信设备令牌(did)：首次用 OTP 登录后获得，之后免 OTP 静默登录 */
+  did?: string;
+  /** 共享文件夹内的完整路径，须以共享文件夹名开头，如 /home/vault.enc */
+  filePath: string;
+}
+
+export type SyncTarget =
+  | SelfHostedTarget
+  | WebDavTarget
+  | GitTarget
+  | OAuthDriveTarget
+  | SynologyTarget;
+
+/** 单个同步目标的设备本地运行状态（不加密、不同步） */
+export interface TargetSyncState {
+  lastSyncAt?: number;
+  lastError?: string;
+  /** 远端版本标识（ETag / blob sha / drive etag / revision 串），用于乐观并发 */
+  remoteTag?: string;
+}
+
+/** 按目标 id 索引的本地同步状态 */
+export type SyncStateMap = Record<string, TargetSyncState>;
+
+/** 脱敏后的目标视图（发给 UI）：完整配置但密钥字段被清空，可直接回填到编辑器。 */
+export interface SyncTargetView {
+  /** 密钥（token/password/refreshToken/clientSecret）已被清空的目标配置 */
+  target: SyncTarget;
+  /** 给 UI 展示的目标位置摘要，如 owner/repo、服务器域名 */
+  summary: string;
+  /** OAuth 目标是否已完成授权（有 refreshToken） */
+  authorized?: boolean;
+  state: TargetSyncState | null;
+}
+
 /** 首页仪表盘卡片类型 */
 export type DashWidgetType =
   | 'stats'
@@ -119,39 +234,116 @@ export type DashWidgetType =
   | 'calendar'
   | 'launcher'
   | 'weather'
-  | 'image';
+  | 'image'
+  // 第一批数据磁贴：全部读解锁态内存明文、纯本地、不联网
+  | 'clock'
+  | 'search'
+  | 'totp'
+  | 'health'
+  | 'recent'
+  | 'repos'
+  | 'tags'
+  | 'doc'
+  | 'changed'
+  | 'backup'
+  // 联网磁贴：需用户显式开启联网 + 授权数据源后才请求
+  | 'hotlist'
+  | 'stocks'
+  // CNB 代码仓库：需配置访问令牌 + 授权 api.cnb.cool 后才请求
+  | 'cnb';
 
 export interface DashWidget {
   id: string;
   type: DashWidgetType;
-  /** 占列数 1-4 */
+  /** 起始列 0-based（自由定位；缺省时按数组顺序迁移生成） */
+  x?: number;
+  /** 起始行 0-based */
+  y?: number;
+  /** 占列数（1..基准列数） */
   w?: number;
-  /** 占行数 1-3 */
+  /** 占行数（≥1） */
   h?: number;
   /** @deprecated 旧版列宽，迁移用 */
   span?: number;
   /** 各卡片自有配置 */
   config?: {
+    /** 自定义标题（覆盖默认标题） */
     label?: string;
     /** weather */
     city?: string;
     lat?: number;
     lon?: number;
+    /** 温度单位：摄氏(默认) / 华氏 */
+    unit?: 'c' | 'f';
+    /** hotlist / stocks：数据源（内置预设 key 或 'custom'）+ 自定义 URL + 展示条数 */
+    source?: string;
+    sourceUrl?: string;
+    count?: number;
+    /** stocks：股票代码，逗号分隔（如 AAPL,600519.SS,0700.HK） */
+    symbols?: string;
     /** image */
     dataUrl?: string;
     caption?: string;
+    /** 数据绑定：限定到某项目 / 文档 / 标签 */
+    projectId?: string;
+    docId?: string;
+    tag?: string;
+    /** launcher / repos / recent：仅展示收藏项目 */
+    onlyFavorite?: boolean;
+    /** totp / health：默认是否揭示敏感内容（缺省遮蔽） */
+    reveal?: boolean;
   };
 }
 
-export interface DashboardConfig {
+/** 仪表盘外观（玻璃拟态 + 背景），随看板一起加密存储。 */
+export interface DashAppearance {
+  /** 背景类型；缺省 'gradient' */
+  bg?: 'none' | 'gradient' | 'image';
+  /** 预设渐变的 key（见 lib/dashboard.ts 的 GRADIENTS） */
+  gradient?: string;
+  /** 自上传背景图（dataURL，≤1.5MB，存进加密 vault） */
+  imageDataUrl?: string;
+  /** 磁贴不透明度 0-100（玻璃拟态强度），缺省 75 */
+  tileOpacity?: number;
+  /** 磁贴背景模糊 px，缺省 8 */
+  tileBlur?: number;
+}
+
+/** 一个仪表盘看板（一组磁贴 + 自己的外观）。 */
+export interface DashBoard {
+  id: string;
+  name: string;
   widgets: DashWidget[];
+  appearance?: DashAppearance;
+}
+
+export interface DashboardConfig {
+  /** @deprecated 旧版单看板布局；加载时迁移进 boards，新代码勿直接读 */
+  widgets?: DashWidget[];
+  /** 多看板（页签切换）；为空时由 widgets 迁移而来 */
+  boards?: DashBoard[];
+  /** 当前激活看板 id */
+  activeBoardId?: string;
+}
+
+/** CNB（cnb.cool）代码仓库集成配置（随保险箱一起加密存储并在设备间同步） */
+export interface CnbConfig {
+  /** 访问令牌（Bearer），加密存储 */
+  token?: string;
+  /** 要展示的顶层组织 slug（如 njly2013），可多个 */
+  orgs?: string[];
+  /** API base，留空用默认 https://api.cnb.cool（自建实例可改） */
+  apiBase?: string;
 }
 
 export interface VaultSettings {
   /** 空闲多少分钟后自动锁定；0 表示不自动锁定（不推荐） */
   autoLockMinutes: number;
   kdf: KdfConfig;
+  /** @deprecated 旧版单一自托管同步配置；加载时迁移进 syncTargets，新代码勿用 */
   sync?: SyncConfig;
+  /** 多端同步目标（自托管 / WebDAV / Git / 网盘），可并存 */
+  syncTargets?: SyncTarget[];
   /** 内容修改后是否自动同步；undefined 视为开启 */
   syncAuto?: boolean;
   /** 填充后是否自动提交直接登录；只有 true 才开启 */
@@ -170,6 +362,8 @@ export interface VaultSettings {
   backupSnoozeUntil?: number;
   /** 是否彻底隐藏右下角的待办悬浮窗；undefined / false 视为显示 */
   floatingMemoHidden?: boolean;
+  /** CNB 代码仓库集成（访问令牌 + 要展示的组织） */
+  cnb?: CnbConfig;
 }
 
 /** 解密后的保险箱明文数据（仅存在于内存中） */

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Download, Upload } from 'lucide-react';
+import { AlertTriangle, Lock, Upload } from 'lucide-react';
 import { useDialog } from '@/components/Dialog';
 import { Banner, Button, Input, Label, Modal, Select, cx } from '@/components/ui';
 import { api } from '@/lib/messaging';
@@ -21,48 +21,44 @@ export function ImportExport({
   onClose,
   onImported,
   onBackedUp,
+  embedded,
 }: {
   data: VaultData;
   onClose: () => void;
   onImported: () => Promise<void>;
-  /** 成功导出一份加密备份后回调（用于记录上次备份时间）。 */
   onBackedUp?: () => void;
+  embedded?: boolean;
 }) {
-  const [tab, setTab] = useState<'export' | 'import'>('export');
-
+  const body = (
+    <div className="grid grid-cols-1 items-start gap-[18px] lg:grid-cols-2">
+      <ExportCard data={data} onBackedUp={onBackedUp} />
+      <ImportCard onImported={onImported} />
+    </div>
+  );
+  if (embedded) {
+    return (
+      <div className="flex-1 overflow-auto p-6">
+        <div className="mx-auto max-w-[1040px]">{body}</div>
+      </div>
+    );
+  }
   return (
     <Modal title="导入 / 导出" onClose={onClose} wide>
-      <div className="mb-4 flex gap-1 rounded-lg bg-gray-100 p-1 text-sm">
-        {(['export', 'import'] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={cx(
-              'flex-1 rounded-md py-1.5 font-medium',
-              tab === t ? 'bg-surface shadow-sm' : 'text-gray-500',
-            )}
-          >
-            {t === 'export' ? '导出' : '导入'}
-          </button>
-        ))}
-      </div>
-      {tab === 'export' ? (
-        <ExportTab data={data} onBackedUp={onBackedUp} />
-      ) : (
-        <ImportTab onImported={onImported} />
-      )}
+      {body}
     </Modal>
   );
 }
 
-function ExportTab({ data, onBackedUp }: { data: VaultData; onBackedUp?: () => void }) {
+// --------------------------- 导出 ---------------------------
+
+function ExportCard({ data, onBackedUp }: { data: VaultData; onBackedUp?: () => void }) {
   const { confirm } = useDialog();
-  const [pw, setPw] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
+  const [pwOpen, setPwOpen] = useState(false);
+  const [scopeOpen, setScopeOpen] = useState(true);
   const allIds = data.projects.map((p) => p.id);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(allIds));
 
-  // 全选时传 undefined(=整库);部分选时只传选中的项目 id。
   const scopeIds = selected.size === allIds.length ? undefined : [...selected];
   const scopeNote = scopeIds ? `（${selected.size} 个项目）` : '（全部）';
   const toggle = (id: string) =>
@@ -72,21 +68,15 @@ function ExportTab({ data, onBackedUp }: { data: VaultData; onBackedUp?: () => v
       else n.add(id);
       return n;
     });
-  const acctCount = (pid: string) => {
-    const p = data.projects.find((x) => x.id === pid);
-    return p
-      ? p.environments.reduce((n, e) => n + e.links.reduce((m, l) => m + l.accounts.length, 0), 0)
-      : 0;
-  };
 
-  const exportEncrypted = async () => {
+  const exportEncrypted = async (pw: string) => {
     setMsg(null);
     if (selected.size === 0) return setMsg('请至少选择一个项目');
     if (pw.length < 8) return setMsg('备份密码至少 8 位');
     const res = await api.export('encrypted', pw, scopeIds);
     download(res.filename, res.mime, res.content);
-    // 只有整库备份才算「有了一份完整后路」；部分项目导出不重置备份提醒。
     if (!scopeIds) onBackedUp?.();
+    setPwOpen(false);
     setMsg(`已导出加密备份${scopeNote}`);
   };
   const exportPlain = async (mode: 'json' | 'csv') => {
@@ -104,74 +94,117 @@ function ExportTab({ data, onBackedUp }: { data: VaultData; onBackedUp?: () => v
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <section className="rounded-xl border border-gray-200 p-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-gray-800">导出范围</h3>
+    <div className="rounded-[14px] border border-gray-200 bg-surface p-[18px]">
+      <div className="text-[13px] font-bold">导出</div>
+      <div className="mt-1 mb-3.5 text-[11.5px] text-gray-400">
+        加密备份带独立备份密码，文件名后缀 .pem.enc，与明文导出清晰区分。
+      </div>
+
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+        <button
+          onClick={() => setPwOpen(true)}
+          className="flex flex-col items-start gap-1.5 rounded-[11px] border-[1.5px] border-pri bg-pribg p-3.5 text-left"
+        >
+          <Lock size={18} className="text-prid" />
+          <span className="text-[12.5px] font-semibold text-prid">加密整库备份</span>
+          <span className="text-[10.5px] text-gray-400">推荐 · .pem.enc</span>
+        </button>
+        <PlainBtn label="明文 JSON" onClick={() => exportPlain('json')} />
+        <PlainBtn label="明文 CSV" onClick={() => exportPlain('csv')} />
+      </div>
+
+      <button
+        onClick={() => setScopeOpen((s) => !s)}
+        className="mt-3 text-[11.5px] font-semibold text-brand-600 hover:underline"
+      >
+        导出范围：{scopeIds ? `${selected.size} 个项目` : '全部项目'} {scopeOpen ? '▾' : '▸'}
+      </button>
+      {scopeOpen && (
+        <div className="mt-2 rounded-[11px] border border-gray-200 p-2.5">
           <button
             onClick={() => setSelected(new Set(selected.size === allIds.length ? [] : allIds))}
-            className="text-xs text-brand-600 hover:underline"
+            className="mb-1.5 text-[11px] text-brand-600 hover:underline"
           >
             {selected.size === allIds.length ? '全不选' : '全选'}
           </button>
-        </div>
-        {data.projects.length === 0 ? (
-          <p className="mt-2 text-xs text-gray-400">还没有项目可导出。</p>
-        ) : (
-          <div className="mt-2 flex max-h-44 flex-col gap-1 overflow-auto">
+          <div className="flex max-h-40 flex-col gap-1 overflow-auto">
             {data.projects.map((p) => (
-              <label key={p.id} className="flex items-center gap-2 text-sm text-gray-700">
+              <label key={p.id} className="flex items-center gap-2 text-[12.5px] text-gray-700">
                 <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
                 <span className="truncate">{p.name}</span>
-                <span className="ml-auto shrink-0 text-xs text-gray-400">{acctCount(p.id)} 账号</span>
               </label>
             ))}
           </div>
-        )}
-        <p className="mt-1 text-[11px] text-gray-400">默认全选；只勾选部分项目即可仅导出这些。</p>
-      </section>
-
-      <section className="rounded-xl border border-gray-200 p-4">
-        <h3 className="text-sm font-semibold text-gray-800">加密备份（推荐）</h3>
-        <p className="mt-1 text-xs text-gray-500">
-          整库密文 + KDF 参数，用一个备份密码加密。文件即使泄露也无法被解密。
-          导入时需输入该密码，且默认按名称去重「增量合并」，不会覆盖现有数据。
-        </p>
-        <div className="mt-3 flex items-end gap-2">
-          <div className="flex-1">
-            <Label>备份密码</Label>
-            <Input
-              type="password"
-              value={pw}
-              onChange={(e) => setPw(e.target.value)}
-              placeholder="可与主密码不同"
-            />
-          </div>
-          <Button onClick={exportEncrypted}>
-            <Download size={16} /> 导出加密备份
-          </Button>
         </div>
-      </section>
+      )}
 
-      <section className="rounded-xl border border-gray-200 p-4">
-        <h3 className="text-sm font-semibold text-gray-800">明文导出</h3>
-        <Banner tone="warn">
-          明文文件包含可直接读取的密码，仅用于互通或手动编辑，导出后请妥善保管并尽快删除。
-        </Banner>
-        <div className="mt-3 flex gap-2">
-          <Button variant="subtle" onClick={() => exportPlain('json')}>
-            <Download size={16} /> 明文 JSON
-          </Button>
-          <Button variant="subtle" onClick={() => exportPlain('csv')}>
-            <Download size={16} /> 明文 CSV
-          </Button>
+      {msg && (
+        <div className="mt-3">
+          <Banner tone="info">{msg}</Banner>
         </div>
-      </section>
+      )}
 
-      {msg && <Banner tone="info">{msg}</Banner>}
+      {pwOpen && <ExportPwModal onClose={() => setPwOpen(false)} onExport={exportEncrypted} />}
     </div>
   );
 }
+
+function PlainBtn({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex flex-col items-start gap-1.5 rounded-[11px] border border-gray-200 bg-surface p-3.5 text-left hover:bg-gray-50"
+    >
+      <AlertTriangle size={18} className="text-warn" />
+      <span className="text-[12.5px] font-semibold">{label}</span>
+      <span className="text-[10.5px] text-warn">危险 · 需确认</span>
+    </button>
+  );
+}
+
+function ExportPwModal({
+  onClose,
+  onExport,
+}: {
+  onClose: () => void;
+  onExport: (pw: string) => Promise<void>;
+}) {
+  const [pw, setPw] = useState('');
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal title="加密整库备份" onClose={onClose}>
+      <div className="flex flex-col gap-3">
+        <p className="text-xs text-gray-500">
+          用一个独立的备份密码加密整库。文件即使泄露也无法被解密，导入时需输入该密码。
+        </p>
+        <div>
+          <Label>备份密码（≥8 位，可与主密码不同）</Label>
+          <Input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus />
+        </div>
+        <div className="mt-1 flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            取消
+          </Button>
+          <Button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await onExport(pw);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            导出
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// --------------------------- 导入 / 迁移 ---------------------------
 
 const FORMAT_LABELS: Record<ImportFormat, string> = {
   encrypted: '加密备份（本扩展导出）',
@@ -183,7 +216,17 @@ const FORMAT_LABELS: Record<ImportFormat, string> = {
   'google-authenticator': 'Google Authenticator 迁移码 / 二维码',
 };
 
-function ImportTab({ onImported }: { onImported: () => Promise<void> }) {
+const SOURCE_TAG: Record<ImportFormat, { tag: string; color: string }> = {
+  encrypted: { tag: 'ENC', color: '#0d9488' },
+  json: { tag: 'JSON', color: '#5b6472' },
+  csv: { tag: 'CSV', color: '#5b6472' },
+  'chrome-csv': { tag: 'CR', color: '#2c84c8' },
+  'bitwarden-csv': { tag: 'BW', color: '#2563eb' },
+  '1password-csv': { tag: '1P', color: '#4f63d2' },
+  'google-authenticator': { tag: 'GA', color: '#15a34a' },
+};
+
+function ImportCard({ onImported }: { onImported: () => Promise<void> }) {
   const [format, setFormat] = useState<ImportFormat>('encrypted');
   const [mode, setMode] = useState<ImportMode>('merge');
   const [file, setFile] = useState<File | null>(null);
@@ -198,8 +241,6 @@ function ImportTab({ onImported }: { onImported: () => Promise<void> }) {
     if (fileInput.current) fileInput.current.value = '';
   };
 
-  // 取本次导入内容：选了文件就用文件（图片走二维码解码），否则用粘贴框。
-  // 在「开始导入」时才读文件（await），避免选文件后异步读取造成的竞态/误报。
   const resolvePayload = async (): Promise<string> => {
     if (file) {
       if (format === 'google-authenticator' && file.type.startsWith('image/')) {
@@ -230,7 +271,8 @@ function ImportTab({ onImported }: { onImported: () => Promise<void> }) {
       await onImported();
       setMsg({
         tone: 'info',
-        text: mode === 'replace' ? `导入成功，共 ${imported} 个账号` : `导入成功，新增 ${imported} 个账号`,
+        text:
+          mode === 'replace' ? `导入成功，共 ${imported} 个账号` : `导入成功，新增 ${imported} 个账号`,
       });
       setContent('');
       clearFile();
@@ -242,18 +284,45 @@ function ImportTab({ onImported }: { onImported: () => Promise<void> }) {
   };
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <Label>来源格式</Label>
-          <Select value={format} onChange={(e) => setFormat(e.target.value as ImportFormat)}>
-            {(Object.keys(FORMAT_LABELS) as ImportFormat[]).map((f) => (
-              <option key={f} value={f}>
+    <div className="rounded-[14px] border border-gray-200 bg-surface p-[18px]">
+      <div className="text-[13px] font-bold">导入 / 迁移</div>
+      <div className="mt-1 mb-3.5 text-[11.5px] text-gray-400">
+        合并模式按名称去重增量追加；替换模式会清空后导入。选择来源后在下方提供文件或粘贴内容。
+      </div>
+
+      <div className="grid grid-cols-2 gap-2.5">
+        {(Object.keys(FORMAT_LABELS) as ImportFormat[]).map((f) => {
+          const tg = SOURCE_TAG[f];
+          const active = format === f;
+          return (
+            <button
+              key={f}
+              onClick={() => {
+                setFormat(f);
+                setMsg(null);
+              }}
+              className={cx(
+                'flex flex-col items-center gap-1.5 rounded-[11px] border p-3 text-center transition',
+                active
+                  ? 'border-brand-600 bg-surface ring-2 ring-brand-500/30'
+                  : 'border-gray-200 bg-gray-50 hover:bg-gray-100',
+              )}
+            >
+              <span
+                className="flex h-8 w-8 items-center justify-center rounded-[9px] border border-gray-200 bg-surface text-[11px] font-bold"
+                style={{ color: tg.color }}
+              >
+                {tg.tag}
+              </span>
+              <span className={cx('text-[11px] leading-snug', active ? 'font-semibold text-brand-700' : 'text-gray-700')}>
                 {FORMAT_LABELS[f]}
-              </option>
-            ))}
-          </Select>
-        </div>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-3.5 flex flex-col gap-3 border-t border-gray-100 pt-3.5">
         <div>
           <Label>合并方式</Label>
           <Select value={mode} onChange={(e) => setMode(e.target.value as ImportMode)}>
@@ -261,72 +330,68 @@ function ImportTab({ onImported }: { onImported: () => Promise<void> }) {
             <option value="replace">替换（清空后导入）</option>
           </Select>
         </div>
-      </div>
 
-      {format === 'encrypted' && (
-        <div>
-          <Label>备份密码</Label>
-          <Input type="password" value={pw} onChange={(e) => setPw(e.target.value)} />
-        </div>
-      )}
-
-      {format === 'google-authenticator' && (
-        <Banner tone="info">
-          手机 Google Authenticator →「转移账号 / 导出账号」会显示一个二维码：截图后在下方上传图片即可
-          批量导入其中的 TOTP；也可把二维码解出的 <code>otpauth-migration://</code> 文本粘贴到下面。
-        </Banner>
-      )}
-
-      <div>
-        <Label>{format === 'google-authenticator' ? '选择文件 / 二维码图片' : '选择文件'}</Label>
-        <input
-          ref={fileInput}
-          type="file"
-          accept={
-            format === 'google-authenticator'
-              ? 'image/*,.txt'
-              : '.json,.csv,text/csv,application/json'
-          }
-          onChange={(e) => {
-            setMsg(null);
-            setFile(e.target.files?.[0] ?? null);
-          }}
-          className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm hover:file:bg-gray-200"
-        />
-        {file && (
-          <p className="mt-1 text-[11px] text-gray-500">
-            将导入此文件：<b>{file.name}</b>
-            <button onClick={clearFile} className="ml-2 text-brand-600 hover:underline">
-              清除
-            </button>
-          </p>
+        {format === 'encrypted' && (
+          <div>
+            <Label>备份密码</Label>
+            <Input type="password" value={pw} onChange={(e) => setPw(e.target.value)} />
+          </div>
         )}
+
+        {format === 'google-authenticator' && (
+          <Banner tone="info">
+            手机 Google Authenticator →「转移账号」会显示二维码：截图后在下方上传图片即可批量导入；
+            也可粘贴解出的 <code>otpauth-migration://</code> 文本。
+          </Banner>
+        )}
+
+        <div>
+          <Label>{format === 'google-authenticator' ? '选择文件 / 二维码图片' : '选择文件'}</Label>
+          <input
+            ref={fileInput}
+            type="file"
+            accept={
+              format === 'google-authenticator' ? 'image/*,.txt' : '.json,.csv,text/csv,application/json'
+            }
+            onChange={(e) => {
+              setMsg(null);
+              setFile(e.target.files?.[0] ?? null);
+            }}
+            className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm hover:file:bg-gray-200"
+          />
+          {file && (
+            <p className="mt-1 text-[11px] text-gray-500">
+              将导入：<b>{file.name}</b>
+              <button onClick={clearFile} className="ml-2 text-brand-600 hover:underline">
+                清除
+              </button>
+            </p>
+          )}
+        </div>
+
+        <div>
+          <Label>或直接粘贴内容（已选文件时以文件为准）</Label>
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            rows={4}
+            disabled={!!file}
+            className="w-full rounded-lg border border-gray-300 p-2 font-mono text-xs outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-gray-50 disabled:text-gray-400"
+            placeholder={
+              format === 'google-authenticator'
+                ? 'otpauth-migration://offline?data=...'
+                : '粘贴 JSON / CSV 内容'
+            }
+          />
+        </div>
+
+        {mode === 'replace' && <Banner tone="warn">替换模式会清空现有全部项目，请谨慎操作。</Banner>}
+        {msg && <Banner tone={msg.tone === 'error' ? 'error' : 'info'}>{msg.text}</Banner>}
+
+        <Button disabled={busy} onClick={run} className="self-end">
+          <Upload size={16} /> 开始导入
+        </Button>
       </div>
-
-      <div>
-        <Label>或直接粘贴内容（已选文件时以文件为准）</Label>
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          rows={5}
-          disabled={!!file}
-          className="w-full rounded-lg border border-gray-300 p-2 font-mono text-xs outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-gray-50 disabled:text-gray-400"
-          placeholder={
-            format === 'google-authenticator'
-              ? 'otpauth-migration://offline?data=...'
-              : '粘贴 JSON / CSV 内容'
-          }
-        />
-      </div>
-
-      {mode === 'replace' && (
-        <Banner tone="warn">替换模式会清空现有全部项目，请谨慎操作。</Banner>
-      )}
-      {msg && <Banner tone={msg.tone === 'error' ? 'error' : 'info'}>{msg.text}</Banner>}
-
-      <Button disabled={busy} onClick={run} className="self-end">
-        <Upload size={16} /> 开始导入
-      </Button>
     </div>
   );
 }

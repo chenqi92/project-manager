@@ -4,7 +4,14 @@ node_modules
 stats.html
 *.zip
 *.log
+vault.db*
+sync-credentials*.json
 .DS_Store
 .extension-key.pem
 .smoke.mjs
 chrome/
+design
+# 本地 OAuth 密钥等环境变量（WXT_*），不入库；模板见 .env.example
+.env
+.env.local
+.env.*.local

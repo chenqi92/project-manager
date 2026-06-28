@@ -23,6 +23,40 @@ export const PBKDF2_FALLBACK: KdfConfig = {
   hash: 'SHA-256',
 };
 
+const ARGON2_MAX_MEM_KIB = 256 * 1024;
+const ARGON2_MAX_ITERATIONS = 20;
+const ARGON2_MAX_PARALLELISM = 4;
+const PBKDF2_MAX_ITERATIONS = 5_000_000;
+
+function boundedInt(v: unknown, min: number, max: number): boolean {
+  return Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
+}
+
+/**
+ * KDF 参数来自本地密文 envelope，也可能来自导入文件或远端同步副本；这些都不能
+ * 默认可信。只设上限、不设强制下限策略，避免旧测试/旧备份的低成本 KDF 无法读取。
+ */
+export function assertSafeKdfConfig(kdf: KdfConfig): void {
+  const raw = kdf as unknown as Record<string, unknown>;
+  if (raw.type === 'argon2id') {
+    if (
+      !boundedInt(raw.memKiB, 1, ARGON2_MAX_MEM_KIB) ||
+      !boundedInt(raw.iterations, 1, ARGON2_MAX_ITERATIONS) ||
+      !boundedInt(raw.parallelism, 1, ARGON2_MAX_PARALLELISM)
+    ) {
+      throw new Error('KDF 参数异常：Argon2id 成本超出安全上限');
+    }
+    return;
+  }
+  if (raw.type === 'pbkdf2') {
+    if (!boundedInt(raw.iterations, 1, PBKDF2_MAX_ITERATIONS) || raw.hash !== 'SHA-256') {
+      throw new Error('KDF 参数异常：PBKDF2 成本超出安全上限');
+    }
+    return;
+  }
+  throw new Error('KDF 参数异常：不支持的类型');
+}
+
 export function randomBytes(n: number): Uint8Array {
   const b = new Uint8Array(n);
   crypto.getRandomValues(b);
@@ -65,6 +99,7 @@ export async function deriveKeyBytes(
   salt: Uint8Array,
   kdf: KdfConfig,
 ): Promise<Uint8Array> {
+  assertSafeKdfConfig(kdf);
   if (kdf.type === 'argon2id') {
     const hash = await argon2id({
       password,

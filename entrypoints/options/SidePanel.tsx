@@ -97,57 +97,57 @@ export function SidePanel(props: SidePanelProps) {
   // 整栏收起 → 右边缘竖标签条：每个标签单独展开自己的内容。
   if (st.collapsed) {
     return (
-      <div className="flex h-full shrink-0 flex-col items-stretch gap-2 border-l border-gray-200 bg-surface p-1.5">
+      <div className="flex h-full shrink-0 flex-col gap-2 py-6 pr-6">
         <RailTab
-          icon={<StickyNote size={15} />}
+          icon={<FileText size={14} />}
+          label="说明文档"
+          badge={docs.length > 0 ? docs.length : undefined}
+          onClick={() => patch({ collapsed: false, tab: 'docs' })}
+        />
+        <RailTab
+          icon={<StickyNote size={14} />}
           label="待办"
           badge={pending > 0 ? pending : undefined}
           onClick={() => patch({ collapsed: false, tab: 'memo' })}
-        />
-        <RailTab
-          icon={<FileText size={15} />}
-          label="说明"
-          badge={docs.length > 0 ? docs.length : undefined}
-          onClick={() => patch({ collapsed: false, tab: 'docs' })}
         />
       </div>
     );
   }
 
   return (
-    <div className="flex h-full shrink-0">
+    <div className="flex h-full shrink-0 py-6 pr-6">
       {/* 宽度拖拽手柄 */}
       <div
         onPointerDown={startWidthDrag}
         title="拖拽改变宽度"
-        className="w-1.5 shrink-0 cursor-col-resize touch-none bg-transparent transition hover:bg-brand-200"
+        className="-ml-1 w-2 shrink-0 cursor-col-resize touch-none rounded-full bg-transparent transition hover:bg-brand-200"
       />
       <div
         style={{ width: st.width }}
-        className="flex h-full min-h-0 shrink-0 flex-col border-l border-gray-200 bg-surface"
+        className="flex h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-[14px] border border-gray-200 bg-surface"
       >
-        {/* 标签栏：待办 / 说明，一次只展示一个 */}
-        <div className="flex items-center gap-1 border-b border-gray-100 px-1.5 py-1.5">
-          <TabBtn
-            active={st.tab === 'memo'}
-            onClick={() => patch({ tab: 'memo' })}
-            icon={<StickyNote size={15} />}
-            label="待办"
-            badge={pending}
-          />
-          <TabBtn
-            active={st.tab === 'docs'}
-            onClick={() => patch({ tab: 'docs' })}
-            icon={<FileText size={15} />}
-            label="说明"
-            badge={docs.length}
-          />
+        {/* 标签栏：说明文档 / 待办，一次只展示一个 */}
+        <div className="flex items-center gap-2 border-b border-gray-200 px-3 py-2.5">
+          <div className="flex flex-1 gap-0.5 rounded-[9px] border border-gray-200 bg-gray-50 p-[3px]">
+            <TabBtn
+              active={st.tab === 'docs'}
+              onClick={() => patch({ tab: 'docs' })}
+              label="说明文档"
+              badge={docs.length}
+            />
+            <TabBtn
+              active={st.tab === 'memo'}
+              onClick={() => patch({ tab: 'memo' })}
+              label="待办"
+              badge={pending}
+            />
+          </div>
           <button
             onClick={() => patch({ collapsed: true })}
             title="收起到右侧边"
-            className="ml-auto rounded-md p-1 text-gray-400 hover:bg-gray-100"
+            className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-surface text-gray-500 hover:bg-gray-50"
           >
-            <ChevronsRight size={16} />
+            <ChevronsRight size={15} />
           </button>
         </div>
 
@@ -170,13 +170,11 @@ export function SidePanel(props: SidePanelProps) {
 function TabBtn({
   active,
   onClick,
-  icon,
   label,
   badge,
 }: {
   active: boolean;
   onClick: () => void;
-  icon: ReactNode;
   label: string;
   badge?: number;
 }) {
@@ -184,17 +182,16 @@ function TabBtn({
     <button
       onClick={onClick}
       className={cx(
-        'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-medium',
-        active ? 'bg-brand-50 text-brand-700' : 'text-gray-500 hover:bg-gray-100',
+        'flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-[12.5px] font-semibold transition-colors',
+        active ? 'bg-surface text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600',
       )}
     >
-      {icon}
       {label}
       {badge !== undefined && badge > 0 && (
         <span
           className={cx(
-            'rounded-full px-1.5 text-[11px]',
-            active ? 'bg-brand-100 text-brand-700' : 'bg-gray-100 text-gray-500',
+            'rounded-full px-1.5 text-[10px]',
+            active ? 'bg-pribg text-prid' : 'bg-gray-200 text-gray-500',
           )}
         >
           {badge}
@@ -219,12 +216,14 @@ function RailTab({
     <button
       onClick={onClick}
       title={`展开${label}`}
-      className="flex flex-col items-center gap-1.5 rounded-lg px-1.5 py-3 text-gray-600 hover:bg-brand-50 hover:text-brand-700"
+      className="flex w-[34px] flex-col items-center gap-1.5 rounded-[11px] border border-gray-200 bg-surface py-3 text-gray-500 shadow-[0_1px_3px_rgba(16,24,40,.06)] hover:text-brand-600"
     >
       {icon}
-      <span className="text-xs font-medium tracking-wide [writing-mode:vertical-rl]">{label}</span>
+      <span className="text-[11.5px] font-semibold tracking-wide [writing-mode:vertical-rl]">
+        {label}
+      </span>
       {badge !== undefined && (
-        <span className="rounded-full bg-brand-100 px-1 text-[10px] font-medium text-brand-700">
+        <span className="rounded-full bg-brand-50 px-1 text-[10px] font-semibold text-brand-700">
           {badge}
         </span>
       )}
@@ -386,7 +385,7 @@ function DocsTabs({
             title={d.title}
             className={cx(
               'max-w-[140px] shrink-0 truncate rounded-md px-2 py-1 text-xs',
-              activeId === d.id ? 'bg-brand-50 text-brand-700' : 'text-gray-500 hover:bg-gray-100',
+              activeId === d.id ? 'bg-pribg text-prid' : 'text-gray-500 hover:bg-gray-100',
             )}
           >
             {d.title}

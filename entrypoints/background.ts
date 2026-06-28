@@ -3,14 +3,28 @@ import { fillCredentialsInPage, getOrigin } from '@/lib/autofill';
 import { fromB64, toB64 } from '@/lib/crypto';
 import { flatten, matchForUrl, search } from '@/lib/search';
 import { buildExport, mergeVaults, parseImport } from '@/lib/import-export';
-import type { Msg, MsgResponse, SyncStateResp } from '@/lib/messaging';
+import type { Msg, MsgResponse } from '@/lib/messaging';
+import { authorizeDrive } from '@/lib/oauth';
 import { vaultBackend } from '@/lib/storage';
-import { SyncClient, syncVault } from '@/lib/sync';
+import { SyncClient } from '@/lib/sync';
+import {
+  SyncEngineError,
+  forcePullFromProvider,
+  forcePushToProvider,
+  migrateSyncSettings,
+  providerFor,
+  syncWithProvider,
+  toTargetView,
+} from '@/lib/sync-providers';
+import { synologyLogin } from '@/lib/sync-providers/synology';
 import type {
   BioEnrollmentPublic,
   CapturePending,
   PlatformLink,
   SyncState,
+  SyncStateMap,
+  SyncTarget,
+  SyncTargetView,
   VaultData,
   VaultStatus,
 } from '@/lib/types';
@@ -28,7 +42,8 @@ import {
 } from '@/lib/vault-core';
 
 const SESSION_DEK = 'dek';
-const SYNC_STATE_KEY = 'syncState';
+const SYNC_STATE_KEY = 'syncState'; // 旧版单一自托管同步状态（迁移后仅用于清理）
+const SYNC_MAP_KEY = 'syncStateMap'; // 按目标 id 的多端同步状态
 const PENDING_KEY = 'pendingCapture';
 
 // 全部仅存在于内存（SW 重启后从 session 恢复，浏览器关闭即丢失）。
@@ -70,9 +85,11 @@ export default defineBackground(() => {
     browser.tabs.create({ url: target });
   });
 
-  // 登录捕获内容脚本：只在已授权的站点动态注册。
-  registerCapture();
-  browser.permissions.onAdded.addListener(() => registerCapture());
+  // 登录捕获内容脚本：只在「保险箱内已有链接」且「用户已授权」的站点动态注册。
+  // 同步/API/热榜等非登录站点即使有 host 权限，也不会被注册捕获脚本。
+  refreshCaptureRegistration();
+  browser.permissions.onAdded.addListener(() => refreshCaptureRegistration());
+  browser.permissions.onRemoved.addListener(() => refreshCaptureRegistration());
 
   // 地址栏 "env" 关键字搜索。
   browser.omnibox.setDefaultSuggestion({ description: '搜索项目 / 环境 / 链接 / 账号…' });
@@ -308,39 +325,133 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       return;
     }
 
-    // ---------------- 同步 ----------------
-    case 'sync:configure': {
+    // ---------------- 多端同步 ----------------
+    case 'sync:targets':
+      return { targets: await listTargetViews(), autoSync: cachedData?.settings.syncAuto !== false };
+
+    case 'sync:targetSave': {
       const data = await requireData();
-      // 先用 meta 验证服务器/令牌可达
-      await new SyncClient(msg.serverUrl, msg.token).meta();
-      data.settings.sync = { serverUrl: msg.serverUrl, token: msg.token, enabled: true };
+      const targets = data.settings.syncTargets ?? (data.settings.syncTargets = []);
+      const idx = targets.findIndex((t) => t.id === msg.target.id);
+      const next = idx >= 0 ? mergeTargetSecrets(targets[idx]!, msg.target) : msg.target;
+      if (idx >= 0) targets[idx] = next;
+      else targets.push(next);
       await persistData(data);
-      await runSync();
-      return syncStateResp();
+      return { id: next.id, targets: await listTargetViews() };
     }
 
-    case 'sync:now':
-      await runSync();
-      return syncStateResp();
-
-    case 'sync:disable': {
+    case 'sync:targetRemove': {
       const data = await requireData();
-      const cfg = data.settings.sync;
-      if (cfg) {
+      const targets = data.settings.syncTargets ?? [];
+      const target = targets.find((t) => t.id === msg.id);
+      if (target) {
         try {
-          await new SyncClient(cfg.serverUrl, cfg.token).deleteRemote();
+          await providerFor(target).remove();
         } catch {
-          /* 远端删除失败不阻断本地关闭 */
+          /* 远端删除失败不阻断本地移除 */
         }
       }
-      delete data.settings.sync;
+      data.settings.syncTargets = targets.filter((t) => t.id !== msg.id);
       await persistData(data);
-      await browser.storage.local.remove(SYNC_STATE_KEY);
+      await removeTargetState(msg.id);
+      return { targets: await listTargetViews() };
+    }
+
+    case 'sync:targetPreflight':
+      return providerFor(msg.target).preflight();
+
+    case 'sync:listDir': {
+      // 已保存目标用 id 取出含密钥的存储版本；编辑中的草稿直接用传入 target。
+      const target = msg.id ? findTarget(msg.id) : msg.target;
+      if (!target) throw new Error('缺少同步目标');
+      const provider = providerFor(target);
+      if (!provider.listDir) throw new Error('该类型暂不支持目录浏览');
+      return { folders: await provider.listDir(msg.path) };
+    }
+
+    case 'sync:targetSync':
+      return runTargetSync(findTarget(msg.id), {
+        foreignPassword: msg.foreignPassword,
+        confirmFirstPush: msg.confirmFirstPush,
+      });
+
+    case 'sync:targetPush': {
+      await requireUnlocked();
+      const enc = await vaultBackend.load();
+      if (!enc) throw new Error('保险箱不存在');
+      const target = findTarget(msg.id);
+      try {
+        const { tag } = await forcePushToProvider(providerFor(target), enc);
+        await setTargetState(target.id, { lastSyncAt: Date.now(), remoteTag: tag, lastError: undefined });
+      } catch (e) {
+        await setTargetState(target.id, { lastError: errMsg(e) });
+        throw e;
+      }
       return;
     }
 
-    case 'sync:state':
-      return syncStateResp();
+    case 'sync:targetPull': {
+      await requireUnlocked();
+      const enc = await vaultBackend.load();
+      if (!enc) throw new Error('保险箱不存在');
+      const target = findTarget(msg.id);
+      try {
+        const res = await forcePullFromProvider(providerFor(target), enc, dek!, {
+          foreignPassword: msg.foreignPassword,
+        });
+        if (res.kind === 'foreign') return { foreign: true };
+        if (res.kind === 'replaced') {
+          await vaultBackend.save(res.localEncrypted);
+          cachedData = await decryptVaultData(res.localEncrypted, dek!);
+          await setTargetState(target.id, { lastSyncAt: Date.now(), remoteTag: res.tag, lastError: undefined });
+        }
+      } catch (e) {
+        await setTargetState(target.id, { lastError: errMsg(e) });
+        throw e;
+      }
+      return { foreign: false };
+    }
+
+    case 'sync:now':
+      await syncAllEnabled();
+      return;
+
+    case 'sync:oauthAuthorize':
+      return authorizeDrive(msg.driveType, msg.clientId, msg.clientSecret);
+
+    case 'sync:synologyAuthorize': {
+      // 用 OTP 登录群晖并申领受信设备令牌（did）；无 2FA 时 did 为空但登录已验证。
+      const { did } = await synologyLogin(msg.baseUrl, {
+        account: msg.account,
+        password: msg.password,
+        otpCode: msg.otpCode,
+      });
+      return { did: did ?? '' };
+    }
+
+    case 'sync:synologyRebind': {
+      // 换设备/令牌失效后用已存的账号密码 + 新 OTP 重新申领 did，并持久化。
+      await requireUnlocked();
+      const data = await requireData();
+      const target = (data.settings.syncTargets ?? []).find((x) => x.id === msg.id);
+      if (!target) throw new Error('找不到该同步目标');
+      const rec = target as unknown as {
+        type: string;
+        baseUrl?: string;
+        account?: string;
+        password?: string;
+        did?: string;
+      };
+      if (rec.type !== 'synology') throw new Error('该目标不是群晖');
+      const { did } = await synologyLogin(String(rec.baseUrl ?? ''), {
+        account: String(rec.account ?? ''),
+        password: String(rec.password ?? ''),
+        otpCode: msg.otp,
+      });
+      rec.did = did ?? '';
+      await persistData(data);
+      return { ok: true };
+    }
 
     case 'vault:adopt': {
       const client = new SyncClient(msg.serverUrl, msg.token);
@@ -364,6 +475,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       return;
     }
     case 'capture:pending':
+      await requireUnlocked();
       return getPending();
     case 'capture:save':
       await applyCapture();
@@ -376,11 +488,24 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
 
 // --------------------------- 登录捕获 ---------------------------
 
-async function registerCapture(): Promise<void> {
+async function refreshCaptureRegistration(): Promise<void> {
   try {
-    const perms = await browser.permissions.getAll();
-    const origins = (perms.origins ?? []).filter((o) => o.startsWith('http'));
+    await ensureRestored();
+    await registerCaptureForData(cachedData);
+  } catch (e) {
+    console.warn('refreshCaptureRegistration failed:', e);
+  }
+}
+
+async function registerCaptureForData(data: VaultData | null): Promise<void> {
+  try {
     await browser.scripting.unregisterContentScripts({ ids: ['capture'] }).catch(() => {});
+    if (!data) return;
+    const perms = await browser.permissions.getAll();
+    const granted = perms.origins ?? [];
+    const origins = captureMatchPatterns(data).filter((pattern) =>
+      hasOriginPermission(pattern, granted),
+    );
     if (origins.length === 0) return;
     await browser.scripting.registerContentScripts([
       {
@@ -395,6 +520,25 @@ async function registerCapture(): Promise<void> {
   }
 }
 
+function captureMatchPatterns(data: VaultData): string[] {
+  const out = new Set<string>();
+  for (const proj of data.projects)
+    for (const env of proj.environments)
+      for (const link of env.links)
+        for (const url of linkUrls(link)) {
+          const origin = getOrigin(url);
+          if (origin) out.add(`${origin}/*`);
+        }
+  return [...out];
+}
+
+function hasOriginPermission(pattern: string, granted: string[]): boolean {
+  if (granted.includes(pattern) || granted.includes('<all_urls>')) return true;
+  if (pattern.startsWith('https://') && granted.includes('https://*/*')) return true;
+  if (pattern.startsWith('http://') && granted.includes('http://*/*')) return true;
+  return false;
+}
+
 async function handleCaptureLogin(
   origin: string,
   url: string,
@@ -407,20 +551,23 @@ async function handleCaptureLogin(
   let matchAccountId: string | undefined;
   let linkName: string | undefined;
   let exactSame = false;
+  let matchedLinkOrigin = false;
   for (const proj of cachedData.projects) {
     for (const env of proj.environments) {
       for (const link of env.links) {
         if (!linkUrls(link).some((u) => getOrigin(u) === origin)) continue;
+        matchedLinkOrigin = true;
+        linkName = link.name;
         for (const acc of link.accounts) {
           if (acc.username && username && acc.username.toLowerCase() === username.toLowerCase()) {
             matchAccountId = acc.id;
-            linkName = link.name;
             if (acc.password === password) exactSame = true;
           }
         }
       }
     }
   }
+  if (!matchedLinkOrigin) return; // 不捕获保险箱外的任意授权站点
   if (exactSame) return clearPending(); // 已是最新，无需提示
   if (matchAccountId) {
     await savePending({ kind: 'update', origin, url, username, password, accountId: matchAccountId, linkName });
@@ -612,7 +759,7 @@ async function getStatus(): Promise<VaultStatus> {
     locked: dek === null,
     autoLockMinutes,
     hasBiometric: (enc?.bioEnrollments?.length ?? 0) > 0,
-    syncEnabled: cachedData?.settings.sync?.enabled ?? false,
+    syncEnabled: (cachedData?.settings.syncTargets ?? []).some((t) => t.enabled),
   };
 }
 
@@ -623,6 +770,9 @@ async function setUnlocked(d: Uint8Array, data: VaultData): Promise<void> {
   await browser.storage.session.set({ [SESSION_DEK]: toB64(d) });
   applyAutoLock();
   resetLockTimer();
+  // 一次性迁移旧的单一自托管同步配置 → syncTargets。
+  if (migrateSyncSettings(data)) await persistData(data);
+  await registerCaptureForData(data);
 }
 
 /** 重新加密并持久化数据；更新内存缓存。 */
@@ -634,16 +784,21 @@ async function persistData(data: VaultData): Promise<void> {
   autoLockMinutes = data.settings.autoLockMinutes ?? 15;
   applyAutoLock();
   resetLockTimer();
+  await registerCaptureForData(data);
 }
 
 function lock(): void {
   dek = null;
   cachedData = null;
+  pendingCapture = null;
   if (lockTimer) {
     clearTimeout(lockTimer);
     lockTimer = null;
   }
   browser.storage.session.remove(SESSION_DEK).catch(() => {});
+  browser.storage.session.remove(PENDING_KEY).catch(() => {});
+  browser.action.setBadgeText({ text: '' }).catch(() => {});
+  registerCaptureForData(null).catch(() => {});
 }
 
 async function ensureRestored(): Promise<void> {
@@ -663,6 +818,7 @@ async function ensureRestored(): Promise<void> {
   dek = restored;
   autoLockMinutes = cachedData.settings.autoLockMinutes ?? 15;
   applyAutoLock();
+  if (migrateSyncSettings(cachedData)) await persistData(cachedData);
 }
 
 async function requireUnlocked(): Promise<void> {
@@ -688,50 +844,129 @@ function resetLockTimer(): void {
 
 // --------------------------- 同步辅助 ---------------------------
 
-async function loadSyncState(): Promise<SyncState | null> {
-  const r = await browser.storage.local.get(SYNC_STATE_KEY);
-  return (r[SYNC_STATE_KEY] as SyncState | undefined) ?? null;
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
+// 旧版单一自托管状态：仅 vault:adopt 仍写入，迁移后由 ensureRestored/getStatus 接管。
 async function saveSyncState(s: SyncState): Promise<void> {
   await browser.storage.local.set({ [SYNC_STATE_KEY]: s });
 }
 
-async function syncStateResp(): Promise<SyncStateResp> {
-  const cfg = cachedData?.settings.sync;
-  return {
-    config: cfg ? { serverUrl: cfg.serverUrl, enabled: cfg.enabled } : null,
-    state: await loadSyncState(),
-  };
+async function loadSyncMap(): Promise<SyncStateMap> {
+  const r = await browser.storage.local.get(SYNC_MAP_KEY);
+  return (r[SYNC_MAP_KEY] as SyncStateMap | undefined) ?? {};
 }
 
-async function runSync(): Promise<void> {
+async function setTargetState(
+  id: string,
+  patch: Partial<SyncStateMap[string]>,
+): Promise<void> {
+  const map = await loadSyncMap();
+  map[id] = { ...map[id], ...patch };
+  await browser.storage.local.set({ [SYNC_MAP_KEY]: map });
+}
+
+async function removeTargetState(id: string): Promise<void> {
+  const map = await loadSyncMap();
+  delete map[id];
+  await browser.storage.local.set({ [SYNC_MAP_KEY]: map });
+}
+
+async function listTargetViews(): Promise<SyncTargetView[]> {
+  const targets = cachedData?.settings.syncTargets ?? [];
+  const map = await loadSyncMap();
+  return targets.map((t) => toTargetView(t, map));
+}
+
+function findTarget(id: string): SyncTarget {
+  const t = cachedData?.settings.syncTargets?.find((x) => x.id === id);
+  if (!t) throw new Error('找不到该同步目标');
+  return t;
+}
+
+const SECRET_FIELDS = ['token', 'password', 'refreshToken', 'clientSecret', 'did'] as const;
+
+/** 编辑保存时，UI 留空的密钥字段沿用旧值（避免每次编辑都要重输令牌）。 */
+function mergeTargetSecrets(prev: SyncTarget, next: SyncTarget): SyncTarget {
+  const merged = { ...next } as unknown as Record<string, unknown>;
+  const old = prev as unknown as Record<string, unknown>;
+  for (const f of SECRET_FIELDS) {
+    if (f in merged && !merged[f] && old[f]) merged[f] = old[f];
+  }
+  return merged as unknown as SyncTarget;
+}
+
+/**
+ * 对单个目标做双向合并同步。
+ * - 异库未带密码 → 返回 {foreign:true} 供 UI 索要密码。
+ * - 新目标首次同步且远端为空且未确认 → 返回 {emptyRemote:true} 供 UI 确认建立首次副本
+ *   （避免本想拉取却把本地静默推到空路径）。两者都不写 lastError。
+ */
+async function runTargetSync(
+  target: SyncTarget,
+  opts: { foreignPassword?: string; confirmFirstPush?: boolean },
+): Promise<{ foreign?: boolean; emptyRemote?: boolean }> {
   await requireUnlocked();
-  const cfg = cachedData!.settings.sync;
-  if (!cfg?.enabled) throw new Error('同步未启用');
   const enc = await vaultBackend.load();
   if (!enc) throw new Error('保险箱不存在');
-
-  const result = await syncVault(cfg, enc, dek!);
-  if (result.mergedEncrypted) {
-    await vaultBackend.save(result.mergedEncrypted);
-    cachedData = await decryptVaultData(result.mergedEncrypted, dek!);
+  const map = await loadSyncMap();
+  const established = Boolean(map[target.id]?.remoteTag || map[target.id]?.lastSyncAt);
+  try {
+    const out = await syncWithProvider(providerFor(target), enc, dek!, {
+      foreignPassword: opts.foreignPassword,
+      guardEmptyPush: !established,
+      confirmEmptyPush: opts.confirmFirstPush,
+    });
+    if (out.mergedEncrypted) {
+      await vaultBackend.save(out.mergedEncrypted);
+      cachedData = await decryptVaultData(out.mergedEncrypted, dek!);
+    }
+    await setTargetState(target.id, {
+      lastSyncAt: Date.now(),
+      remoteTag: out.tag,
+      lastError: undefined,
+    });
+    return {};
+  } catch (e) {
+    if (e instanceof SyncEngineError && e.code === 'foreign_vault') return { foreign: true };
+    if (e instanceof SyncEngineError && e.code === 'empty_remote') return { emptyRemote: true };
+    await setTargetState(target.id, { lastError: errMsg(e) });
+    throw e;
   }
-  await saveSyncState({ serverRevision: result.serverRevision, lastSyncAt: Date.now() });
+}
+
+/** 同步所有启用的目标；任一目标失败则抛出（汇总错误信息）。异库目标在此跳过并计入错误。 */
+async function syncAllEnabled(): Promise<void> {
+  await requireUnlocked();
+  const targets = (cachedData?.settings.syncTargets ?? []).filter((t) => t.enabled);
+  const errors: string[] = [];
+  for (const t of targets) {
+    try {
+      const r = await runTargetSync(t, {});
+      if (r.foreign) errors.push(`${t.label}：检测到另一个保险箱，请在设置里输入其主密码后同步`);
+      if (r.emptyRemote)
+        errors.push(`${t.label}：远端为空，请在该目标上点「双向同步」确认建立首次副本`);
+    } catch (e) {
+      errors.push(`${t.label}：${errMsg(e)}`);
+    }
+  }
+  if (errors.length) throw new Error(errors.join('；'));
 }
 
 /** 本地保存后延迟自动同步（合并多次连续修改，失败只记录不打断）。 */
 function scheduleAutoSync(): void {
-  if (!cachedData?.settings.sync?.enabled) return;
-  if (cachedData.settings.syncAuto === false) return; // 用户关闭了「修改后自动同步」
+  if (cachedData?.settings.syncAuto === false) return; // 用户关闭了「修改后自动同步」
+  const targets = (cachedData?.settings.syncTargets ?? []).filter((t) => t.enabled);
+  if (!targets.length) return;
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
-    runSync().catch(async (e) => {
-      const prev = (await loadSyncState()) ?? { serverRevision: 0 };
-      await saveSyncState({
-        ...prev,
-        lastError: e instanceof Error ? e.message : String(e),
-      });
-    });
+    void (async () => {
+      for (const t of targets) {
+        await runTargetSync(t, {}).catch(() => {
+          /* runTargetSync 已记录 lastError，自动同步不打断 */
+        });
+      }
+    })();
   }, 2500);
 }

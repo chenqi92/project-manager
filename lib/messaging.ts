@@ -3,6 +3,7 @@
 // 所有加解密都集中在 background 完成，UI 侧只拿到解锁后的明文做展示。
 // ---------------------------------------------------------------------------
 import { browser } from 'wxt/browser';
+import type { PreflightResult } from './sync-providers/types';
 import type {
   BioEnrollmentPublic,
   CapturePending,
@@ -10,14 +11,15 @@ import type {
   ImportFormat,
   ImportMode,
   KdfConfig,
-  SyncState,
+  SyncTarget,
+  SyncTargetView,
   VaultData,
   VaultStatus,
 } from './types';
 
-export interface SyncStateResp {
-  config: { serverUrl: string; enabled: boolean } | null;
-  state: SyncState | null;
+export interface SyncTargetsResp {
+  targets: SyncTargetView[];
+  autoSync: boolean;
 }
 
 export type Msg =
@@ -50,11 +52,30 @@ export type Msg =
       prfOutput: string;
     }
   | { type: 'vault:removeBio'; enrollmentId: string }
-  // 同步
-  | { type: 'sync:configure'; serverUrl: string; token: string }
+  // 多端同步
+  | { type: 'sync:targets' }
+  | { type: 'sync:targetSave'; target: SyncTarget }
+  | { type: 'sync:targetRemove'; id: string }
+  | { type: 'sync:targetPreflight'; target: SyncTarget }
+  | { type: 'sync:listDir'; id?: string; target?: SyncTarget; path: string[] }
+  | { type: 'sync:targetSync'; id: string; foreignPassword?: string; confirmFirstPush?: boolean }
+  | { type: 'sync:targetPush'; id: string }
+  | { type: 'sync:targetPull'; id: string; foreignPassword?: string }
   | { type: 'sync:now' }
-  | { type: 'sync:disable' }
-  | { type: 'sync:state' }
+  | {
+      type: 'sync:oauthAuthorize';
+      driveType: 'google-drive' | 'onedrive' | 'dropbox';
+      clientId: string;
+      clientSecret?: string;
+    }
+  | {
+      type: 'sync:synologyAuthorize';
+      baseUrl: string;
+      account: string;
+      password: string;
+      otpCode?: string;
+    }
+  | { type: 'sync:synologyRebind'; id: string; otp: string }
   | { type: 'vault:adopt'; serverUrl: string; token: string }
   // 打开链接并自动填充
   | {
@@ -124,12 +145,41 @@ export const api = {
     send<void>({ type: 'vault:enrollBio', label, credentialId, prfSalt, prfOutput }),
   removeBio: (enrollmentId: string) => send<void>({ type: 'vault:removeBio', enrollmentId }),
 
-  // 同步
-  syncConfigure: (serverUrl: string, token: string) =>
-    send<SyncStateResp>({ type: 'sync:configure', serverUrl, token }),
-  syncNow: () => send<SyncStateResp>({ type: 'sync:now' }),
-  syncDisable: () => send<void>({ type: 'sync:disable' }),
-  syncState: () => send<SyncStateResp>({ type: 'sync:state' }),
+  // 多端同步
+  syncTargets: () => send<SyncTargetsResp>({ type: 'sync:targets' }),
+  syncTargetSave: (target: SyncTarget) =>
+    send<{ id: string; targets: SyncTargetView[] }>({ type: 'sync:targetSave', target }),
+  syncTargetRemove: (id: string) =>
+    send<{ targets: SyncTargetView[] }>({ type: 'sync:targetRemove', id }),
+  syncTargetPreflight: (target: SyncTarget) =>
+    send<PreflightResult>({ type: 'sync:targetPreflight', target }),
+  syncListDir: (arg: { id?: string; target?: SyncTarget; path: string[] }) =>
+    send<{ folders: Array<{ name: string }> }>({ type: 'sync:listDir', ...arg }),
+  syncTargetSync: (id: string, foreignPassword?: string, confirmFirstPush?: boolean) =>
+    send<{ foreign?: boolean; emptyRemote?: boolean }>({
+      type: 'sync:targetSync',
+      id,
+      foreignPassword,
+      confirmFirstPush,
+    }),
+  syncTargetPush: (id: string) => send<void>({ type: 'sync:targetPush', id }),
+  syncTargetPull: (id: string, foreignPassword?: string) =>
+    send<{ foreign?: boolean }>({ type: 'sync:targetPull', id, foreignPassword }),
+  syncNow: () => send<void>({ type: 'sync:now' }),
+  syncOAuthAuthorize: (
+    driveType: 'google-drive' | 'onedrive' | 'dropbox',
+    clientId: string,
+    clientSecret?: string,
+  ) => send<{ refreshToken: string }>({ type: 'sync:oauthAuthorize', driveType, clientId, clientSecret }),
+  syncSynologyAuthorize: (
+    baseUrl: string,
+    account: string,
+    password: string,
+    otpCode?: string,
+  ) =>
+    send<{ did: string }>({ type: 'sync:synologyAuthorize', baseUrl, account, password, otpCode }),
+  syncSynologyRebind: (id: string, otp: string) =>
+    send<{ ok: boolean }>({ type: 'sync:synologyRebind', id, otp }),
   adopt: (serverUrl: string, token: string) =>
     send<VaultStatus>({ type: 'vault:adopt', serverUrl, token }),
 

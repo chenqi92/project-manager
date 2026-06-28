@@ -78,9 +78,16 @@ export function newMemo(p: Partial<MemoItem> = {}): MemoItem {
   };
 }
 
-/** 克隆命令：有分支时带 -b。 */
+function shellArg(v: string): string {
+  const oneLine = v.replace(/[\0\r\n\t]/g, ' ');
+  return `'${oneLine.replace(/'/g, `'\\''`)}'`;
+}
+
+/** 克隆命令：有分支时带 -b；所有用户字段均 shell-quote，避免复制后粘贴执行注入。 */
 export function gitCloneCommand(repo: GitRepo): string {
-  return repo.branch ? `git clone -b ${repo.branch} ${repo.url}` : `git clone ${repo.url}`;
+  return repo.branch
+    ? `git clone -b ${shellArg(repo.branch)} -- ${shellArg(repo.url)}`
+    : `git clone -- ${shellArg(repo.url)}`;
 }
 
 /** 一个链接的全部网址（主 + 额外）。 */

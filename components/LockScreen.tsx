@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Fingerprint, KeyRound, Loader2, ShieldCheck } from 'lucide-react';
-import { Banner, Button, Input, Label } from './ui';
+import { Eye, EyeOff, Fingerprint, KeyRound, Loader2, Lock } from 'lucide-react';
+import { Banner, Button, Input, Label, cx } from './ui';
 
 export function LockScreen({
   initialized,
@@ -23,6 +23,7 @@ export function LockScreen({
 }) {
   const [pw, setPw] = useState('');
   const [pw2, setPw2] = useState('');
+  const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showAdopt, setShowAdopt] = useState(false);
@@ -76,93 +77,105 @@ export function LockScreen({
     }
   };
 
-  return (
+  const card = (
     <div
-      className={
+      className={cx(
+        'flex flex-col',
         compact
-          ? 'flex flex-col gap-4 p-5'
-          : 'mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-4 p-6'
-      }
+          ? 'gap-3 p-5'
+          : 'w-[360px] gap-0 rounded-[18px] bg-surface p-7 shadow-[0_30px_60px_-20px_rgba(20,26,40,.3),0_0_0_1px_rgba(20,26,40,.04)]',
+      )}
     >
       <div className="flex flex-col items-center gap-2 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-600 text-white">
-          {initialized ? <KeyRound size={24} /> : <ShieldCheck size={24} />}
+        <span className="flex h-[54px] w-[54px] items-center justify-center rounded-[15px] bg-brand-600 text-white shadow-[0_10px_24px_-6px_rgba(13,148,136,.45)]">
+          {initialized ? <KeyRound size={26} /> : <Lock size={26} />}
+        </span>
+        <div className="mt-2 text-lg font-bold text-gray-900">
+          {initialized ? '欢迎回来' : '创建保险箱'}
         </div>
-        <h1 className="text-lg font-semibold text-gray-900">
-          {initialized ? '解锁保险箱' : '创建主密码'}
-        </h1>
-        <p className="text-xs text-gray-500">
-          {initialized
-            ? '输入主密码以解锁本地加密的凭据库'
-            : '主密码用于加密全部数据，本地派生、永不上传'}
-        </p>
+        <div className="text-[12.5px] text-gray-400">
+          {initialized ? '输入主密码解锁保险箱' : '主密码用于加密全部数据，本地派生、永不上传'}
+        </div>
       </div>
 
-      {initialized && hasBiometric && onBioUnlock && (
-        <Button variant="subtle" disabled={busy} onClick={runBio} className="w-full">
-          <Fingerprint size={16} /> 使用生物识别解锁
-          {compact && <span className="text-[11px] text-gray-400">（新标签页）</span>}
-        </Button>
-      )}
-
-      <form onSubmit={submit} className="flex flex-col gap-3">
-        <div>
-          <Label>主密码</Label>
-          <Input
-            type="password"
+      <form onSubmit={submit} className="mt-5 flex flex-col gap-3">
+        <div className="flex items-center gap-2.5 rounded-[11px] border-[1.5px] border-gray-200 bg-gray-50 px-3.5 focus-within:border-brand-500">
+          <Lock size={16} className="shrink-0 text-gray-400" />
+          <input
+            type={show ? 'text' : 'password'}
             autoFocus={!hasBiometric}
             value={pw}
             onChange={(e) => setPw(e.target.value)}
             placeholder="主密码"
+            className="h-[46px] flex-1 bg-transparent text-[15px] text-gray-900 outline-none placeholder:text-gray-400"
           />
+          <button
+            type="button"
+            onClick={() => setShow((s) => !s)}
+            className="shrink-0 text-gray-400 hover:text-gray-600"
+            title={show ? '隐藏' : '显示'}
+          >
+            {show ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
         </div>
         {!initialized && (
           <div>
             <Label>确认主密码</Label>
-            <Input
-              type="password"
-              value={pw2}
-              onChange={(e) => setPw2(e.target.value)}
-              placeholder="再次输入"
-            />
+            <Input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="再次输入" />
           </div>
         )}
 
         {err && <Banner tone="error">{err}</Banner>}
-
         {!initialized && (
           <Banner tone="warn">
             主密码无法找回。一旦遗忘，已加密的数据将<strong>永久无法解密</strong>
-            。请务必牢记，并定期做加密备份导出。
+            。请务必牢记并定期做加密备份导出。
           </Banner>
         )}
 
-        <Button type="submit" disabled={busy} className="w-full">
+        <button
+          type="submit"
+          disabled={busy}
+          className="flex h-[46px] items-center justify-center gap-2 rounded-[11px] bg-brand-600 text-sm font-semibold text-white shadow-[0_6px_16px_-4px_rgba(13,148,136,.42)] hover:bg-brand-700 disabled:opacity-50"
+        >
           {busy && <Loader2 size={16} className="animate-spin" />}
           {initialized ? '解锁' : '创建并解锁'}
-        </Button>
+        </button>
       </form>
 
+      {initialized && hasBiometric && onBioUnlock && (
+        <>
+          <div className="my-4 flex items-center gap-2.5">
+            <span className="h-px flex-1 bg-gray-200" />
+            <span className="text-[11px] text-gray-400">或</span>
+            <span className="h-px flex-1 bg-gray-200" />
+          </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={runBio}
+            className="flex h-11 items-center justify-center gap-2.5 rounded-[11px] border-[1.5px] border-gray-200 bg-surface text-[13px] font-semibold text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+          >
+            <Fingerprint size={18} className="text-brand-600" />
+            用生物识别解锁
+            {compact && <span className="text-[11px] text-gray-400">（新标签页）</span>}
+          </button>
+        </>
+      )}
+
       {!initialized && onAdopt && (
-        <div className="border-t border-gray-100 pt-3">
+        <div className="mt-4 border-t border-gray-100 pt-3">
           {!showAdopt ? (
-            <button
-              onClick={() => setShowAdopt(true)}
-              className="text-xs text-brand-600 hover:underline"
-            >
+            <button onClick={() => setShowAdopt(true)} className="text-xs font-semibold text-brand-600 hover:underline">
               已有同步保险箱？从同步服务器恢复 →
             </button>
           ) : (
             <div className="flex flex-col gap-2">
               <Label>同步服务器地址</Label>
-              <Input
-                value={serverUrl}
-                onChange={(e) => setServerUrl(e.target.value)}
-                placeholder="https://sync.example.com"
-              />
+              <Input value={serverUrl} onChange={(e) => setServerUrl(e.target.value)} placeholder="https://sync.example.com" />
               <Label>令牌</Label>
               <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder="Token" />
-              <Button variant="subtle" disabled={busy} onClick={runAdopt}>
+              <Button variant="outline" disabled={busy} onClick={runAdopt}>
                 拉取并恢复
               </Button>
               <p className="text-[11px] text-gray-400">
@@ -174,4 +187,7 @@ export function LockScreen({
       )}
     </div>
   );
+
+  if (compact) return card;
+  return <div className="flex min-h-screen items-center justify-center bg-gray-50 p-6">{card}</div>;
 }

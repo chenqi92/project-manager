@@ -245,7 +245,7 @@ export function DocsModal({
                     }}
                     className={cx(
                       'mb-0.5 flex w-full items-center gap-1.5 truncate rounded-lg px-2 py-1.5 text-left text-sm',
-                      activeId === d.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-100',
+                      activeId === d.id ? 'bg-pribg text-prid' : 'hover:bg-gray-100',
                     )}
                   >
                     <FileText size={13} className="shrink-0 text-gray-400" />
@@ -292,7 +292,7 @@ export function DocsModal({
                         onClick={() => setShowSearch((s) => !s)}
                         className={cx(
                           'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                          showSearch ? 'bg-brand-50 text-brand-700' : 'text-gray-500 hover:bg-gray-100',
+                          showSearch ? 'bg-pribg text-prid' : 'text-gray-500 hover:bg-gray-100',
                         )}
                       >
                         <Search size={15} />
@@ -303,7 +303,7 @@ export function DocsModal({
                         onClick={() => setShowToc((s) => !s)}
                         className={cx(
                           'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                          showToc ? 'bg-brand-50 text-brand-700' : 'text-gray-500 hover:bg-gray-100',
+                          showToc ? 'bg-pribg text-prid' : 'text-gray-500 hover:bg-gray-100',
                         )}
                       >
                         <List size={15} />

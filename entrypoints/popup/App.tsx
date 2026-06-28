@@ -27,6 +27,8 @@ import { getUsage, recordUse } from '@/lib/usage';
 import type { CapturePending, EnvKind } from '@/lib/types';
 import { ENV_KIND_COLORS, ENV_KIND_LABELS, linkUrls, produce } from '@/lib/vault-ops';
 
+const POPUP_RESULT_LIMIT = 30;
+
 export default function App() {
   const vault = useVault();
   const { status, data, loading } = vault;
@@ -82,20 +84,31 @@ export default function App() {
     () => (data && tab?.url ? matchForUrl(data, tab.url) : []),
     [data, tab],
   );
-  const results = useMemo(
+  const rawResults = useMemo(
     () => (data && query.trim() ? search(data, query) : []),
     [data, query],
   );
+  const results = useMemo(() => rawResults.slice(0, POPUP_RESULT_LIMIT), [rawResults]);
+  const hiddenResultCount = Math.max(0, rawResults.length - results.length);
   const envSwitch = useMemo(
     () => (data && tab?.url ? envSwitchTargets(data, tab.url) : null),
     [data, tab],
   );
   // 无当前站点匹配时(如新标签页)的兜底：收藏 + 最近使用,当作快捷启动器。
+  // 收藏只展示「每个收藏链接一个代表账号」并限量，避免收藏的项目把整列账号刷屏。
   const favorites = useMemo(() => {
     if (!data) return [];
     const favIds = new Set(data.projects.filter((p) => p.favorite).map((p) => p.id));
     if (favIds.size === 0) return [];
-    return flatten(data).filter((e) => favIds.has(e.projectId));
+    const seenLink = new Set<string>();
+    const out: FlatEntry[] = [];
+    for (const e of flatten(data)) {
+      if (!favIds.has(e.projectId) || seenLink.has(e.linkId)) continue;
+      seenLink.add(e.linkId);
+      out.push(e);
+      if (out.length >= 8) break;
+    }
+    return out;
   }, [data]);
   const recent = useMemo(() => {
     if (!data) return [];
@@ -244,11 +257,13 @@ export default function App() {
   }
 
   return (
-    <div className="flex max-h-[560px] w-[380px] flex-col bg-gray-50">
+    <div className="relative w-[380px] bg-gray-50">
       {/* header */}
-      <div className="flex items-center gap-2 border-b border-gray-200 bg-surface px-4 py-2.5">
-        <ShieldCheck size={18} className="text-brand-600" />
-        <span className="text-sm font-semibold text-gray-900">项目环境管家</span>
+      <div className="flex items-center gap-2.5 border-b border-gray-200 bg-surface px-4 py-2.5">
+        <span className="flex h-6 w-6 items-center justify-center rounded-[7px] bg-brand-600 text-white">
+          <ShieldCheck size={14} />
+        </span>
+        <span className="text-[13px] font-bold text-gray-900">项目环境管家</span>
         <div className="ml-auto flex items-center gap-1">
           {status?.syncEnabled && (
             <button
@@ -334,28 +349,33 @@ export default function App() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-3">
+      <div className="max-h-[440px] overflow-auto p-3">
         {query.trim() ? (
-          <Section title={`搜索结果（${results.length}）`}>
+          <Section
+            title={`搜索结果（${rawResults.length}${hiddenResultCount ? `，显示前 ${POPUP_RESULT_LIMIT}` : ''}）`}
+          >
             {results.length === 0 ? (
               <Empty text="没有匹配的条目" />
             ) : (
-              results.map((e) => (
-                <Row
-                  key={e.accountId}
-                  entry={e}
-                  canFill={!!tab?.url && originsMatch(e.url, tab.url)}
-                  onFill={doFill}
-                  onCopy={copy}
-                  onOpenLogin={openLogin}
-                />
-              ))
+              <>
+                {results.map((e) => (
+                  <Row
+                    key={e.accountId}
+                    entry={e}
+                    canFill={!!tab?.url && originsMatch(e.url, tab.url)}
+                    onFill={doFill}
+                    onCopy={copy}
+                    onOpenLogin={openLogin}
+                  />
+                ))}
+                {hiddenResultCount > 0 && <MoreHint count={hiddenResultCount} />}
+              </>
             )}
           </Section>
         ) : (
           <>
             {matched.length > 0 ? (
-              <Section title="当前网站">
+              <Section title={`当前网站（${matched.length}）`}>
                 {matched.map((e) => (
                   <Row
                     key={e.accountId}
@@ -371,7 +391,7 @@ export default function App() {
             ) : favorites.length > 0 || recent.length > 0 ? (
               <div className="flex flex-col gap-3">
                 {favorites.length > 0 && (
-                  <Section title="收藏">
+                  <Section title={`收藏（${favorites.length}）`}>
                     {favorites.map((e) => (
                       <Row
                         key={e.accountId}
@@ -385,7 +405,7 @@ export default function App() {
                   </Section>
                 )}
                 {recent.length > 0 && (
-                  <Section title="最近使用">
+                  <Section title={`最近使用（${recent.length}）`}>
                     {recent.map((e) => (
                       <Row
                         key={e.accountId}
@@ -463,23 +483,28 @@ export default function App() {
               </div>
             )}
 
-            <div className="mt-3 flex flex-col gap-2">
-              {tab?.url && (
-                <Button variant="subtle" className="w-full" onClick={saveCurrentPage}>
-                  <Plus size={15} /> 保存当前页到保险箱
-                </Button>
-              )}
-              <Button
-                variant="ghost"
-                className="w-full"
-                onClick={() => browser.runtime.openOptionsPage()}
-              >
-                打开完整管理界面
-              </Button>
-            </div>
           </>
         )}
       </div>
+
+      {!query.trim() && (
+        <div className="shrink-0 border-t border-gray-200 bg-surface p-3">
+          <div className="flex gap-2">
+            {tab?.url && (
+              <Button variant="subtle" className="min-w-0 flex-1" onClick={saveCurrentPage}>
+                <Plus size={15} /> 保存当前页
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              className="min-w-0 flex-1"
+              onClick={() => browser.runtime.openOptionsPage()}
+            >
+              管理全部
+            </Button>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 mx-auto w-fit rounded-lg bg-neutral-800/95 px-3 py-1.5 text-xs text-white">
@@ -515,6 +540,14 @@ function Empty({ text }: { text: string }) {
   );
 }
 
+function MoreHint({ count }: { count: number }) {
+  return (
+    <div className="rounded-lg border border-dashed border-gray-200 bg-surface px-3 py-2 text-center text-xs text-gray-400">
+      还有 {count} 条，继续输入可缩小范围
+    </div>
+  );
+}
+
 function Row({
   entry,
   canFill,
@@ -534,28 +567,44 @@ function Row({
   return (
     <div
       className={cx(
-        'rounded-xl border bg-surface p-3',
+        'rounded-xl border bg-surface p-2.5',
         highlight ? 'border-brand-200 ring-1 ring-brand-100' : 'border-gray-200',
       )}
     >
-      <div className="flex items-center gap-1.5">
-        <span className="truncate text-sm font-medium text-gray-900">
-          {entry.linkName || entry.projectName}
-        </span>
-        <span
-          className={cx(
-            'rounded px-1.5 py-0.5 text-[10px] font-medium',
-            ENV_KIND_COLORS[entry.envKind as EnvKind] ?? ENV_KIND_COLORS.other,
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-sm font-semibold text-gray-900">
+              {entry.linkName || entry.projectName}
+            </span>
+            <span
+              className={cx(
+                'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                ENV_KIND_COLORS[entry.envKind as EnvKind] ?? ENV_KIND_COLORS.other,
+              )}
+            >
+              {ENV_KIND_LABELS[entry.envKind as EnvKind] ?? entry.envName}
+            </span>
+            {entry.accountLabel && (
+              <span className="truncate text-xs text-gray-400">· {entry.accountLabel}</span>
+            )}
+          </div>
+          <div className="mt-0.5 truncate text-xs text-gray-400">
+            {entry.projectName} · {entry.envName}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {canFill && (
+            <ActionBtn title="填充到当前页" onClick={() => onFill(entry)} primary>
+              <LogIn size={13} /> 填充
+            </ActionBtn>
           )}
-        >
-          {ENV_KIND_LABELS[entry.envKind as EnvKind] ?? entry.envName}
-        </span>
-        {entry.accountLabel && (
-          <span className="truncate text-xs text-gray-400">· {entry.accountLabel}</span>
-        )}
-      </div>
-      <div className="mt-0.5 truncate text-xs text-gray-400">
-        {entry.projectName} · {entry.envName}
+          {entry.url && (
+            <ActionBtn title="打开并登录" onClick={() => onOpenLogin(entry)}>
+              <ExternalLink size={13} /> 登录
+            </ActionBtn>
+          )}
+        </div>
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-2 text-xs">
@@ -577,7 +626,7 @@ function Row({
           </IconBtn>
           {entry.url && (
             <IconBtn
-              title="打开链接"
+              title="只打开链接"
               onClick={() => browser.tabs.create({ url: entry.url })}
             >
               <ExternalLink size={15} />
@@ -591,17 +640,34 @@ function Row({
           <TotpBadge secret={entry.totp} onCopy={(c) => onCopy(c, '验证码')} />
         </div>
       )}
-      {canFill && (
-        <Button className="mt-2 w-full" onClick={() => onFill(entry)}>
-          <LogIn size={15} /> 填充到当前页
-        </Button>
-      )}
-      {entry.url && (
-        <Button variant="subtle" className="mt-1.5 w-full" onClick={() => onOpenLogin(entry)}>
-          <ExternalLink size={15} /> 打开并登录
-        </Button>
-      )}
     </div>
+  );
+}
+
+function ActionBtn({
+  title,
+  onClick,
+  children,
+  primary,
+}: {
+  title: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  primary?: boolean;
+}) {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      className={cx(
+        'inline-flex h-7 items-center justify-center gap-1 rounded-md px-2 text-[11px] font-semibold transition',
+        primary
+          ? 'bg-brand-600 text-white hover:bg-brand-700'
+          : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
