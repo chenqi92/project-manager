@@ -192,7 +192,7 @@ export interface RepoGroupNode {
   repoCount: number;
 }
 
-const ROOT_PROJECT = '（直属仓库）';
+export const ROOT_PROJECT = '（直属仓库）';
 
 /**
  * 把一个组织的扁平仓库列表组织成「子组织 → 项目 → 仓库」三层。

@@ -63,6 +63,7 @@ export function Home({
   const [configId, setConfigId] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [width, setWidth] = useState(0);
+  const [hostPermissionVersion, setHostPermissionVersion] = useState(0);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const roRef = useRef<ResizeObserver | null>(null);
@@ -266,6 +267,7 @@ export function Home({
         d.settings.weatherEnabled = true;
       }),
     weatherEnabled: data.settings.weatherEnabled === true,
+    hostPermissionVersion,
   };
 
   const layout = drag ? drag.preview : layoutForCols(widgets, cols);
@@ -397,12 +399,16 @@ export function Home({
               widgets.map((w) => {
                 const l = layoutById.get(w.id);
                 if (!l) return null;
-                const meta = REGISTRY[w.type];
                 const dragged = drag?.id === w.id;
                 const left = dragged ? drag!.live.left : pxLeft(l.x);
                 const top = dragged ? drag!.live.top : pxTop(l.y);
                 const wpx = dragged ? drag!.live.w : pxW(l.w);
                 const hpx = dragged ? drag!.live.h : pxH(l.h);
+                const showConfig = true;
+                const showActions = canEdit || showConfig;
+                const privacyMode = w.config?.privacyMode === 'soft' || w.config?.privacyMode === 'strong'
+                  ? w.config.privacyMode
+                  : 'off';
                 return (
                   <div
                     key={w.id}
@@ -420,34 +426,52 @@ export function Home({
                     <div
                       onPointerDown={canEdit ? (e) => beginDrag(e, w.id, 'move') : undefined}
                       style={{ ...glass, touchAction: canEdit ? 'none' : undefined }}
+                      tabIndex={privacyMode !== 'off' && !canEdit ? 0 : undefined}
                       className={cx(
                         'tile-glass relative flex h-full flex-col overflow-hidden',
+                        privacyMode !== 'off' && 'privacy-tile',
+                        privacyMode === 'soft' && 'privacy-soft',
+                        privacyMode === 'strong' && 'privacy-strong',
                         canEdit && 'cursor-move ring-1 ring-brand-300/60',
                         dragged && 'scale-[1.01] shadow-2xl ring-2 ring-brand-400',
                       )}
                     >
-                      {canEdit && (
-                        <>
-                          <div className="absolute right-1.5 top-1.5 z-10 flex items-center gap-1">
-                            {meta.configurable && (
-                              <button
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onClick={() => setConfigId(w.id)}
-                                title="配置磁贴"
-                                className="flex h-[22px] w-[22px] items-center justify-center rounded-[7px] border border-gray-200 bg-surface text-gray-500 hover:text-gray-800"
-                              >
-                                <Settings2 size={13} />
-                              </button>
-                            )}
+                      {showActions && (
+                        <div className="absolute right-1.5 top-1.5 z-20 flex items-center gap-1">
+                          {showConfig && (
                             <button
+                              type="button"
                               onPointerDown={(e) => e.stopPropagation()}
-                              onClick={() => removeWidget(w.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfigId(w.id);
+                              }}
+                              title="配置磁贴"
+                              aria-label="配置磁贴"
+                              className="flex h-[22px] w-[22px] cursor-pointer items-center justify-center rounded-[7px] border border-gray-200 bg-surface text-gray-500 shadow-sm hover:text-gray-800"
+                            >
+                              <Settings2 size={13} />
+                            </button>
+                          )}
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeWidget(w.id);
+                              }}
                               title="移除磁贴"
-                              className="flex h-[22px] w-[22px] items-center justify-center rounded-[7px] bg-dangerbg text-danger hover:brightness-95"
+                              aria-label="移除磁贴"
+                              className="flex h-[22px] w-[22px] cursor-pointer items-center justify-center rounded-[7px] bg-dangerbg text-danger hover:brightness-95"
                             >
                               <X size={13} />
                             </button>
-                          </div>
+                          )}
+                        </div>
+                      )}
+                      {canEdit && (
+                        <>
                           <button
                             onPointerDown={(e) => {
                               e.stopPropagation();
@@ -471,7 +495,9 @@ export function Home({
                       )}
                       <div
                         className={cx(
-                          'no-scrollbar min-h-0 flex-1 overflow-auto p-4',
+                          'privacy-content no-scrollbar min-h-0 flex-1 overflow-auto p-4',
+                          showConfig && !canEdit && 'pr-10',
+                          canEdit && 'pr-[4.5rem]',
                           canEdit && 'pointer-events-none select-none',
                         )}
                       >
@@ -528,6 +554,7 @@ export function Home({
           widget={configWidget}
           data={data}
           onClose={() => setConfigId(null)}
+          onHostPermissionChange={() => setHostPermissionVersion((v) => v + 1)}
           onConfig={(cfg) => updateConfig(configWidget.id, cfg)}
         />
       )}

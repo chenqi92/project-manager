@@ -188,4 +188,32 @@ describe('Home 渲染冒烟', () => {
     expect(container.textContent ?? '').toContain('还没有磁贴');
     cleanup();
   });
+
+  it('按磁贴配置应用隐私显示样式', () => {
+    const data = fixture();
+    const widgets = data.settings.dashboard?.boards?.[0]?.widgets;
+    const first = widgets?.[0];
+    const second = widgets?.[1];
+    if (first) first.config = { privacyMode: 'strong' };
+    if (second) second.config = { privacyMode: 'soft' };
+    const props = {
+      data,
+      onUpdate: vi.fn(async () => {}),
+      syncEnabled: false,
+      onOpenExport: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onOpenCnb: vi.fn(),
+      onCopy: vi.fn(),
+      onOpenLogin: vi.fn(),
+    };
+    const { container, cleanup } = mount(
+      <DialogProvider>
+        <Home {...props} />
+      </DialogProvider>,
+    );
+    expect(container.querySelector('.privacy-tile.privacy-strong')).not.toBeNull();
+    expect(container.querySelector('.privacy-tile.privacy-soft')).not.toBeNull();
+    expect(container.querySelector('.privacy-content')).not.toBeNull();
+    cleanup();
+  });
 });

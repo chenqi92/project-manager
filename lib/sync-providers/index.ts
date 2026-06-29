@@ -19,6 +19,7 @@ export function providerFor(target: SyncTarget): SyncProvider {
       return new WebDavProvider(target);
     case 'github':
     case 'gitlab':
+    case 'gitee':
       return createGitProvider(target);
     case 'google-drive':
     case 'onedrive':
@@ -40,6 +41,8 @@ export function originsFor(target: SyncTarget): string[] {
       return [originPattern(target.apiBase || 'https://api.github.com')];
     case 'gitlab':
       return [originPattern(target.apiBase || 'https://gitlab.com/api/v4')];
+    case 'gitee':
+      return [originPattern(target.apiBase || 'https://gitee.com/api/v5')];
     case 'google-drive':
       return [
         'https://www.googleapis.com/*',
@@ -81,6 +84,7 @@ export function migrateSyncSettings(data: VaultData): boolean {
       },
     ];
     delete s.sync;
+    s.updatedAt = Date.now();
     return true;
   }
   if (!s.syncTargets) {
@@ -120,6 +124,7 @@ function summarize(t: SyncTarget): string {
       return safeHost(t.url) + '/' + (t.filePath || 'vault.enc');
     case 'github':
     case 'gitlab':
+    case 'gitee':
       return `${t.owner}/${t.repo} @ ${t.branch}`;
     case 'google-drive':
       return 'Google Drive · 应用数据目录';

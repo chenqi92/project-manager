@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarDays,
+  BarChart3,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -38,14 +39,17 @@ import { generateTotp, parseTotp } from '@/lib/totp';
 import { getUsage } from '@/lib/usage';
 import { ENV_KIND_COLORS, ENV_KIND_LABELS, gitCloneCommand, linkUrls } from '@/lib/vault-ops';
 import { fetchWeather, geocodeCity, weatherLabel, type WeatherNow } from '@/lib/weather';
+import { stockMoveColor } from '@/lib/stock-colors';
 import {
   fetchHotlist,
   fetchQuotes,
   hasHost,
+  HOTLIST_SOURCES,
   hotlistUrl,
   stocksProbeUrl,
   type HotItem,
   type Quote,
+  type QuoteBar,
 } from '@/lib/feeds';
 import { CNB_API_BASE, loadOrgRepos, type CnbRepo } from '@/lib/cnb';
 import type { DashWidget, Environment, GitRepo, ProjectDoc, VaultData } from '@/lib/types';
@@ -77,8 +81,138 @@ function projectFilter<T extends { id: string; favorite?: boolean }>(
   return out;
 }
 
+function feedErrorMessage(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  return /failed to fetch|networkerror|load failed|abort|timeout/i.test(raw)
+    ? '数据源暂时不可用（第三方免费接口可能变动或限流）。点右上角 ⚙ 换个来源，或填自定义源。'
+    : raw;
+}
+
+function formatPrice(value: number, currency?: string): string {
+  const price = value.toLocaleString(undefined, { maximumFractionDigits: value >= 100 ? 2 : 3 });
+  return currency ? `${price} ${currency}` : price;
+}
+
+function formatShortDate(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function TilePager({
+  label,
+  index,
+  total,
+  onPrev,
+  onNext,
+}: {
+  label: string;
+  index: number;
+  total: number;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  if (total <= 1) return null;
+  return (
+    <div className="flex shrink-0 items-center gap-1 text-[10px] text-gray-400">
+      <button
+        type="button"
+        onClick={onPrev}
+        title="上一页"
+        className="flex h-6 w-6 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+      >
+        <ChevronLeft size={13} />
+      </button>
+      <span className="max-w-[92px] truncate rounded-md bg-gray-50 px-1.5 py-0.5 font-medium text-gray-500">
+        {label} {index + 1}/{total}
+      </span>
+      <button
+        type="button"
+        onClick={onNext}
+        title="下一页"
+        className="flex h-6 w-6 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+      >
+        <ChevronRight size={13} />
+      </button>
+    </div>
+  );
+}
+
+function KlineChart({ bars, symbol }: { bars: QuoteBar[]; symbol: string }) {
+  const visible = bars.slice(-45);
+  if (visible.length < 2) return <Empty>暂无 K 线数据</Empty>;
+
+  const width = 320;
+  const height = 146;
+  const left = 38;
+  const right = 8;
+  const top = 10;
+  const bottom = 22;
+  const plotW = width - left - right;
+  const plotH = height - top - bottom;
+  const prices = visible.flatMap((b) => [b.high, b.low]);
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const range = Math.max(0.000001, max - min);
+  const y = (v: number) => top + ((max - v) / range) * plotH;
+  const step = plotW / visible.length;
+  const candleW = Math.max(2, Math.min(8, step * 0.55));
+  const ticks = [max, min + range / 2, min];
+  const first = visible[0]!;
+  const last = visible[visible.length - 1]!;
+
+  return (
+    <div className="min-h-0">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-[150px] w-full overflow-visible">
+        {ticks.map((t) => (
+          <g key={t}>
+            <line
+              x1={left}
+              x2={width - right}
+              y1={y(t)}
+              y2={y(t)}
+              stroke="var(--color-gray-100)"
+              strokeWidth="1"
+            />
+            <text x={0} y={y(t) + 3} fill="var(--color-gray-400)" fontSize="9">
+              {t.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            </text>
+          </g>
+        ))}
+        {visible.map((b, i) => {
+          const up = b.close >= b.open;
+          const color = stockMoveColor(symbol, up);
+          const x = left + step * i + step / 2;
+          const bodyTop = Math.min(y(b.open), y(b.close));
+          const bodyH = Math.max(1.5, Math.abs(y(b.open) - y(b.close)));
+          return (
+            <g key={b.time}>
+              <line x1={x} x2={x} y1={y(b.high)} y2={y(b.low)} stroke={color} strokeWidth="1.2" />
+              <rect
+                x={x - candleW / 2}
+                y={bodyTop}
+                width={candleW}
+                height={bodyH}
+                rx="1"
+                fill={up ? color : 'transparent'}
+                stroke={color}
+                strokeWidth="1.2"
+              />
+            </g>
+          );
+        })}
+        <text x={left} y={height - 4} fill="var(--color-gray-400)" fontSize="9">
+          {formatShortDate(first.time)}
+        </text>
+        <text x={width - right} y={height - 4} fill="var(--color-gray-400)" fontSize="9" textAnchor="end">
+          {formatShortDate(last.time)}
+        </text>
+      </svg>
+    </div>
+  );
+}
+
 // --- 统计 -------------------------------------------------------------------
-export function StatsWidget({ data }: WidgetProps) {
+export function StatsWidget({ widget, data }: WidgetProps) {
   const entries = flatten(data);
   const envs = data.projects.reduce((n, p) => n + p.environments.length, 0);
   const links = data.projects.reduce(
@@ -95,7 +229,7 @@ export function StatsWidget({ data }: WidgetProps) {
     { label: '验证码', value: totp },
     { label: '待办', value: pending, accent: pending > 0 },
   ];
-  return (
+  const grid = (
     <div className="grid h-full min-h-0 grid-cols-6 gap-2.5">
       {cells.map((c) => (
         <div key={c.label} className="flex min-w-0 flex-col justify-center rounded-[10px] bg-gray-50 px-2 py-2">
@@ -112,10 +246,17 @@ export function StatsWidget({ data }: WidgetProps) {
       ))}
     </div>
   );
+  if (!widget.config?.label) return grid;
+  return (
+    <>
+      <WidgetTitle icon={<BarChart3 size={15} />}>{widget.config.label}</WidgetTitle>
+      <div className="h-[calc(100%-2rem)] min-h-0">{grid}</div>
+    </>
+  );
 }
 
 // --- 待办（due-aware）-------------------------------------------------------
-export function TodosWidget({ data, ctx }: WidgetProps) {
+export function TodosWidget({ widget, data, ctx }: WidgetProps) {
   const now = Date.now();
   const all = flatMemos(data.projects).filter((m) => !m.done);
   const todos = sortMemos(all).slice(0, 30);
@@ -134,7 +275,7 @@ export function TodosWidget({ data, ctx }: WidgetProps) {
           )
         }
       >
-        待办
+        {widget.config?.label || '待办'}
       </WidgetTitle>
       {todos.length === 0 ? (
         <Empty>没有待办，去项目里添加</Empty>
@@ -157,7 +298,7 @@ export function TodosWidget({ data, ctx }: WidgetProps) {
 }
 
 // --- 日历 -------------------------------------------------------------------
-export function CalendarWidget({ data }: WidgetProps) {
+export function CalendarWidget({ widget, data }: WidgetProps) {
   const now = new Date();
   const [cursor, setCursor] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [selected, setSelected] = useState<string | null>(null);
@@ -200,7 +341,7 @@ export function CalendarWidget({ data }: WidgetProps) {
           </>
         }
       >
-        {cursor.y} 年 {cursor.m + 1} 月
+        {widget.config?.label || `${cursor.y} 年 ${cursor.m + 1} 月`}
       </WidgetTitle>
       <div className="grid grid-cols-7 gap-0.5 text-center text-[10px] text-gray-400">
         {['日', '一', '二', '三', '四', '五', '六'].map((w) => (
@@ -477,14 +618,14 @@ function TotpRow({
 }
 
 // --- 密码健康度 -------------------------------------------------------------
-export function HealthWidget({ data }: WidgetProps) {
+export function HealthWidget({ widget, data }: WidgetProps) {
   const report = useMemo(() => audit(data), [data]);
   const problem = report.issues.length;
   const score = report.total === 0 ? 100 : Math.round(((report.total - problem) / report.total) * 100);
   const ringColor = score >= 80 ? 'var(--color-emerald-500)' : score >= 50 ? 'var(--color-amber-500)' : 'var(--color-rose-500)';
   return (
     <>
-      <WidgetTitle icon={<ShieldCheck size={15} />}>密码健康度</WidgetTitle>
+      <WidgetTitle icon={<ShieldCheck size={15} />}>{widget.config?.label || '密码健康度'}</WidgetTitle>
       {report.total === 0 ? (
         <Empty>还没有密码可评估</Empty>
       ) : (
@@ -535,7 +676,7 @@ export function HealthWidget({ data }: WidgetProps) {
 }
 
 // --- 最近使用 ---------------------------------------------------------------
-export function RecentWidget({ data, ctx }: WidgetProps) {
+export function RecentWidget({ widget, data, ctx }: WidgetProps) {
   const [usage, setUsage] = useState<Record<string, number>>({});
   useEffect(() => {
     let active = true;
@@ -555,7 +696,7 @@ export function RecentWidget({ data, ctx }: WidgetProps) {
   }, [data, usage]);
   return (
     <>
-      <WidgetTitle icon={<Clock size={15} />}>最近使用</WidgetTitle>
+      <WidgetTitle icon={<Clock size={15} />}>{widget.config?.label || '最近使用'}</WidgetTitle>
       {rows.length === 0 ? (
         <Empty>还没有使用记录</Empty>
       ) : (
@@ -646,13 +787,13 @@ export function ReposWidget({ widget, data, ctx }: WidgetProps) {
 }
 
 // --- 标签云 -----------------------------------------------------------------
-export function TagsWidget({ data }: WidgetProps) {
+export function TagsWidget({ widget, data }: WidgetProps) {
   const counts = new Map<string, number>();
   for (const p of data.projects) for (const t of p.tags ?? []) counts.set(t, (counts.get(t) ?? 0) + 1);
   const tags = [...counts.entries()].sort((a, b) => b[1] - a[1]);
   return (
     <>
-      <WidgetTitle icon={<Hash size={15} />}>标签云</WidgetTitle>
+      <WidgetTitle icon={<Hash size={15} />}>{widget.config?.label || '标签云'}</WidgetTitle>
       {tags.length === 0 ? (
         <Empty>项目还没有标签</Empty>
       ) : (
@@ -740,7 +881,7 @@ export function ChangedWidget({ widget, data }: WidgetProps) {
 }
 
 // --- 备份 / 同步健康 --------------------------------------------------------
-export function BackupWidget({ data, ctx }: WidgetProps) {
+export function BackupWidget({ widget, data, ctx }: WidgetProps) {
   const now = Date.now();
   const targets = data.settings.syncTargets ?? [];
   const enabled = targets.filter((t) => t.enabled).length;
@@ -751,7 +892,7 @@ export function BackupWidget({ data, ctx }: WidgetProps) {
   const syncTone = targets.length === 0 ? 'muted' : enabled > 0 ? 'ok' : 'muted';
   return (
     <>
-      <WidgetTitle icon={<ShieldCheck size={15} />}>备份 / 同步</WidgetTitle>
+      <WidgetTitle icon={<ShieldCheck size={15} />}>{widget.config?.label || '备份 / 同步'}</WidgetTitle>
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2 rounded-lg border border-gray-200/70 bg-gray-50/60 px-2.5 py-2 text-xs">
           <StatusDot tone={backupTone} title="本地加密备份状态" />
@@ -907,48 +1048,87 @@ export function HotlistWidget({ widget, ctx }: WidgetProps) {
   const customUrl = widget.config?.sourceUrl;
   const count = widget.config?.count ?? 10;
   const url = hotlistUrl(source, customUrl);
+  const sourceDefs = useMemo(() => {
+    if (source === 'custom') {
+      return url ? [{ key: 'custom', name: '自定义', url }] : [];
+    }
+    const selected = HOTLIST_SOURCES.findIndex((s) => s.key === source);
+    const start = selected >= 0 ? selected : 0;
+    return [...HOTLIST_SOURCES.slice(start), ...HOTLIST_SOURCES.slice(0, start)];
+  }, [source, url]);
+  const sourceKey = sourceDefs.map((s) => s.url).join('|');
+  const [page, setPage] = useState(0);
   const [state, setState] = useState<{
     loading: boolean;
-    items?: HotItem[];
+    pages?: Array<{ key: string; name: string; items: HotItem[]; err?: string }>;
     err?: string;
     needAuth?: boolean;
   }>({ loading: false });
 
   useEffect(() => {
-    if (!enabled || !url) {
+    setPage(0);
+  }, [sourceKey]);
+
+  useEffect(() => {
+    if (!enabled || sourceDefs.length === 0) {
       setState({ loading: false });
       return;
     }
     let cancelled = false;
     setState({ loading: true });
     (async () => {
-      if (!(await hasHost(url))) {
+      const hosts = await Promise.all(sourceDefs.map((s) => hasHost(s.url)));
+      if (hosts.some((ok) => !ok)) {
         if (!cancelled) setState({ loading: false, needAuth: true });
         return;
       }
       try {
-        const items = await fetchHotlist(url, count);
-        if (!cancelled) setState({ loading: false, items });
+        const pages = await Promise.all(
+          sourceDefs.map(async (s) => {
+            try {
+              return { key: s.key, name: s.name, items: await fetchHotlist(s.url, count) };
+            } catch (e) {
+              return { key: s.key, name: s.name, items: [], err: feedErrorMessage(e) };
+            }
+          }),
+        );
+        if (!cancelled) setState({ loading: false, pages });
       } catch (e) {
-        const raw = e instanceof Error ? e.message : String(e);
-        // fetch 网络级失败（源不可用/限流/证书等）给出可操作提示，而非晦涩的 "Failed to fetch"。
-        const friendly = /failed to fetch|networkerror|load failed|abort|timeout/i.test(raw)
-          ? '数据源暂时不可用（第三方免费接口可能变动或限流）。点右上角 ⚙ 换个来源，或填自定义源（可自建 DailyHotApi）。'
-          : raw;
-        if (!cancelled) setState({ loading: false, err: friendly });
+        if (!cancelled) setState({ loading: false, err: feedErrorMessage(e) });
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [enabled, url, count]);
+  }, [enabled, sourceKey, count, ctx.hostPermissionVersion]);
+
+  const pages = state.pages ?? [];
+  const activePage = pages[Math.min(page, Math.max(0, pages.length - 1))];
+  const changePage = (delta: number) =>
+    setPage((p) => {
+      const total = Math.max(1, pages.length);
+      return (p + delta + total) % total;
+    });
 
   return (
     <>
-      <WidgetTitle icon={<Flame size={15} />}>{widget.config?.label || '今日热榜'}</WidgetTitle>
+      <WidgetTitle
+        icon={<Flame size={15} />}
+        right={
+          <TilePager
+            label={activePage?.name ?? '热榜'}
+            index={Math.min(page, Math.max(0, pages.length - 1))}
+            total={pages.length}
+            onPrev={() => changePage(-1)}
+            onNext={() => changePage(1)}
+          />
+        }
+      >
+        {widget.config?.label || '今日热榜'}
+      </WidgetTitle>
       {!enabled ? (
         <EnableNet onEnable={ctx.onEnableWeather} what="热榜" />
-      ) : !url ? (
+      ) : sourceDefs.length === 0 ? (
         <Empty>点磁贴右上角 ⚙ 选择来源</Empty>
       ) : state.needAuth ? (
         <Empty>点磁贴右上角 ⚙ 授权数据源后显示</Empty>
@@ -956,14 +1136,16 @@ export function HotlistWidget({ widget, ctx }: WidgetProps) {
         <Empty>加载中…</Empty>
       ) : state.err ? (
         <p className="py-4 text-center text-xs text-rose-500">{state.err}</p>
-      ) : state.items && state.items.length > 0 ? (
+      ) : activePage?.err ? (
+        <p className="py-4 text-center text-xs text-rose-500">{activePage.err}</p>
+      ) : activePage?.items && activePage.items.length > 0 ? (
         <div className="flex flex-col">
-          {state.items.map((it, i) => (
+          {activePage.items.map((it, i) => (
             <button
               key={i}
               onClick={() => it.url && ctx.onOpenTab(it.url)}
               disabled={!it.url}
-              className="flex items-center gap-2.5 border-t border-gray-100 py-1.5 text-left first:border-t-0 disabled:cursor-default"
+              className="flex cursor-pointer items-center gap-2.5 border-t border-gray-100 py-1.5 text-left first:border-t-0 hover:bg-gray-50 disabled:cursor-default disabled:hover:bg-transparent"
             >
               <span
                 className={cx(
@@ -996,12 +1178,17 @@ export function StocksWidget({ widget, ctx }: WidgetProps) {
     .filter(Boolean);
   const probe = stocksProbeUrl(source, customUrl);
   const key = symbols.join(',');
+  const [page, setPage] = useState(0);
   const [state, setState] = useState<{
     loading: boolean;
     quotes?: Quote[];
     err?: string;
     needAuth?: boolean;
   }>({ loading: false });
+
+  useEffect(() => {
+    setPage(0);
+  }, [key, source, customUrl]);
 
   useEffect(() => {
     if (!enabled || symbols.length === 0 || !probe) {
@@ -1026,11 +1213,36 @@ export function StocksWidget({ widget, ctx }: WidgetProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, key, source, customUrl, probe]);
+  }, [enabled, key, source, customUrl, probe, ctx.hostPermissionVersion]);
+
+  const quotes = state.quotes ?? [];
+  const pageCount = quotes.length > 0 ? quotes.length + 1 : 1;
+  const activePage = Math.min(page, pageCount - 1);
+  const activeQuote = activePage > 0 ? quotes[activePage - 1] : undefined;
+  const changePage = (delta: number) =>
+    setPage((p) => {
+      const total = Math.max(1, pageCount);
+      return (p + delta + total) % total;
+    });
 
   return (
     <>
-      <WidgetTitle icon={<TrendingUp size={15} />}>{widget.config?.label || '股票行情'}</WidgetTitle>
+      <WidgetTitle
+        icon={<TrendingUp size={15} />}
+        right={
+          state.quotes && state.quotes.length > 0 ? (
+            <TilePager
+              label={activeQuote?.symbol ?? '总览'}
+              index={activePage}
+              total={pageCount}
+              onPrev={() => changePage(-1)}
+              onNext={() => changePage(1)}
+            />
+          ) : null
+        }
+      >
+        {widget.config?.label || '股票行情'}
+      </WidgetTitle>
       {!enabled ? (
         <EnableNet onEnable={ctx.onEnableWeather} what="股票行情" />
       ) : symbols.length === 0 ? (
@@ -1041,14 +1253,18 @@ export function StocksWidget({ widget, ctx }: WidgetProps) {
         <Empty>加载中…</Empty>
       ) : state.err ? (
         <p className="py-4 text-center text-xs text-rose-500">{state.err}</p>
-      ) : state.quotes && state.quotes.length > 0 ? (
+      ) : activeQuote ? (
+        <StockChartPage quote={activeQuote} />
+      ) : quotes.length > 0 ? (
         <div className="flex flex-col">
-          {state.quotes.map((q) => {
+          {quotes.map((q, i) => {
             const up = q.changePct >= 0;
             return (
-              <div
+              <button
                 key={q.symbol}
-                className="flex items-center gap-2.5 border-t border-gray-100 py-2 first:border-t-0"
+                onClick={() => setPage(i + 1)}
+                disabled={!q.ok}
+                className="flex cursor-pointer items-center gap-2.5 border-t border-gray-100 py-2 text-left first:border-t-0 hover:bg-gray-50 disabled:cursor-default disabled:hover:bg-transparent"
               >
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[12.5px] font-semibold text-gray-800">
@@ -1059,11 +1275,9 @@ export function StocksWidget({ widget, ctx }: WidgetProps) {
                 {q.ok ? (
                   <div className="text-right">
                     <div className="font-mono text-[13px] font-semibold text-gray-900">
-                      {q.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      {formatPrice(q.price, q.currency)}
                     </div>
-                    <div
-                      className={cx('font-mono text-[11px] font-semibold', up ? 'text-ok' : 'text-danger')}
-                    >
+                    <div className="font-mono text-[11px] font-semibold" style={{ color: stockMoveColor(q.symbol, up) }}>
                       {up ? '+' : ''}
                       {q.changePct.toFixed(2)}%
                     </div>
@@ -1071,7 +1285,7 @@ export function StocksWidget({ widget, ctx }: WidgetProps) {
                 ) : (
                   <span className="text-[11px] text-gray-400">取数失败</span>
                 )}
-              </div>
+              </button>
             );
           })}
         </div>
@@ -1079,6 +1293,34 @@ export function StocksWidget({ widget, ctx }: WidgetProps) {
         <Empty>暂无数据</Empty>
       )}
     </>
+  );
+}
+
+function StockChartPage({ quote }: { quote: Quote }) {
+  const up = quote.changePct >= 0;
+  return (
+    <div className="flex min-h-0 flex-col gap-2">
+      <div className="flex items-start gap-3 rounded-lg bg-gray-50 px-3 py-2">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-semibold text-gray-800">{quote.name || quote.symbol}</div>
+          <div className="truncate font-mono text-[10px] text-gray-400">{quote.symbol}</div>
+        </div>
+        {quote.ok ? (
+          <div className="text-right">
+            <div className="font-mono text-[14px] font-semibold text-gray-900">
+              {formatPrice(quote.price, quote.currency)}
+            </div>
+            <div className="font-mono text-[11px] font-semibold" style={{ color: stockMoveColor(quote.symbol, up) }}>
+              {up ? '+' : ''}
+              {quote.changePct.toFixed(2)}%
+            </div>
+          </div>
+        ) : (
+          <span className="text-[11px] text-gray-400">取数失败</span>
+        )}
+      </div>
+      <KlineChart bars={quote.bars ?? []} symbol={quote.symbol} />
+    </div>
   );
 }
 
@@ -1126,7 +1368,7 @@ export function CnbReposWidget({ widget, data, ctx }: WidgetProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configured, cfg?.token, orgsKey]);
+  }, [configured, cfg?.token, orgsKey, ctx.hostPermissionVersion]);
 
   const repos = state.repos ?? [];
   const subOrgOf = (path: string) => {

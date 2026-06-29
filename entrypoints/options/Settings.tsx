@@ -27,6 +27,7 @@ const PROVIDER_TAG: Record<SyncTargetType, { tag: string; bg: string; color: str
   webdav: { tag: 'WD', bg: '#e3f5f1', color: '#0d9488' },
   github: { tag: 'GH', bg: '#fff3e2', color: '#d97706' },
   gitlab: { tag: 'GL', bg: '#fff3e2', color: '#d97706' },
+  gitee: { tag: 'GE', bg: '#fdecec', color: '#dc2626' },
   'google-drive': { tag: 'GD', bg: '#e9f8ee', color: '#15a34a' },
   onedrive: { tag: 'OD', bg: '#e4f2fb', color: '#2c84c8' },
   dropbox: { tag: 'DB', bg: '#e4ecff', color: '#2563eb' },
@@ -86,7 +87,7 @@ export function Settings({
 
   return (
     <div className="flex-1 overflow-auto p-6">
-      <div className="mx-auto grid max-w-[1040px] grid-cols-1 items-start gap-[18px] lg:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-[18px] lg:grid-cols-2">
         {/* LEFT */}
         <div className="flex flex-col gap-[18px]">
           <SettingsCard title="外观">

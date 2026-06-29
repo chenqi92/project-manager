@@ -132,18 +132,22 @@ export function normWidget(widget: DashWidget): DashWidget & { w: number; h: num
 }
 
 // --- 外观：预设渐变背景 -----------------------------------------------------
+// 每个预设是一个主题感知的 CSS 变量：亮色用清浅渐变、暗色用深色渐变（定义见
+// assets/tailwind.css 的 :root / .dark）。这样无论亮暗，背景都与面板/文字协调，
+// 不会出现某一模式下「背景很怪」。内联 style 直接引用 var(--dash-*) 即随主题切换。
 export const GRADIENTS: Record<string, string> = {
-  aurora: 'linear-gradient(135deg,#1e3a8a 0%,#6d28d9 50%,#0f766e 100%)',
-  dusk: 'linear-gradient(140deg,#0f172a 0%,#1e293b 55%,#334155 100%)',
-  sunset: 'linear-gradient(135deg,#9a3412 0%,#be185d 55%,#7e22ce 100%)',
-  forest: 'linear-gradient(140deg,#064e3b 0%,#047857 55%,#0e7490 100%)',
-  mist: 'linear-gradient(160deg,#eef2ff 0%,#f8fafc 45%,#ecfeff 100%)',
+  aurora: 'var(--dash-aurora)',
+  dusk: 'var(--dash-dusk)',
+  sunset: 'var(--dash-sunset)',
+  forest: 'var(--dash-forest)',
+  mist: 'var(--dash-mist)',
 };
 export const DEFAULT_GRADIENT = 'aurora';
 
 export function normAppearance(a: DashAppearance | undefined): Required<DashAppearance> {
   return {
-    bg: a?.bg ?? 'gradient',
+    // 默认无背景：全新安装 / 未设置过外观的看板使用纯净底色，不强加主题。
+    bg: a?.bg ?? 'none',
     gradient: a?.gradient && GRADIENTS[a.gradient] ? a.gradient : DEFAULT_GRADIENT,
     imageDataUrl: a?.imageDataUrl ?? '',
     tileOpacity: typeof a?.tileOpacity === 'number' ? Math.min(100, Math.max(20, a.tileOpacity)) : 75,

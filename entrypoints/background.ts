@@ -17,6 +17,7 @@ import {
   toTargetView,
 } from '@/lib/sync-providers';
 import { synologyLogin } from '@/lib/sync-providers/synology';
+import { VAULT_LOCKED_MSG } from '@/lib/types';
 import type {
   BioEnrollmentPublic,
   CapturePending,
@@ -26,6 +27,7 @@ import type {
   SyncTarget,
   SyncTargetView,
   VaultData,
+  VaultSettings,
   VaultStatus,
 } from '@/lib/types';
 import { linkUrls, newAccount, newEnvironment, newLink, newProject } from '@/lib/vault-ops';
@@ -49,6 +51,7 @@ const PENDING_KEY = 'pendingCapture';
 // 全部仅存在于内存（SW 重启后从 session 恢复，浏览器关闭即丢失）。
 let dek: Uint8Array | null = null;
 let cachedData: VaultData | null = null;
+let cachedSettingsFingerprint: string | null = null;
 let autoLockMinutes = 15;
 let lockTimer: ReturnType<typeof setTimeout> | null = null;
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -401,8 +404,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
         });
         if (res.kind === 'foreign') return { foreign: true };
         if (res.kind === 'replaced') {
-          await vaultBackend.save(res.localEncrypted);
-          cachedData = await decryptVaultData(res.localEncrypted, dek!);
+          await adoptSyncedVault(res.localEncrypted);
           await setTargetState(target.id, { lastSyncAt: Date.now(), remoteTag: res.tag, lastError: undefined });
         }
       } catch (e) {
@@ -766,6 +768,7 @@ async function getStatus(): Promise<VaultStatus> {
 async function setUnlocked(d: Uint8Array, data: VaultData): Promise<void> {
   dek = d;
   cachedData = data;
+  cachedSettingsFingerprint = settingsFingerprint(data.settings);
   autoLockMinutes = data.settings.autoLockMinutes ?? 15;
   await browser.storage.session.set({ [SESSION_DEK]: toB64(d) });
   applyAutoLock();
@@ -779,8 +782,10 @@ async function setUnlocked(d: Uint8Array, data: VaultData): Promise<void> {
 async function persistData(data: VaultData): Promise<void> {
   const enc = await vaultBackend.load();
   if (!enc) throw new Error('保险箱不存在');
+  stampSettingsIfChanged(data);
   await vaultBackend.save(await reencryptData(enc, data, dek!));
   cachedData = data;
+  cachedSettingsFingerprint = settingsFingerprint(data.settings);
   autoLockMinutes = data.settings.autoLockMinutes ?? 15;
   applyAutoLock();
   resetLockTimer();
@@ -790,6 +795,7 @@ async function persistData(data: VaultData): Promise<void> {
 function lock(): void {
   dek = null;
   cachedData = null;
+  cachedSettingsFingerprint = null;
   pendingCapture = null;
   if (lockTimer) {
     clearTimeout(lockTimer);
@@ -816,6 +822,7 @@ async function ensureRestored(): Promise<void> {
     return;
   }
   dek = restored;
+  cachedSettingsFingerprint = settingsFingerprint(cachedData.settings);
   autoLockMinutes = cachedData.settings.autoLockMinutes ?? 15;
   applyAutoLock();
   if (migrateSyncSettings(cachedData)) await persistData(cachedData);
@@ -823,7 +830,7 @@ async function ensureRestored(): Promise<void> {
 
 async function requireUnlocked(): Promise<void> {
   await ensureRestored();
-  if (!dek || !cachedData) throw new Error('保险箱已锁定');
+  if (!dek || !cachedData) throw new Error(VAULT_LOCKED_MSG);
 }
 
 async function requireData(): Promise<VaultData> {
@@ -840,6 +847,28 @@ function applyAutoLock(): void {
 function resetLockTimer(): void {
   if (lockTimer) clearTimeout(lockTimer);
   if (autoLockMinutes > 0) lockTimer = setTimeout(lock, autoLockMinutes * 60_000);
+}
+
+function settingsFingerprint(settings: VaultSettings): string {
+  const { updatedAt: _updatedAt, ...rest } = settings;
+  return JSON.stringify(rest);
+}
+
+function stampSettingsIfChanged(data: VaultData): void {
+  const next = settingsFingerprint(data.settings);
+  if (cachedSettingsFingerprint !== null && cachedSettingsFingerprint !== next) {
+    data.settings.updatedAt = Date.now();
+  }
+}
+
+async function adoptSyncedVault(enc: NonNullable<Awaited<ReturnType<typeof vaultBackend.load>>>): Promise<void> {
+  await vaultBackend.save(enc);
+  cachedData = await decryptVaultData(enc, dek!);
+  cachedSettingsFingerprint = settingsFingerprint(cachedData.settings);
+  autoLockMinutes = cachedData.settings.autoLockMinutes ?? 15;
+  applyAutoLock();
+  resetLockTimer();
+  await registerCaptureForData(cachedData);
 }
 
 // --------------------------- 同步辅助 ---------------------------
@@ -919,8 +948,7 @@ async function runTargetSync(
       confirmEmptyPush: opts.confirmFirstPush,
     });
     if (out.mergedEncrypted) {
-      await vaultBackend.save(out.mergedEncrypted);
-      cachedData = await decryptVaultData(out.mergedEncrypted, dek!);
+      await adoptSyncedVault(out.mergedEncrypted);
     }
     await setTargetState(target.id, {
       lastSyncAt: Date.now(),

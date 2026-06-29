@@ -67,6 +67,25 @@
   --color-dangerbg: #2c1517;
 }
 
+/* ---- 仪表盘预设背景：亮 / 暗各一套（lib/dashboard.ts 的 GRADIENTS 引用这些变量）----
+ * 亮色：清浅渐变，与白色面板、深色文字、玻璃磁贴（半透明白）协调。
+ * 暗色：深色渐变，亮度贴近侧栏/顶栏的深色底，避免仪表盘区域比四周「发亮」显得突兀。
+ * 因 .dark 与 :root 特异性相同，靠源码顺序生效：下面的 .dark 必须排在 :root 之后。 */
+:root {
+  --dash-aurora: linear-gradient(135deg, #dbeafe 0%, #ede9fe 50%, #cffafe 100%);
+  --dash-dusk: linear-gradient(140deg, #e2e8f0 0%, #e0e7ff 55%, #f1f5f9 100%);
+  --dash-sunset: linear-gradient(135deg, #ffedd5 0%, #fce7f3 55%, #f3e8ff 100%);
+  --dash-forest: linear-gradient(140deg, #d1fae5 0%, #dcfce7 55%, #cffafe 100%);
+  --dash-mist: linear-gradient(160deg, #eef2ff 0%, #f8fafc 45%, #ecfeff 100%);
+}
+.dark {
+  --dash-aurora: linear-gradient(135deg, #152347 0%, #2a1a52 50%, #0b3330 100%);
+  --dash-dusk: linear-gradient(140deg, #0b1120 0%, #1b2536 55%, #2a3a50 100%);
+  --dash-sunset: linear-gradient(135deg, #3d1a16 0%, #561a37 55%, #311a4e 100%);
+  --dash-forest: linear-gradient(140deg, #06291f 0%, #08402f 55%, #0a3a44 100%);
+  --dash-mist: linear-gradient(160deg, #0c1322 0%, #121a2c 45%, #0d2730 100%);
+}
+
 html,
 body {
   margin: 0;
@@ -78,6 +97,10 @@ body {
 
 html.dark {
   color-scheme: dark;
+}
+
+:where(button:not(:disabled), [role="button"]:not([aria-disabled="true"]), a[href]) {
+  cursor: pointer;
 }
 
 /* 需要可滚动但不露出滚动条的区域：首页看板、看板页签、磁贴内部等。 */
@@ -114,6 +137,61 @@ html.dark {
   box-shadow:
     0 2px 4px rgb(0 0 0 / 0.06),
     0 14px 32px -12px rgb(0 0 0 / 0.28);
+}
+
+/* ---- 磁贴隐私显示：按单个磁贴开启，悬停/键盘聚焦时恢复清晰 ---- */
+.privacy-tile {
+  outline: none;
+}
+.privacy-tile:focus-visible {
+  box-shadow:
+    0 0 0 2px color-mix(in oklab, var(--color-brand-500) 70%, transparent),
+    0 14px 32px -12px rgb(0 0 0 / 0.28);
+}
+.privacy-tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    opacity 0.16s ease,
+    backdrop-filter 0.16s ease,
+    background-color 0.16s ease;
+}
+.privacy-content {
+  position: relative;
+  z-index: 1;
+  transition:
+    filter 0.16s ease,
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+.privacy-soft:not(:hover):not(:focus-within) .privacy-content {
+  filter: blur(1px) grayscale(1) contrast(0.78) brightness(0.96);
+  opacity: 0.74;
+}
+.privacy-soft:not(:hover):not(:focus-within)::after {
+  background-color: color-mix(in oklab, var(--color-gray-100) 34%, transparent);
+  backdrop-filter: blur(0.8px) grayscale(1) saturate(0) contrast(0.82);
+  -webkit-backdrop-filter: blur(0.8px) grayscale(1) saturate(0) contrast(0.82);
+  opacity: 1;
+}
+.privacy-strong:not(:hover):not(:focus-within) .privacy-content {
+  filter: blur(7px) contrast(0.72) saturate(0.78);
+  opacity: 0.45;
+  transform: scale(0.99);
+  user-select: none;
+}
+.privacy-strong:not(:hover):not(:focus-within)::after {
+  background-color: color-mix(in oklab, var(--color-surface) 48%, transparent);
+  backdrop-filter: blur(10px) saturate(0.82);
+  -webkit-backdrop-filter: blur(10px) saturate(0.82);
+  opacity: 1;
+}
+.dark .privacy-soft:not(:hover):not(:focus-within)::after {
+  background-color: rgb(17 24 39 / 0.24);
 }
 
 /* slim scrollbar（对齐设计：细、圆角、留边） */

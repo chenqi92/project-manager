@@ -30,6 +30,7 @@ const TAG: Record<SyncTargetType, { tag: string; bg: string; color: string }> = 
   webdav: { tag: 'WD', bg: '#e3f5f1', color: '#0d9488' },
   github: { tag: 'GH', bg: '#fff3e2', color: '#d97706' },
   gitlab: { tag: 'GL', bg: '#fff3e2', color: '#d97706' },
+  gitee: { tag: 'GE', bg: '#fdecec', color: '#dc2626' },
   'google-drive': { tag: 'GD', bg: '#e9f8ee', color: '#15a34a' },
   onedrive: { tag: 'OD', bg: '#e4f2fb', color: '#2c84c8' },
   dropbox: { tag: 'DB', bg: '#e4ecff', color: '#2563eb' },
@@ -216,7 +217,7 @@ export function SyncPage({
 
   return (
     <div className="flex-1 overflow-auto p-6">
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-5xl">
         {/* breadcrumb */}
         <div className="mb-3.5 flex items-center gap-2 text-xs text-gray-400">
           <span

@@ -7,6 +7,7 @@ stats.html
 vault.db*
 sync-credentials*.json
 .DS_Store
+.idea/
 .extension-key.pem
 .smoke.mjs
 chrome/

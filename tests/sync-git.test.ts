@@ -88,3 +88,59 @@ describe('GitHub provider', () => {
     if (!res.ok) expect(res.current?.tag).toBe('cursha');
   });
 });
+
+describe('Gitee provider', () => {
+  const giteeTarget: GitTarget = {
+    ...target,
+    type: 'gitee',
+    label: 'ge',
+    owner: 'me',
+    repo: 'r',
+    token: 'gtok',
+  };
+
+  it('preflight 对公开仓库给出警示，对私有仓库不警示', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ public: true })));
+    let pf = await createGitProvider(giteeTarget).preflight();
+    expect(pf.warnings.length).toBeGreaterThan(0);
+
+    vi.stubGlobal('fetch', vi.fn(async () => json({ private: true })));
+    pf = await createGitProvider(giteeTarget).preflight();
+    expect(pf.warnings).toEqual([]);
+  });
+
+  it('pull 用 access_token 和 ref 读取 contents，tag=sha', async () => {
+    const b64 = Buffer.from(JSON.stringify(vault), 'utf8').toString('base64');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        expect(url).toContain('https://gitee.com/api/v5/repos/me/r/contents/vault.enc?ref=main');
+        expect(url).toContain('access_token=gtok');
+        return json({ content: b64, sha: 'gsha' });
+      }),
+    );
+
+    const snap = await createGitProvider(giteeTarget).pull();
+
+    expect(snap?.tag).toBe('gsha');
+    expect(snap?.vault.vaultId).toBe('vid-中文');
+  });
+
+  it('push 新文件用 POST，更新文件用 PUT 并带 sha', async () => {
+    let sentBody: Record<string, unknown> = {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sentBody = JSON.parse(init.body as string);
+        return json({ content: { sha: 'newgsha' } });
+      }),
+    );
+
+    const res = await createGitProvider(giteeTarget).push(vault, 'oldgsha');
+
+    expect(res).toEqual({ ok: true, tag: 'newgsha' });
+    expect(sentBody.access_token).toBe('gtok');
+    expect(sentBody.sha).toBe('oldgsha');
+    expect(sentBody.branch).toBe('main');
+  });
+});

@@ -161,4 +161,37 @@ describe('mergeVaultData', () => {
     const ba = mergeVaultData(vault([b]), vault([a]), NOW);
     expect(ab.projects[0]!.name).toBe(ba.projects[0]!.name);
   });
+
+  it('设置按 settings.updatedAt 取较新者，用于同步首页排版和设置', () => {
+    const local = vault([]);
+    const remote = vault([]);
+    local.settings = {
+      ...local.settings,
+      updatedAt: 100,
+      theme: 'light',
+      dashboard: { activeBoardId: 'local', boards: [] },
+    };
+    remote.settings = {
+      ...remote.settings,
+      updatedAt: 200,
+      theme: 'dark',
+      dashboard: { activeBoardId: 'remote', boards: [] },
+    };
+
+    const m = mergeVaultData(local, remote, NOW);
+
+    expect(m.settings.theme).toBe('dark');
+    expect(m.settings.dashboard?.activeBoardId).toBe('remote');
+  });
+
+  it('旧数据没有 settings.updatedAt 时仍保持本机设置优先', () => {
+    const local = vault([]);
+    const remote = vault([]);
+    local.settings.theme = 'light';
+    remote.settings.theme = 'dark';
+
+    const m = mergeVaultData(local, remote, NOW);
+
+    expect(m.settings.theme).toBe('light');
+  });
 });

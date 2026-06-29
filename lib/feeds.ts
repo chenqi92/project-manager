@@ -95,9 +95,20 @@ export async function fetchHotlist(url: string, count: number): Promise<HotItem[
 export interface Quote {
   symbol: string;
   name?: string;
+  currency?: string;
   price: number;
   changePct: number;
   ok: boolean;
+  bars?: QuoteBar[];
+}
+
+export interface QuoteBar {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
 }
 
 const YAHOO = 'https://query1.finance.yahoo.com/v8/finance/chart/';
@@ -112,18 +123,52 @@ function num(...vals: any[]): number | undefined {
 /** 内置源：Yahoo Finance（免密钥）。代码示例：AAPL、600519.SS、0700.HK。 */
 async function fetchOneBuiltin(symbol: string): Promise<Quote> {
   try {
-    const r = await fetch(YAHOO + encodeURIComponent(symbol), { signal: AbortSignal.timeout(8000) });
+    const r = await fetch(YAHOO + encodeURIComponent(symbol) + '?range=3mo&interval=1d', {
+      signal: AbortSignal.timeout(8000),
+    });
     const j: any = await r.json();
-    const m = j?.chart?.result?.[0]?.meta;
-    const price = num(m?.regularMarketPrice);
+    const result = j?.chart?.result?.[0];
+    const m = result?.meta;
+    const q = result?.indicators?.quote?.[0];
+    const timestamps: any[] = Array.isArray(result?.timestamp) ? result.timestamp : [];
+    const bars = timestamps.reduce<QuoteBar[]>((acc, t, i) => {
+      const open = num(q?.open?.[i]);
+      const high = num(q?.high?.[i]);
+      const low = num(q?.low?.[i]);
+      const close = num(q?.close?.[i]);
+      if (
+        typeof t !== 'number' ||
+        open == null ||
+        high == null ||
+        low == null ||
+        close == null
+      ) {
+        return acc;
+      }
+      const bar: QuoteBar = {
+        time: t * 1000,
+        open,
+        high,
+        low,
+        close,
+      };
+      const volume = num(q?.volume?.[i]);
+      if (volume != null) bar.volume = volume;
+      acc.push(bar);
+      return acc;
+    }, []);
+    const lastBar = bars[bars.length - 1];
+    const price = num(m?.regularMarketPrice, lastBar?.close);
     if (price == null) return { symbol, price: 0, changePct: 0, ok: false };
     const prev = num(m?.chartPreviousClose, m?.previousClose) ?? price;
     return {
       symbol,
       name: m?.shortName,
+      currency: m?.currency,
       price,
       changePct: prev ? ((price - prev) / prev) * 100 : 0,
       ok: true,
+      bars,
     };
   } catch {
     return { symbol, price: 0, changePct: 0, ok: false };

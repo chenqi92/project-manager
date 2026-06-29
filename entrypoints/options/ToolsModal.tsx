@@ -44,9 +44,7 @@ export function ToolsModal({
 
   if (embedded) {
     return (
-      <div className="flex-1 overflow-auto p-6">
-        <div className="mx-auto max-w-[1180px]">{body}</div>
-      </div>
+      <div className="flex-1 overflow-auto p-6">{body}</div>
     );
   }
   return (

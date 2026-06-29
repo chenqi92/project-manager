@@ -87,10 +87,24 @@ export async function parseImport(
 ): Promise<VaultData> {
   switch (format) {
     case 'encrypted': {
-      if (!password) throw new Error('需要备份密码才能解密该文件');
-      const obj = JSON.parse(content) as EncryptedVault & { format?: string };
-      const dek = await unwrapDEK(obj, password);
-      return normalize(await decryptVaultData(obj, dek));
+      if (!password) throw new Error('请输入备份密码才能导入加密备份');
+      let obj: EncryptedVault & { format?: string };
+      try {
+        obj = JSON.parse(content) as EncryptedVault & { format?: string };
+      } catch {
+        throw new Error('加密备份文件不是有效 JSON，请确认选择的是本扩展导出的加密备份');
+      }
+      if (obj.format && obj.format !== `${BACKUP_TAG}.encrypted`) {
+        throw new Error('该文件不是本扩展的加密备份，请确认导入类型选择正确');
+      }
+      try {
+        const dek = await unwrapDEK(obj, password);
+        return normalize(await decryptVaultData(obj, dek));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.startsWith('KDF 参数异常')) throw e;
+        throw new Error('备份密码不正确，或该加密备份文件已损坏/不匹配');
+      }
     }
     case 'json': {
       const obj = JSON.parse(content) as { data?: VaultData } | VaultData;

@@ -15,7 +15,9 @@ function decodeVault(b64: string): EncryptedVault {
 }
 
 export function createGitProvider(target: GitTarget): SyncProvider {
-  return target.type === 'gitlab' ? new GitLabProvider(target) : new GitHubProvider(target);
+  if (target.type === 'gitlab') return new GitLabProvider(target);
+  if (target.type === 'gitee') return new GiteeProvider(target);
+  return new GitHubProvider(target);
 }
 
 // --------------------------------- GitHub ---------------------------------
@@ -176,6 +178,92 @@ class GitLabProvider implements SyncProvider {
       j.visibility !== 'private'
         ? [`该项目可见性为 ${j.visibility}：加密密文可被他人下载、离线爆破主密码。强烈建议改为 private。`]
         : [];
+    return { ok: true, warnings };
+  }
+}
+
+// --------------------------------- Gitee ----------------------------------
+
+class GiteeProvider implements SyncProvider {
+  private api: string;
+  private path: string;
+  constructor(private t: GitTarget) {
+    this.api = (t.apiBase || 'https://gitee.com/api/v5').replace(/\/+$/, '');
+    this.path = (t.filePath || 'vault.enc').replace(/^\/+/, '');
+  }
+
+  private contentsUrl(): string {
+    const p = this.path.split('/').map(encodeURIComponent).join('/');
+    return `${this.api}/repos/${encodeURIComponent(this.t.owner)}/${encodeURIComponent(this.t.repo)}/contents/${p}`;
+  }
+  private repoUrl(): string {
+    return `${this.api}/repos/${encodeURIComponent(this.t.owner)}/${encodeURIComponent(this.t.repo)}`;
+  }
+  private withToken(url: string): string {
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}access_token=${encodeURIComponent(this.t.token)}`;
+  }
+
+  async pull(): Promise<RemoteSnapshot | null> {
+    const url = this.withToken(`${this.contentsUrl()}?ref=${encodeURIComponent(this.t.branch)}`);
+    const r = await fetch(url);
+    if (r.status === 404) return null;
+    if (r.status === 401 || r.status === 403) {
+      throw new SyncProviderError('Gitee 认证失败，请检查私人令牌权限', 'auth');
+    }
+    if (!r.ok) throw new SyncProviderError(`Gitee 读取失败 ${r.status}`, 'http');
+    const j = (await r.json()) as { content?: string; sha: string };
+    return { vault: decodeVault(j.content ?? ''), tag: j.sha };
+  }
+
+  async push(vault: EncryptedVault, expectedTag?: string): Promise<PushResult> {
+    const body: Record<string, unknown> = {
+      access_token: this.t.token,
+      content: encodeVault(vault),
+      message: COMMIT_MSG,
+      branch: this.t.branch,
+    };
+    if (expectedTag) body.sha = expectedTag;
+    const r = await fetch(this.contentsUrl(), {
+      method: expectedTag ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (r.status === 400 || r.status === 409 || r.status === 422) {
+      return { ok: false, current: await this.pull() };
+    }
+    if (!r.ok) throw new SyncProviderError(`Gitee 写入失败 ${r.status}`, 'http');
+    const j = (await r.json()) as { content?: { sha?: string } };
+    return { ok: true, tag: j.content?.sha ?? (await this.pull())?.tag ?? '' };
+  }
+
+  async remove(): Promise<void> {
+    const snap = await this.pull();
+    if (!snap) return;
+    await fetch(this.contentsUrl(), {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        access_token: this.t.token,
+        message: 'chore: remove vault',
+        sha: snap.tag,
+        branch: this.t.branch,
+      }),
+    });
+  }
+
+  async preflight(): Promise<PreflightResult> {
+    const r = await fetch(this.withToken(this.repoUrl()));
+    if (r.status === 404) throw new SyncProviderError('仓库不存在或令牌无权访问', 'not_found');
+    if (r.status === 401 || r.status === 403) {
+      throw new SyncProviderError('Gitee 认证失败，请检查私人令牌权限', 'auth');
+    }
+    if (!r.ok) throw new SyncProviderError(`Gitee 预检失败 ${r.status}`, 'http');
+    const j = (await r.json()) as { private?: boolean; public?: boolean };
+    const isPrivate = j.private === true || j.public === false;
+    const warnings = isPrivate
+      ? []
+      : ['该仓库是公开的：加密密文会被任何人下载到，存在离线爆破主密码的风险。强烈建议改用私有仓库。'];
     return { ok: true, warnings };
   }
 }

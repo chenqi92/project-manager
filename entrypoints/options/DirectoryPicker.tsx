@@ -16,6 +16,7 @@ const META: Record<
   webdav: { tag: 'WD', name: 'WebDAV', bg: '#e3f5f1', color: '#0d9488', supportsApp: false, rootPrefix: '' },
   github: { tag: 'GH', name: 'GitHub 仓库', bg: '#fff3e2', color: '#d97706', supportsApp: false, rootPrefix: '' },
   gitlab: { tag: 'GL', name: 'GitLab 仓库', bg: '#fff3e2', color: '#d97706', supportsApp: false, rootPrefix: '' },
+  gitee: { tag: 'GE', name: 'Gitee 仓库', bg: '#fdecec', color: '#dc2626', supportsApp: false, rootPrefix: '' },
   'google-drive': { tag: 'GD', name: 'Google Drive', bg: '#e9f8ee', color: '#15a34a', supportsApp: true, rootPrefix: '我的云端硬盘' },
   onedrive: { tag: 'OD', name: 'OneDrive', bg: '#e4f2fb', color: '#2c84c8', supportsApp: true, rootPrefix: 'OneDrive' },
   dropbox: { tag: 'DB', name: 'Dropbox', bg: '#e4ecff', color: '#2563eb', supportsApp: true, rootPrefix: 'Dropbox' },
@@ -41,7 +42,7 @@ function applyDest(t: SyncTarget, segments: string[], filename: string): SyncTar
     rec.fileName = filename;
   } else if (t.type === 'synology') {
     rec.filePath = '/' + [...segments, filename].filter(Boolean).join('/');
-  } else if (t.type === 'webdav' || t.type === 'github' || t.type === 'gitlab') {
+  } else if (t.type === 'webdav' || t.type === 'github' || t.type === 'gitlab' || t.type === 'gitee') {
     rec.filePath = [...segments, filename].filter(Boolean).join('/');
   }
   return rec as unknown as SyncTarget;

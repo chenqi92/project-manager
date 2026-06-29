@@ -12,6 +12,9 @@ export interface VaultController {
   lock: () => Promise<void>;
   save: (data: VaultData) => Promise<void>;
   reload: () => Promise<void>;
+  /** 轻量探测后台是否已锁定（如空闲自动锁定）：仅在已锁定时切到锁定态并清空数据，
+   *  解锁态不做任何事（不重拉数据，避免闪烁）。返回是否已锁定。 */
+  checkLocked: () => Promise<boolean>;
 }
 
 export function useVault(): VaultController {
@@ -71,5 +74,14 @@ export function useVault(): VaultController {
     setData(await api.get());
   }, []);
 
-  return { status, data, loading, refresh, unlock, create, lock, save, reload };
+  const checkLocked = useCallback(async () => {
+    const s = await api.status();
+    if (s.locked) {
+      setStatus(s);
+      setData(null);
+    }
+    return s.locked;
+  }, []);
+
+  return { status, data, loading, refresh, unlock, create, lock, save, reload, checkLocked };
 }

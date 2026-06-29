@@ -8,6 +8,8 @@ import { isAlarming, sortMemos } from '@/lib/memo';
 import { addTombstone, newMemo } from '@/lib/vault-ops';
 
 const KEY = 'memoWidget';
+const ALL_PROJECTS = '__all__';
+
 interface WidgetState {
   x: number;
   y: number;
@@ -32,7 +34,7 @@ export function MemoWidget({
   const [collapsed, setCollapsed] = useState(true); // 默认收起，遮挡隐私
   const [hidden, setHidden] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [addProjectId, setAddProjectId] = useState('');
+  const [scopeProjectId, setScopeProjectId] = useState(ALL_PROJECTS);
   const posRef = useRef(pos);
   posRef.current = pos;
   const panelRef = useRef<HTMLDivElement>(null);
@@ -175,13 +177,25 @@ export function MemoWidget({
   if (data.projects.length === 0 || !loaded || data.settings.floatingMemoHidden) return null;
 
   const now = Date.now();
-  const groups = data.projects
+  const selectedScope =
+    scopeProjectId === ALL_PROJECTS || data.projects.some((p) => p.id === scopeProjectId)
+      ? scopeProjectId
+      : ALL_PROJECTS;
+  const visibleProjects =
+    selectedScope === ALL_PROJECTS
+      ? data.projects
+      : data.projects.filter((p) => p.id === selectedScope);
+  const groups = visibleProjects
     .map((p) => ({ id: p.id, name: p.name, memos: sortMemos(p.memos ?? []) }))
     .filter((g) => g.memos.length > 0);
-  const allMemos = data.projects.flatMap((p) => p.memos ?? []);
+  const allMemos = visibleProjects.flatMap((p) => p.memos ?? []);
   const pendingTotal = allMemos.filter((m) => !m.done).length;
   const alarmCount = allMemos.filter((m) => isAlarming(m, now)).length;
-  const addPid = addProjectId || selectedProjectId || data.projects[0]?.id || '';
+  const fallbackAddPid =
+    (selectedProjectId && data.projects.some((p) => p.id === selectedProjectId)
+      ? selectedProjectId
+      : data.projects[0]?.id) || '';
+  const addPid = selectedScope === ALL_PROJECTS ? fallbackAddPid : selectedScope;
 
   // 组件内隐藏：右下角圆形 FAB（teal），点击复显；可拖动。
   if (hidden) {
@@ -290,11 +304,12 @@ export function MemoWidget({
       {/* 添加（次要） */}
       <div className="space-y-1.5 border-t border-gray-100 p-2">
         <select
-          value={addPid}
-          onChange={(e) => setAddProjectId(e.target.value)}
+          value={selectedScope}
+          onChange={(e) => setScopeProjectId(e.target.value)}
           className="w-full rounded-md border border-gray-300 px-2 py-1 text-xs outline-none focus:border-brand-500"
-          title="添加到项目"
+          title="待办范围"
         >
+          <option value={ALL_PROJECTS}>全部</option>
           {data.projects.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}

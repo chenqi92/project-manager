@@ -2,6 +2,49 @@ import { useState } from 'react';
 import { Eye, EyeOff, Fingerprint, KeyRound, Loader2, Lock } from 'lucide-react';
 import { Banner, Button, Input, Label, cx } from './ui';
 
+function PasswordField({
+  value,
+  onChange,
+  placeholder,
+  autoFocus,
+  autoComplete,
+  show,
+  onToggleShow,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  autoFocus?: boolean;
+  autoComplete?: string;
+  show: boolean;
+  onToggleShow: () => void;
+}) {
+  return (
+    <div className="flex h-[46px] items-center gap-2.5 rounded-[11px] border-[1.5px] border-gray-200 bg-gray-50 px-3.5 transition focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100">
+      <Lock size={16} className="shrink-0 text-gray-400" />
+      <input
+        type={show ? 'text' : 'password'}
+        autoFocus={autoFocus}
+        autoComplete={autoComplete}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        className="min-w-0 flex-1 bg-transparent text-[15px] text-gray-900 outline-none placeholder:text-gray-400"
+      />
+      <button
+        type="button"
+        onClick={onToggleShow}
+        className="-mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+        title={show ? '隐藏' : '显示'}
+        aria-label={show ? '隐藏密码' : '显示密码'}
+      >
+        {show ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  );
+}
+
 export function LockScreen({
   initialized,
   compact,
@@ -24,6 +67,7 @@ export function LockScreen({
   const [pw, setPw] = useState('');
   const [pw2, setPw2] = useState('');
   const [show, setShow] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showAdopt, setShowAdopt] = useState(false);
@@ -99,29 +143,29 @@ export function LockScreen({
       </div>
 
       <form onSubmit={submit} className="mt-5 flex flex-col gap-3">
-        <div className="flex items-center gap-2.5 rounded-[11px] border-[1.5px] border-gray-200 bg-gray-50 px-3.5 focus-within:border-brand-500">
-          <Lock size={16} className="shrink-0 text-gray-400" />
-          <input
-            type={show ? 'text' : 'password'}
-            autoFocus={!hasBiometric}
+        <div>
+          {!initialized && <Label>主密码</Label>}
+          <PasswordField
             value={pw}
-            onChange={(e) => setPw(e.target.value)}
+            onChange={setPw}
             placeholder="主密码"
-            className="h-[46px] flex-1 bg-transparent text-[15px] text-gray-900 outline-none placeholder:text-gray-400"
+            autoFocus={!hasBiometric}
+            autoComplete={initialized ? 'current-password' : 'new-password'}
+            show={show}
+            onToggleShow={() => setShow((s) => !s)}
           />
-          <button
-            type="button"
-            onClick={() => setShow((s) => !s)}
-            className="shrink-0 text-gray-400 hover:text-gray-600"
-            title={show ? '隐藏' : '显示'}
-          >
-            {show ? <EyeOff size={16} /> : <Eye size={16} />}
-          </button>
         </div>
         {!initialized && (
           <div>
             <Label>确认主密码</Label>
-            <Input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="再次输入" />
+            <PasswordField
+              value={pw2}
+              onChange={setPw2}
+              placeholder="再次输入"
+              autoComplete="new-password"
+              show={showConfirm}
+              onToggleShow={() => setShowConfirm((s) => !s)}
+            />
           </div>
         )}
 

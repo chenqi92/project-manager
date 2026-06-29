@@ -123,6 +123,7 @@ export type SyncTargetType =
   | 'webdav'
   | 'github'
   | 'gitlab'
+  | 'gitee'
   | 'google-drive'
   | 'onedrive'
   | 'dropbox'
@@ -158,7 +159,7 @@ export interface WebDavTarget extends SyncTargetCommon {
 
 /** GitHub / GitLab 仓库（走各自的文件内容 API） */
 export interface GitTarget extends SyncTargetCommon {
-  type: 'github' | 'gitlab';
+  type: 'github' | 'gitlab' | 'gitee';
   /** 自建实例的 API base，留空用官方默认 */
   apiBase?: string;
   /** GitHub: owner；GitLab: 命名空间（用于展示，实际用 projectId/owner+repo） */
@@ -292,6 +293,8 @@ export interface DashWidget {
     onlyFavorite?: boolean;
     /** totp / health：默认是否揭示敏感内容（缺省遮蔽） */
     reveal?: boolean;
+    /** 磁贴隐私显示：soft 轻度隐蔽，strong 悬停/聚焦前强模糊 */
+    privacyMode?: 'off' | 'soft' | 'strong';
   };
 }
 
@@ -337,6 +340,8 @@ export interface CnbConfig {
 }
 
 export interface VaultSettings {
+  /** 设置更新时间：用于多端同步时决定首页布局/主题/同步目标等设置的胜者 */
+  updatedAt?: number;
   /** 空闲多少分钟后自动锁定；0 表示不自动锁定（不推荐） */
   autoLockMinutes: number;
   kdf: KdfConfig;
@@ -440,6 +445,9 @@ export interface BioEnrollmentPublic {
 // ---------------------------------------------------------------------------
 // 消息 / 状态
 // ---------------------------------------------------------------------------
+
+/** 保险箱已锁定时后台抛出的错误文案；UI 据此把「保存失败」转为跳转锁屏。 */
+export const VAULT_LOCKED_MSG = '保险箱已锁定';
 
 export interface VaultStatus {
   /** 是否已创建过保险箱（设置过主密码） */

@@ -9,7 +9,6 @@ import {
   EyeOff,
   ExternalLink,
   FileText,
-  FolderGit2,
   FolderPlus,
   GitBranch,
   GripVertical,
@@ -44,6 +43,7 @@ import { api } from '@/lib/messaging';
 import { applyTheme, watchSystemTheme } from '@/lib/theme';
 import { copyWithAutoClear } from '@/lib/clipboard';
 import { search, type FlatEntry } from '@/lib/search';
+import { VAULT_LOCKED_MSG } from '@/lib/types';
 import type {
   Account,
   Environment,
@@ -160,6 +160,20 @@ export default function App() {
     return watchSystemTheme(() => data?.settings.theme);
   }, [data?.settings.theme]);
 
+  // 标签页重新获得焦点 / 变为可见时，探测后台是否已锁定（如空闲自动锁定）。已锁定则切到
+  // 锁屏，避免停留在「已解锁」的旧界面、直到改东西保存时才报错。
+  useEffect(() => {
+    const check = () => {
+      if (!document.hidden) void vault.checkLocked().catch(() => {});
+    };
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      window.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [vault.checkLocked]);
+
   const flash = (m: string) => {
     setToast(m);
     setTimeout(() => setToast(null), 2200);
@@ -170,6 +184,11 @@ export default function App() {
     try {
       await vault.save(produce(data, recipe));
     } catch (e) {
+      // 后台已锁定（如空闲自动锁定）：不弹「保存失败」，直接切到锁屏让用户重新输入主密码。
+      if (e instanceof Error && e.message === VAULT_LOCKED_MSG) {
+        await vault.checkLocked();
+        return;
+      }
       flash('保存失败：' + (e instanceof Error ? e.message : String(e)));
       throw e;
     }
@@ -393,25 +412,16 @@ export default function App() {
             setShowHome(true);
             setSelectedId(null);
             setQuery('');
+            setPage(null);
           }}
           className={cx(
             'flex w-full items-center gap-2.5 rounded-[9px] px-2.5 py-2 text-left text-[13px] font-medium',
-            showHome && !searchResults
+            showHome && !page && !searchResults
               ? 'bg-pribg text-prid'
               : 'text-gray-700 hover:bg-gray-100',
           )}
         >
           <LayoutDashboard size={16} /> <span className="flex-1">首页</span>
-        </button>
-
-        <button
-          onClick={() => openPage('cnb')}
-          className={cx(
-            'mt-0.5 flex w-full items-center gap-2.5 rounded-[9px] px-2.5 py-2 text-left text-[13px] font-medium',
-            page === 'cnb' ? 'bg-pribg text-prid' : 'text-gray-700 hover:bg-gray-100',
-          )}
-        >
-          <FolderGit2 size={16} /> <span className="flex-1">代码仓库</span>
         </button>
 
         <div className="flex items-center px-2.5 pb-1.5 pt-3.5">
@@ -437,7 +447,7 @@ export default function App() {
               (n, e) => n + e.links.reduce((m, l) => m + l.accounts.length, 0),
               0,
             );
-            const active = selected?.id === p.id && !searchResults && !showHome;
+            const active = selected?.id === p.id && !searchResults && !showHome && !page;
             return (
               <button
                 key={p.id}
@@ -461,6 +471,7 @@ export default function App() {
                   setSelectedId(p.id);
                   setShowHome(false);
                   setQuery('');
+                  setPage(null);
                 }}
                 className={cx(
                   'group mb-0.5 flex w-full items-center gap-2.5 rounded-[9px] px-2 py-2 text-left',

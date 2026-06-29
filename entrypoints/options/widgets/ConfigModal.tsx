@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 每卡配置面板：自定义标题 + 数据绑定（项目过滤 / 文档选择 / 仅收藏 / 默认揭示）
 // + 天气城市单位、图片上传等卡片专属设置。写回 widget.config（随加密 vault 存储）。
-// 在编辑模式下点磁贴右上角 ⚙ 进入——磁贴本体不可点（用于拖动），故配置统一在此设。
+// 点磁贴右上角 ⚙ 进入；编辑模式下磁贴本体用于拖动，配置按钮会单独隔离指针事件。
 // ---------------------------------------------------------------------------
 import { useEffect, useRef, useState } from 'react';
 import { Check, Upload } from 'lucide-react';
@@ -21,11 +21,13 @@ export function ConfigModal({
   data,
   onClose,
   onConfig,
+  onHostPermissionChange,
 }: {
   widget: DashWidget;
   data: VaultData;
   onClose: () => void;
   onConfig: (cfg: NonNullable<DashWidget['config']>) => void;
+  onHostPermissionChange?: () => void;
 }) {
   const cfg = widget.config ?? {};
   const [label, setLabel] = useState(cfg.label ?? '');
@@ -37,6 +39,9 @@ export function ConfigModal({
   const [unit, setUnit] = useState<'c' | 'f'>(cfg.unit === 'f' ? 'f' : 'c');
   const [dataUrl, setDataUrl] = useState(cfg.dataUrl ?? '');
   const [caption, setCaption] = useState(cfg.caption ?? '');
+  const [privacyMode, setPrivacyMode] = useState<'off' | 'soft' | 'strong'>(
+    cfg.privacyMode === 'soft' || cfg.privacyMode === 'strong' ? cfg.privacyMode : 'off',
+  );
   const [imgErr, setImgErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -67,7 +72,9 @@ export function ConfigModal({
   }, [probeUrl]);
   const authorize = async () => {
     if (!probeUrl) return;
-    setAuthed(await requestHost(probeUrl));
+    const ok = await requestHost(probeUrl);
+    setAuthed(ok);
+    if (ok) onHostPermissionChange?.();
   };
   const docProject = data.projects.find((p) => p.id === projectId);
   const docs = type === 'doc' ? (docProject ? docProject.docs ?? [] : data.projects.flatMap((p) => p.docs ?? [])) : [];
@@ -101,6 +108,7 @@ export function ConfigModal({
           ? Math.max(1, Math.min(30, Number(count) || 10))
           : cfg.count,
       symbols: type === 'stocks' ? symbols.trim() || undefined : cfg.symbols,
+      privacyMode: privacyMode === 'off' ? undefined : privacyMode,
     });
     onClose();
   };
@@ -128,6 +136,18 @@ export function ConfigModal({
         <div>
           <Label>标题（留空用默认）</Label>
           <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={widgetLabel(type)} />
+        </div>
+
+        <div>
+          <Label>隐私显示</Label>
+          <Select value={privacyMode} onChange={(e) => setPrivacyMode(e.target.value as 'off' | 'soft' | 'strong')}>
+            <option value="off">关闭</option>
+            <option value="soft">轻度隐蔽（统一灰色，近看可辨）</option>
+            <option value="strong">隐私模式（悬停或聚焦时显示）</option>
+          </Select>
+          <p className="mt-1 text-[11px] text-gray-400">
+            仅作用于当前磁贴；鼠标移入或键盘聚焦时恢复清晰。
+          </p>
         </div>
 
         {type === 'weather' && (

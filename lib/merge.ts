@@ -10,6 +10,7 @@ import type {
   PlatformLink,
   Project,
   ProjectDoc,
+  VaultSettings,
   VaultData,
 } from './types';
 
@@ -66,10 +67,19 @@ export function mergeVaultData(
   return {
     version: Math.max(local.version, remote.version),
     projects,
-    // 设置（含同步配置/自动锁定）以本地为准，不被远端覆盖。
-    settings: local.settings,
+    settings: mergeSettings(local.settings, remote.settings),
     tombstones,
   };
+}
+
+function mergeSettings(local: VaultSettings, remote: VaultSettings): VaultSettings {
+  const localAt = local.updatedAt ?? 0;
+  const remoteAt = remote.updatedAt ?? 0;
+  // 旧数据没有 settings.updatedAt：保持历史行为，本机设置优先，避免升级后被旧远端覆盖。
+  if (localAt === 0 && remoteAt === 0) return local;
+  if (localAt !== remoteAt) return remoteAt > localAt ? remote : local;
+  // 极少数同毫秒冲突用确定性内容排序保证多端最终收敛。
+  return JSON.stringify(local) <= JSON.stringify(remote) ? local : remote;
 }
 
 function mergeList<T extends { id: string; updatedAt: number }>(

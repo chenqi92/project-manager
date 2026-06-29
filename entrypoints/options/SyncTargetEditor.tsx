@@ -14,6 +14,7 @@ const TYPE_LABELS: Record<SyncTargetType, string> = {
   webdav: 'WebDAV（Nextcloud / 坚果云等）',
   github: 'GitHub 仓库',
   gitlab: 'GitLab 仓库',
+  gitee: 'Gitee 仓库',
   'google-drive': 'Google Drive',
   onedrive: 'OneDrive',
   dropbox: 'Dropbox',
@@ -29,6 +30,7 @@ function defaultDraft(type: SyncTargetType): SyncTarget {
       return { ...base, type, url: '', username: '', password: '', filePath: 'vault.enc' };
     case 'github':
     case 'gitlab':
+    case 'gitee':
       return { ...base, type, owner: '', repo: '', branch: 'main', filePath: 'vault.enc', token: '' };
     case 'google-drive':
     case 'onedrive':
@@ -256,18 +258,42 @@ export function SyncTargetEditor({
           </>
         )}
 
-        {(draft.type === 'github' || draft.type === 'gitlab') && (
+        {(draft.type === 'github' || draft.type === 'gitlab' || draft.type === 'gitee') && (
           <>
             <div className="grid grid-cols-2 gap-2">
-              <Field label={draft.type === 'gitlab' ? '命名空间 / 用户' : 'owner'} v={t.owner} on={(x) => set('owner', x)} />
+              <Field
+                label={draft.type === 'gitlab' ? '命名空间 / 用户' : draft.type === 'gitee' ? 'owner（用户名/组织）' : 'owner'}
+                v={t.owner}
+                on={(x) => set('owner', x)}
+              />
               <Field label="仓库名" v={t.repo} on={(x) => set('repo', x)} />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <Field label="分支" v={t.branch} on={(x) => set('branch', x)} placeholder="main" />
               <Field label="文件路径" v={t.filePath} on={(x) => set('filePath', x)} placeholder="vault.enc" />
             </div>
-            <Secret label="访问令牌（PAT，需 repo / read_repository+write_repository 权限）" v={t.token} on={(x) => set('token', x)} editing={editing} />
-            <Field label="自建实例 API 地址（可选）" v={t.apiBase} on={(x) => set('apiBase', x)} placeholder={draft.type === 'gitlab' ? 'https://gitlab.example.com/api/v4' : 'https://api.github.com'} />
+            <Secret
+              label={
+                draft.type === 'gitee'
+                  ? '私人令牌（需 projects 权限）'
+                  : '访问令牌（PAT，需 repo / read_repository+write_repository 权限）'
+              }
+              v={t.token}
+              on={(x) => set('token', x)}
+              editing={editing}
+            />
+            <Field
+              label="自建实例 API 地址（可选）"
+              v={t.apiBase}
+              on={(x) => set('apiBase', x)}
+              placeholder={
+                draft.type === 'gitlab'
+                  ? 'https://gitlab.example.com/api/v4'
+                  : draft.type === 'gitee'
+                    ? 'https://gitee.com/api/v5'
+                    : 'https://api.github.com'
+              }
+            />
             <Banner tone="warn">
               请使用<strong>私有</strong>仓库；公开仓库里的加密密文人人可下载、可离线爆破主密码。保存前会自动检测，公开仓库需二次确认。
             </Banner>

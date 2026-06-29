@@ -31,6 +31,7 @@ import {
   clearRepoCache,
   fetchCnbGroups,
   loadOrgRepos,
+  ROOT_PROJECT,
   type CnbGroup,
   type CnbRepo,
   type RepoGroupNode,
@@ -148,94 +149,90 @@ export function CnbPage({
 
   return (
     <div className="flex-1 overflow-auto p-6">
-      <div className="mx-auto max-w-5xl">
-        {/* 连接设置 */}
-        <ConnectPanel
-          data={data}
-          persist={persist}
-          authed={authed}
-          setAuthed={setAuthed}
-          open={cfgOpen}
-          setOpen={setCfgOpen}
-        />
+      {/* 连接设置 */}
+      <ConnectPanel
+        data={data}
+        persist={persist}
+        authed={authed}
+        setAuthed={setAuthed}
+        open={cfgOpen}
+        setOpen={setCfgOpen}
+      />
 
-        {/* 工具条 */}
-        {cfg.token && orgs.length > 0 && (
-          <div className="mb-4 mt-[18px] flex flex-wrap items-center gap-2.5">
-            <div className="relative min-w-[220px] flex-1">
-              <Search
-                size={15}
-                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
-              />
-              <Input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="搜索仓库名 / 路径 / 描述"
-                className="pl-8"
-              />
-            </div>
-            {languages.length > 0 && (
-              <select
-                value={lang}
-                onChange={(e) => setLang(e.target.value)}
-                className="h-[38px] rounded-lg border border-gray-300 bg-surface px-3 text-sm text-gray-700 outline-none focus:border-brand-500"
-              >
-                <option value="">全部语言</option>
-                {languages.map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-            )}
-            {visibilities.length > 1 && (
-              <select
-                value={vis}
-                onChange={(e) => setVis(e.target.value)}
-                className="h-[38px] rounded-lg border border-gray-300 bg-surface px-3 text-sm text-gray-700 outline-none focus:border-brand-500"
-              >
-                <option value="">全部可见性</option>
-                {visibilities.map((v) => (
-                  <option key={v} value={v}>
-                    {visLabel(v)}
-                  </option>
-                ))}
-              </select>
-            )}
-            <Button variant="outline" disabled={anyLoading} onClick={refreshAll}>
-              {anyLoading ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
-                <RefreshCw size={14} />
-              )}{' '}
-              刷新
-            </Button>
-            <span className="text-[11.5px] text-gray-400">
-              {q || lang || vis ? `${totalShown} / ${totalAll}` : `${totalAll}`} 个仓库
-            </span>
-          </div>
-        )}
-
-        {/* 各组织的仓库树 */}
-        {cfg.token &&
-          orgs.map((slug) => (
-            <OrgBlock
-              key={slug}
-              slug={slug}
-              result={results[slug]}
-              filterRepo={filterRepo}
-              filtering={!!(q || lang || vis)}
-              onCopy={onCopy}
-              onOpen={(url) => void browser.tabs.create({ url }).catch(() => {})}
+      {/* 工具条 */}
+      {cfg.token && orgs.length > 0 && (
+        <div className="mb-4 mt-[18px] flex flex-wrap items-center gap-2.5">
+          <div className="relative min-w-[220px] flex-1">
+            <Search
+              size={15}
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
             />
-          ))}
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="搜索仓库名 / 路径 / 描述"
+              className="pl-8"
+            />
+          </div>
+          {languages.length > 0 && (
+            <select
+              value={lang}
+              onChange={(e) => setLang(e.target.value)}
+              className="h-[38px] rounded-lg border border-gray-300 bg-surface px-3 text-sm text-gray-700 outline-none focus:border-brand-500"
+            >
+              <option value="">全部语言</option>
+              {languages.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          )}
+          {visibilities.length > 1 && (
+            <select
+              value={vis}
+              onChange={(e) => setVis(e.target.value)}
+              className="h-[38px] rounded-lg border border-gray-300 bg-surface px-3 text-sm text-gray-700 outline-none focus:border-brand-500"
+            >
+              <option value="">全部可见性</option>
+              {visibilities.map((v) => (
+                <option key={v} value={v}>
+                  {visLabel(v)}
+                </option>
+              ))}
+            </select>
+          )}
+          <Button variant="outline" disabled={anyLoading} onClick={refreshAll}>
+            {anyLoading ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <RefreshCw size={14} />
+            )}{' '}
+            刷新
+          </Button>
+          <span className="text-[11.5px] text-gray-400">
+            {q || lang || vis ? `${totalShown} / ${totalAll}` : `${totalAll}`} 个仓库
+          </span>
+        </div>
+      )}
 
-        {cfg.token && orgs.length === 0 && (
-          <p className="mt-4 rounded-xl border border-dashed border-gray-200 py-12 text-center text-sm text-gray-400">
-            还没有选择要展示的组织。在上方「连接设置」里拉取并勾选组织。
-          </p>
-        )}
-      </div>
+      {/* 各组织仓库：左侧子组导航 + 右侧仓库网格（master-detail） */}
+      {cfg.token && orgs.length > 0 && (
+        <RepoBrowser
+          orgs={orgs}
+          results={results}
+          filterRepo={filterRepo}
+          filtering={!!(q || lang || vis)}
+          onCopy={onCopy}
+          onOpen={(url) => void browser.tabs.create({ url }).catch(() => {})}
+        />
+      )}
+
+      {cfg.token && orgs.length === 0 && (
+        <p className="mt-4 rounded-xl border border-dashed border-gray-200 py-12 text-center text-sm text-gray-400">
+          还没有选择要展示的组织。在上方「连接设置」里拉取并勾选组织。
+        </p>
+      )}
     </div>
   );
 }
@@ -454,125 +451,199 @@ function ConnectPanel({
   );
 }
 
-// --------------------------- 单个组织的仓库树 ---------------------------
-function OrgBlock({
-  slug,
-  result,
+// --------------------------- 仓库浏览：左侧子组导航 + 右侧仓库网格 ---------------------------
+// 把「组织 → 子组 → 项目 → 仓库」从纵向手风琴改成 master-detail：左栏紧凑列出全部子组
+// （多组织时按组织分节），右栏展示选中子组的仓库（按项目分节、多列密集网格），充分用横向空间。
+function RepoBrowser({
+  orgs,
+  results,
   filterRepo,
   filtering,
   onCopy,
   onOpen,
 }: {
-  slug: string;
-  result?: OrgResult;
+  orgs: string[];
+  results: Record<string, OrgResult>;
   filterRepo: (r: CnbRepo) => boolean;
   filtering: boolean;
   onCopy: (text: string, what: string) => void;
   onOpen: (url: string) => void;
 }) {
-  const tree = useMemo(() => {
-    if (!result?.repos) return [];
-    const filtered = result.repos.filter(filterRepo);
-    return buildRepoTree(slug, filtered);
-  }, [result?.repos, filterRepo, slug]);
+  // 跨组织拍平为「子组」列表，每项带稳定 key（org::子组段）。
+  const groups = useMemo(() => {
+    const out: Array<{ key: string; org: string; node: RepoGroupNode }> = [];
+    for (const org of orgs) {
+      const repos = results[org]?.repos;
+      if (!repos) continue;
+      for (const node of buildRepoTree(org, repos.filter(filterRepo))) {
+        out.push({ key: `${org}::${node.key}`, org, node });
+      }
+    }
+    return out;
+  }, [orgs, results, filterRepo]);
 
-  if (result?.loading && !result.repos) {
+  const [sel, setSel] = useState<string | null>(null);
+  const activeKey = sel && groups.some((g) => g.key === sel) ? sel : (groups[0]?.key ?? null);
+  const active = groups.find((g) => g.key === activeKey) ?? null;
+
+  const errorOrgs = orgs.filter((o) => results[o]?.error);
+  const anyRepos = orgs.some((o) => results[o]?.repos);
+  const stillLoading = orgs.some((o) => results[o]?.loading && !results[o]?.repos);
+  const multiOrg = orgs.length > 1;
+
+  if (!anyRepos && stillLoading) {
     return (
-      <div className="mb-4 flex items-center gap-2 rounded-[14px] border border-gray-200 bg-surface px-4 py-6 text-sm text-gray-400">
-        <Loader2 size={15} className="animate-spin" /> 正在拉取 {slug} 的仓库…
+      <div className="flex items-center gap-2 rounded-[14px] border border-gray-200 bg-surface px-4 py-6 text-sm text-gray-400">
+        <Loader2 size={15} className="animate-spin" /> 正在拉取仓库…
       </div>
     );
   }
-  if (result?.error) {
-    return (
-      <div className="mb-4">
-        <Banner tone="error">
-          拉取 {slug} 失败：{result.error}
-        </Banner>
-      </div>
-    );
-  }
-  if (!result?.repos) return null;
 
   return (
-    <section className="mb-5">
-      <div className="mb-2 flex items-center gap-2">
-        <FolderGit2 size={16} className="text-brand-600" />
-        <span className="text-[14px] font-bold">{slug}</span>
-        <span className="text-[11.5px] text-gray-400">
-          {tree.reduce((n, g) => n + g.repoCount, 0)} 个仓库
-          {filtering ? '（已筛选）' : ''}
-        </span>
-      </div>
-      {tree.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
-          {filtering ? '没有匹配的仓库' : '该组织下没有仓库'}
+    <div className="flex flex-col gap-3">
+      {errorOrgs.map((o) => (
+        <Banner key={o} tone="error">
+          拉取 {o} 失败：{results[o]?.error}
+        </Banner>
+      ))}
+
+      {groups.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-gray-200 py-12 text-center text-sm text-gray-400">
+          {filtering ? '没有匹配的仓库' : '所选组织下没有仓库'}
         </p>
       ) : (
-        <div className="flex flex-col gap-2.5">
-          {tree.map((g) => (
-            <GroupSection
-              key={g.key}
-              group={g}
-              defaultOpen={filtering || tree.length <= 2}
-              onCopy={onCopy}
-              onOpen={onOpen}
-            />
-          ))}
+        <div className="flex gap-4">
+          {/* 左：子组导航 */}
+          <div className="sticky top-0 max-h-[80vh] w-[244px] shrink-0 self-start overflow-auto rounded-[14px] border border-gray-200 bg-surface p-2">
+            {multiOrg ? (
+              orgs.map((org) => {
+                const gs = groups.filter((g) => g.org === org);
+                if (!gs.length) return null;
+                return (
+                  <div key={org} className="mb-1.5 last:mb-0">
+                    <div className="flex items-center gap-1.5 px-2 py-1 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">
+                      <FolderGit2 size={12} /> {org}
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      {gs.map((g) => (
+                        <GroupNavItem
+                          key={g.key}
+                          node={g.node}
+                          active={g.key === activeKey}
+                          onClick={() => setSel(g.key)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="flex flex-col gap-0.5">
+                {groups.map((g) => (
+                  <GroupNavItem
+                    key={g.key}
+                    node={g.node}
+                    active={g.key === activeKey}
+                    onClick={() => setSel(g.key)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 右：选中子组的仓库 */}
+          <div className="min-w-0 flex-1">
+            {active && (
+              <GroupDetail
+                org={active.org}
+                node={active.node}
+                multiOrg={multiOrg}
+                onCopy={onCopy}
+                onOpen={onOpen}
+              />
+            )}
+          </div>
         </div>
       )}
-    </section>
+    </div>
   );
 }
 
-// --------------------------- 子组织（可折叠）---------------------------
-function GroupSection({
-  group,
-  defaultOpen,
+// 左栏子组项：名称 + 仓库数；选中态高亮。
+function GroupNavItem({
+  node,
+  active,
+  onClick,
+}: {
+  node: RepoGroupNode;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={node.name}
+      className={cx(
+        'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors',
+        active ? 'bg-pribg text-prid' : 'text-gray-700 hover:bg-gray-50',
+      )}
+    >
+      <FolderGit2 size={14} className={cx('shrink-0', active ? 'text-prid' : 'text-gray-400')} />
+      <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">{node.name}</span>
+      <span
+        className={cx(
+          'shrink-0 rounded-full px-1.5 text-[10px] font-semibold',
+          active ? 'bg-surface/70 text-prid' : 'bg-gray-100 text-gray-400',
+        )}
+      >
+        {node.repoCount}
+      </span>
+    </button>
+  );
+}
+
+// 右栏明细：标题 + 按项目分节的多列仓库网格。
+function GroupDetail({
+  org,
+  node,
+  multiOrg,
   onCopy,
   onOpen,
 }: {
-  group: RepoGroupNode;
-  defaultOpen: boolean;
+  org: string;
+  node: RepoGroupNode;
+  multiOrg: boolean;
   onCopy: (text: string, what: string) => void;
   onOpen: (url: string) => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
-  useEffect(() => setOpen(defaultOpen), [defaultOpen]);
   return (
-    <section className="overflow-hidden rounded-[14px] border border-gray-200 bg-surface">
-      <div
-        onClick={() => setOpen((o) => !o)}
-        className="flex cursor-pointer items-center gap-2.5 px-4 py-3"
-      >
-        <ChevronRight
-          size={15}
-          className="shrink-0 text-gray-400 transition-transform"
-          style={{ transform: open ? 'rotate(90deg)' : 'none' }}
-        />
-        <span className="text-[13px] font-bold text-gray-800">{group.name}</span>
-        <span className="text-[11px] text-gray-400">
-          {group.projects.length} 项目 · {group.repoCount} 仓库
+    <section>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        {multiOrg && <span className="font-mono text-[11.5px] text-gray-400">{org} /</span>}
+        <FolderGit2 size={16} className="text-brand-600" />
+        <span className="text-[15px] font-bold text-gray-800">{node.name}</span>
+        <span className="text-[11.5px] text-gray-400">
+          {node.projects.length} 项目 · {node.repoCount} 仓库
         </span>
       </div>
-      {open && (
-        <div className="space-y-3 px-4 pb-4">
-          {group.projects.map((p) => (
-            <div key={p.key}>
+      <div className="flex flex-col gap-4">
+        {node.projects.map((p) => (
+          <div key={p.key}>
+            {p.name !== ROOT_PROJECT && (
               <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-semibold text-gray-500">
-                <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
-                {p.name}
-                <span className="font-mono text-[10px] font-normal text-gray-400">{p.key}</span>
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-400" />
+                <span className="shrink-0">{p.name}</span>
+                <span className="truncate font-mono text-[10px] font-normal text-gray-400">{p.key}</span>
               </div>
-              <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                {p.repos.map((r) => (
-                  <RepoCard key={r.id} repo={r} onCopy={onCopy} onOpen={onOpen} />
-                ))}
-              </div>
+            )}
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+              {p.repos.map((r) => (
+                <RepoCard key={r.id} repo={r} onCopy={onCopy} onOpen={onOpen} />
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

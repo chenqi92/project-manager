@@ -165,7 +165,32 @@ API：Repository Files API，用 `last_commit_id` 做乐观并发。
 
 ---
 
-## 5. Google Drive（OAuth，需自建 client_id）
+## 5. Gitee 私有仓库（私人令牌）
+
+**适用**：有 Gitee 账号、希望把密文放在码云私有仓库里。同样**必须 Private**。
+
+### 步骤
+
+1. 新建仓库，可见性选 **私有**。记下 owner（用户名/组织名）和 repo，默认分支通常为 `master` 或 `main`。
+2. 进入 Gitee → **设置** → **私人令牌** → **生成新令牌**。
+3. 勾选 `projects` 权限（需要读写仓库文件），生成后立刻复制。
+
+### 扩展里填
+
+| 字段 | 值 |
+|---|---|
+| owner（用户名/组织） | Gitee 用户名或组织名 |
+| 仓库名（repo） | 仓库路径名 |
+| 分支 | 按仓库实际默认分支，如 `master` / `main` |
+| 文件路径 | `vault.enc` |
+| 私人令牌 | 上面复制的 Gitee 私人令牌 |
+| 自建实例 API 地址 | 默认留空；自建 Gitee 填对应 `/api/v5` 地址 |
+
+API：Gitee v5 `Contents` API（GET/POST/PUT `/repos/{owner}/{repo}/contents/{path}`），用文件 `sha` 做乐观并发。
+
+---
+
+## 6. Google Drive（OAuth，需自建 client_id）
 
 > ⚠️ **重要**：Google **必须用「Web 应用」客户端类型**（只有它能登记 HTTPS 重定向 URI），且**即便用 PKCE 也强制要 client_secret**（Google 的特例，偏离标准 PKCE）。扩展里 client_secret 对 Google 是**必填**。
 
@@ -196,7 +221,7 @@ API：Repository Files API，用 `last_commit_id` 做乐观并发。
 
 ---
 
-## 6. OneDrive（OAuth，Azure / Entra 注册）
+## 7. OneDrive（OAuth，Azure / Entra 注册）
 
 > ⚠️ **重要**：重定向 URI **必须加在「移动和桌面应用程序」平台下，绝不能选 SPA**——SPA 平台会让 refresh_token **24 小时就过期**，破坏长期免登录同步。OneDrive 是公共客户端，**不需要 client_secret**。
 
@@ -221,7 +246,7 @@ API：Repository Files API，用 `last_commit_id` 做乐观并发。
 
 ---
 
-## 7. 群晖 Synology NAS（FileStation API + OTP）
+## 8. 群晖 Synology NAS（FileStation API + OTP）
 
 **适用**：自建群晖 NAS，尤其**账户开了两步验证（OTP）**。走 DSM FileStation Web API（不是 WebDAV），原生支持 OTP。
 

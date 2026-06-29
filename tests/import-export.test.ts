@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { buildExport, mergeVaults, parseImport } from '../lib/import-export';
-import { emptyVaultData } from '../lib/vault-core';
+import { createEncryptedVault, emptyVaultData } from '../lib/vault-core';
 import type { VaultData } from '../lib/types';
 
 const KDF = { type: 'pbkdf2', iterations: 1, hash: 'SHA-256' } as const;
@@ -86,6 +86,17 @@ describe('JSON 导入', () => {
     expect(merged.settings.dashboard!.activeBoardId).toBe('board-stress');
     expect(widget.config?.projectId).toBe('project-stable');
     expect(widget.config?.docId).toBe('doc-stable');
+  });
+});
+
+describe('加密备份导入', () => {
+  it('密码错误时返回明确提示', async () => {
+    const { encrypted } = await createEncryptedVault(jsonVault(), 'right-password', KDF);
+    const content = JSON.stringify({ format: 'project-env-manager.encrypted', ...encrypted });
+
+    await expect(parseImport('encrypted', content, 'wrong-password')).rejects.toThrow(
+      '备份密码不正确',
+    );
   });
 });
 

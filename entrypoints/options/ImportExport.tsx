@@ -16,6 +16,11 @@ function download(filename: string, mime: string, content: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function errorText(e: unknown, fallback: string): string {
+  const text = e instanceof Error ? e.message : String(e);
+  return text.trim() || fallback;
+}
+
 export function ImportExport({
   data,
   onClose,
@@ -31,15 +36,13 @@ export function ImportExport({
 }) {
   const body = (
     <div className="grid grid-cols-1 items-start gap-[18px] lg:grid-cols-2">
-      <ExportCard data={data} onBackedUp={onBackedUp} />
       <ImportCard onImported={onImported} />
+      <ExportCard data={data} onBackedUp={onBackedUp} />
     </div>
   );
   if (embedded) {
     return (
-      <div className="flex-1 overflow-auto p-6">
-        <div className="mx-auto max-w-[1040px]">{body}</div>
-      </div>
+      <div className="flex-1 overflow-auto p-6">{body}</div>
     );
   }
   return (
@@ -257,9 +260,15 @@ function ImportCard({ onImported }: { onImported: () => Promise<void> }) {
     try {
       payload = await resolvePayload();
     } catch (e) {
-      return setMsg({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
+      return setMsg({
+        tone: 'error',
+        text: errorText(e, '读取导入内容失败，请重新选择文件或粘贴内容'),
+      });
     }
     if (!payload) return setMsg({ tone: 'error', text: '请先选择文件或粘贴内容' });
+    if (format === 'encrypted' && !pw) {
+      return setMsg({ tone: 'error', text: '请输入备份密码才能导入加密备份' });
+    }
     setBusy(true);
     try {
       const { imported } = await api.import(
@@ -277,7 +286,15 @@ function ImportCard({ onImported }: { onImported: () => Promise<void> }) {
       setContent('');
       clearFile();
     } catch (e) {
-      setMsg({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
+      setMsg({
+        tone: 'error',
+        text: errorText(
+          e,
+          format === 'encrypted'
+            ? '导入失败：请检查备份密码是否正确，以及文件是否为本扩展导出的加密备份'
+            : '导入失败：请检查文件内容与导入类型是否匹配',
+        ),
+      });
     } finally {
       setBusy(false);
     }

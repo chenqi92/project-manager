@@ -18,6 +18,7 @@ export interface WidgetCtx {
   /** 打开「代码仓库」整页 */
   onOpenCnb: () => void;
   weatherEnabled: boolean;
+  hostPermissionVersion: number;
 }
 
 export interface WidgetProps {
