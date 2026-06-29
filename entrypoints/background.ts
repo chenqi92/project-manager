@@ -33,7 +33,14 @@ import type {
   VaultSettings,
   VaultStatus,
 } from '@/lib/types';
-import { linkUrls, newAccount, newEnvironment, newLink, newProject } from '@/lib/vault-ops';
+import {
+  linkUrls,
+  newAccount,
+  newEnvironment,
+  newLink,
+  newProject,
+  normalizeVaultData,
+} from '@/lib/vault-ops';
 import {
   createEncryptedVault,
   decryptVaultData,
@@ -1011,7 +1018,9 @@ async function setUnlocked(d: Uint8Array, data: VaultData): Promise<void> {
   applyAutoLock();
   resetLockTimer();
   // 一次性迁移旧的单一自托管同步配置 → syncTargets。
-  if (migrateSyncSettings(data)) await persistData(data);
+  let changed = migrateSyncSettings(data);
+  changed = normalizeVaultData(data) || changed;
+  if (changed) await persistData(data);
   await registerCaptureForData(data);
 }
 
@@ -1019,6 +1028,7 @@ async function setUnlocked(d: Uint8Array, data: VaultData): Promise<void> {
 async function persistData(data: VaultData): Promise<void> {
   const enc = await vaultBackend.load();
   if (!enc) throw new Error('保险箱不存在');
+  normalizeVaultData(data);
   stampSettingsIfChanged(data);
   await vaultBackend.save(await reencryptData(enc, data, dek!));
   cachedData = data;
@@ -1062,7 +1072,9 @@ async function ensureRestored(): Promise<void> {
   cachedSettingsFingerprint = settingsFingerprint(cachedData.settings);
   autoLockMinutes = cachedData.settings.autoLockMinutes ?? 15;
   applyAutoLock();
-  if (migrateSyncSettings(cachedData)) await persistData(cachedData);
+  let changed = migrateSyncSettings(cachedData);
+  changed = normalizeVaultData(cachedData) || changed;
+  if (changed) await persistData(cachedData);
 }
 
 async function requireUnlocked(): Promise<void> {
@@ -1105,6 +1117,10 @@ async function adoptSyncedVault(enc: NonNullable<Awaited<ReturnType<typeof vault
   autoLockMinutes = cachedData.settings.autoLockMinutes ?? 15;
   applyAutoLock();
   resetLockTimer();
+  if (normalizeVaultData(cachedData)) {
+    await persistData(cachedData);
+    return;
+  }
   await registerCaptureForData(cachedData);
 }
 

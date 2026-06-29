@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildExport, mergeVaults, parseImport } from '../lib/import-export';
 import { createEncryptedVault, emptyVaultData } from '../lib/vault-core';
 import type { VaultData } from '../lib/types';
+import { newAccount, newEnvironment, newLink, newProject } from '../lib/vault-ops';
 
 const KDF = { type: 'pbkdf2', iterations: 1, hash: 'SHA-256' } as const;
 
@@ -97,6 +98,27 @@ describe('加密备份导入', () => {
     await expect(parseImport('encrypted', content, 'wrong-password')).rejects.toThrow(
       '备份密码不正确',
     );
+  });
+});
+
+describe('导入合并', () => {
+  it('环境名称相同但类型不同不会被合并到同一个环境', () => {
+    const base = emptyVaultData();
+    const existing = newProject({ name: '同名项目' });
+    existing.environments = [newEnvironment({ name: '默认', kind: 'dev' })];
+    base.projects.push(existing);
+
+    const incoming = emptyVaultData();
+    const project = newProject({ name: '同名项目' });
+    const link = newLink({ name: '后台', url: 'https://admin.example.test' });
+    link.accounts.push(newAccount({ label: '管理员', username: 'admin', password: 'pw' }));
+    project.environments = [newEnvironment({ name: '默认', kind: 'prod', links: [link] })];
+    incoming.projects.push(project);
+
+    const { data, imported } = mergeVaults(base, incoming, 'merge');
+
+    expect(imported).toBe(1);
+    expect(data.projects[0]!.environments.map((e) => e.kind)).toEqual(['dev', 'prod']);
   });
 });
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/messaging';
 import { VAULT_LOCKED_MSG, type VaultData, type VaultStatus } from '@/lib/types';
+import { normalizeVaultData } from '@/lib/vault-ops';
 
 export interface VaultController {
   status: VaultStatus | null;
@@ -81,10 +82,12 @@ export function useVault(): VaultController {
   }, []);
 
   const save = useCallback(async (next: VaultData) => {
-    const op = saveChain.current.catch(() => {}).then(() => api.save(next));
+    const prepared = structuredClone(next);
+    normalizeVaultData(prepared);
+    const op = saveChain.current.catch(() => {}).then(() => api.save(prepared));
     saveChain.current = op.catch(() => {});
     await op;
-    setData(next);
+    setData(prepared);
   }, []);
 
   const checkLocked = useCallback(async () => {

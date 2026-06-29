@@ -90,6 +90,43 @@ describe('mergeVaultData', () => {
     expect(m.projects[0]!.memos?.map((x) => x.text)).toEqual(['上线前检查']);
   });
 
+  it('同步合并后按环境类型和名称归并重复环境', () => {
+    const linkA = newLink({ name: '登录页', url: 'https://example.test/#/login' });
+    const linkB = newLink({ name: '开启终端', url: 'https://example.test/#/index' });
+    const envA = {
+      ...newEnvironment({ name: '默认', kind: 'prod', updatedAt: 100 }),
+      id: 'env-a',
+      links: [linkA],
+    };
+    const envB = {
+      ...newEnvironment({ name: ' 默认 ', kind: 'prod', updatedAt: 200 }),
+      id: 'env-b',
+      links: [linkB],
+    };
+    const local: Project = {
+      ...newProject({ name: '荆二' }),
+      id: 'p1',
+      updatedAt: 100,
+      environments: [envA],
+    };
+    const remote: Project = {
+      ...newProject({ name: '荆二' }),
+      id: 'p1',
+      updatedAt: 200,
+      environments: [envB],
+    };
+
+    const m = mergeVaultData(vault([local]), vault([remote]), NOW);
+
+    expect(m.projects[0]!.environments).toHaveLength(1);
+    expect(m.projects[0]!.environments[0]!.name).toBe('默认');
+    expect(m.projects[0]!.environments[0]!.links.map((l) => l.name)).toEqual([
+      '登录页',
+      '开启终端',
+    ]);
+    expect(m.tombstones).toContainEqual({ id: 'env-b', deletedAt: NOW });
+  });
+
   it('文档和备忘删除墓碑会阻止旧副本复活', () => {
     const doc = { ...newDoc({ title: '旧文档' }), id: 'd1', updatedAt: NOW - 2000 };
     const memo = { ...newMemo({ text: '旧待办' }), id: 'm1', updatedAt: NOW - 2000 };

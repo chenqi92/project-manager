@@ -137,6 +137,130 @@ export function addTombstone(data: VaultData, id: string): void {
   data.tombstones.push({ id, deletedAt: now() });
 }
 
+const DEFAULT_ENV_NAME = '默认';
+
+function normalizeEnvName(name: string | undefined): string {
+  return (name ?? '').replace(/\s+/g, ' ').trim() || DEFAULT_ENV_NAME;
+}
+
+function envKey(env: Environment): string {
+  return `${env.kind}\0${normalizeEnvName(env.name).toLowerCase()}`;
+}
+
+function mergeText(a: string | undefined, b: string | undefined): string | undefined {
+  const left = (a ?? '').trim();
+  const right = (b ?? '').trim();
+  if (!left) return right || undefined;
+  if (!right || left === right) return left;
+  return `${left}\n\n${right}`;
+}
+
+function mergeGitRepos(a: GitRepo[] | undefined, b: GitRepo[] | undefined): GitRepo[] | undefined {
+  const out: GitRepo[] = [];
+  const seen = new Set<string>();
+  for (const repo of [...(a ?? []), ...(b ?? [])]) {
+    const key = [
+      repo.url.trim().toLowerCase(),
+      (repo.branch ?? '').trim().toLowerCase(),
+      (repo.label ?? '').trim().toLowerCase(),
+    ].join('\0');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(repo);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+function mergeAccountsById(target: PlatformLink, source: PlatformLink): boolean {
+  let changed = false;
+  const byId = new Map(target.accounts.map((a) => [a.id, a]));
+  for (const account of source.accounts) {
+    const existing = byId.get(account.id);
+    if (!existing) {
+      target.accounts.push(account);
+      changed = true;
+      continue;
+    }
+    if (account.updatedAt > existing.updatedAt) {
+      Object.assign(existing, account);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function mergeLinksById(target: Environment, source: Environment): boolean {
+  let changed = false;
+  const byId = new Map(target.links.map((l) => [l.id, l]));
+  for (const link of source.links) {
+    const existing = byId.get(link.id);
+    if (!existing) {
+      target.links.push(link);
+      changed = true;
+      continue;
+    }
+    if (link.updatedAt > existing.updatedAt) {
+      Object.assign(existing, { ...link, accounts: existing.accounts });
+      changed = true;
+    }
+    if (mergeAccountsById(existing, link)) changed = true;
+    existing.updatedAt = Math.max(existing.updatedAt, link.updatedAt);
+  }
+  return changed;
+}
+
+function upsertTombstone(data: VaultData, id: string, deletedAt: number): void {
+  data.tombstones = data.tombstones ?? [];
+  const existing = data.tombstones.find((t) => t.id === id);
+  if (existing) existing.deletedAt = Math.max(existing.deletedAt, deletedAt);
+  else data.tombstones.push({ id, deletedAt });
+}
+
+/**
+ * 业务层规范化：同一项目内「环境类型 + 环境名」相同的环境应视为同一环境。
+ * 同步合并仍按 id 收敛；这里补上用户语义层的归并，避免多设备/导入后出现两个“生产 / 默认”。
+ */
+export function normalizeVaultData(data: VaultData, timestamp: number = now()): boolean {
+  let changed = false;
+
+  for (const project of data.projects) {
+    const kept: Environment[] = [];
+    const byKey = new Map<string, Environment>();
+
+    for (const env of project.environments) {
+      const name = normalizeEnvName(env.name);
+      if (env.name !== name) {
+        env.name = name;
+        env.updatedAt = Math.max(env.updatedAt, timestamp);
+        changed = true;
+      }
+
+      const key = envKey(env);
+      const target = byKey.get(key);
+      if (!target) {
+        byKey.set(key, env);
+        kept.push(env);
+        continue;
+      }
+
+      target.note = mergeText(target.note, env.note);
+      target.gitRepos = mergeGitRepos(target.gitRepos, env.gitRepos);
+      if (mergeLinksById(target, env)) changed = true;
+      target.updatedAt = Math.max(target.updatedAt, env.updatedAt, timestamp);
+      upsertTombstone(data, env.id, Math.max(timestamp, env.updatedAt));
+      changed = true;
+    }
+
+    if (kept.length !== project.environments.length) {
+      project.environments = kept;
+      project.updatedAt = Math.max(project.updatedAt, timestamp);
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 export const ENV_KIND_LABELS: Record<Environment['kind'], string> = {
   dev: '开发',
   test: '测试',

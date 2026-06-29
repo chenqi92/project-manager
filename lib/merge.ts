@@ -13,6 +13,7 @@ import type {
   VaultSettings,
   VaultData,
 } from './types';
+import { normalizeVaultData } from './vault-ops';
 
 const PRUNE_MS = 365 * 24 * 60 * 60 * 1000; // 墓碑保留 365 天：长期离线的设备重连后，避免它带回的旧副本把已删项「复活」。
 
@@ -64,12 +65,14 @@ export function mergeVaultData(
     .filter(([, d]) => d >= nowMs - PRUNE_MS)
     .map(([id, deletedAt]) => ({ id, deletedAt }));
 
-  return {
+  const result: VaultData = {
     version: Math.max(local.version, remote.version),
     projects,
     settings: mergeSettings(local.settings, remote.settings),
     tombstones,
   };
+  normalizeVaultData(result, nowMs);
+  return result;
 }
 
 function mergeSettings(local: VaultSettings, remote: VaultSettings): VaultSettings {

@@ -161,7 +161,9 @@ export function mergeVaults(
       continue;
     }
     for (const inEnv of inProj.environments) {
-      let env = proj.environments.find((e) => lc(e.name) === lc(inEnv.name));
+      let env = proj.environments.find(
+        (e) => e.kind === inEnv.kind && lc(e.name) === lc(inEnv.name),
+      );
       if (!env) {
         env = reidEnv(inEnv);
         proj.environments.push(env);
