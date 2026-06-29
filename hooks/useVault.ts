@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/messaging';
-import type { VaultData, VaultStatus } from '@/lib/types';
+import { VAULT_LOCKED_MSG, type VaultData, type VaultStatus } from '@/lib/types';
 
 export interface VaultController {
   status: VaultStatus | null;
@@ -24,8 +24,20 @@ export function useVault(): VaultController {
   const saveChain = useRef(Promise.resolve());
 
   const syncData = useCallback(async (s: VaultStatus) => {
-    if (s.initialized && !s.locked) setData(await api.get());
-    else setData(null);
+    if (!s.initialized || s.locked) {
+      setData(null);
+      return;
+    }
+    try {
+      setData(await api.get());
+    } catch (e) {
+      if (e instanceof Error && e.message === VAULT_LOCKED_MSG) {
+        setStatus({ ...s, locked: true });
+        setData(null);
+        return;
+      }
+      throw e;
+    }
   }, []);
 
   const refresh = useCallback(async () => {
@@ -35,7 +47,12 @@ export function useVault(): VaultController {
   }, [syncData]);
 
   useEffect(() => {
-    refresh().finally(() => setLoading(false));
+    refresh()
+      .catch((e) => {
+        console.warn('vault refresh failed:', e);
+        setData(null);
+      })
+      .finally(() => setLoading(false));
     api.activity().catch(() => {});
   }, [refresh]);
 
@@ -70,10 +87,6 @@ export function useVault(): VaultController {
     setData(next);
   }, []);
 
-  const reload = useCallback(async () => {
-    setData(await api.get());
-  }, []);
-
   const checkLocked = useCallback(async () => {
     const s = await api.status();
     if (s.locked) {
@@ -82,6 +95,18 @@ export function useVault(): VaultController {
     }
     return s.locked;
   }, []);
+
+  const reload = useCallback(async () => {
+    try {
+      setData(await api.get());
+    } catch (e) {
+      if (e instanceof Error && e.message === VAULT_LOCKED_MSG) {
+        await checkLocked();
+        return;
+      }
+      throw e;
+    }
+  }, [checkLocked]);
 
   return { status, data, loading, refresh, unlock, create, lock, save, reload, checkLocked };
 }
