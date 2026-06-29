@@ -104,6 +104,23 @@ const PAGE_TITLES = {
   cnb: '代码仓库',
 } as const;
 
+function hostOf(origin: string): string {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return origin;
+  }
+}
+
+type CaptureDraft = {
+  url: string;
+  title: string;
+  username?: string;
+  password?: string;
+  accountLabel?: string;
+  pendingId?: string;
+};
+
 export default function App() {
   const vault = useVault();
   const { status, data, loading } = vault;
@@ -142,11 +159,15 @@ export default function App() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [capture, setCapture] = useState(() => {
+  const [capture, setCapture] = useState<CaptureDraft | null>(() => {
     const p = new URLSearchParams(location.search);
     return p.get('capture') === '1'
       ? { url: p.get('url') ?? '', title: p.get('title') ?? '' }
       : null;
+  });
+  const [capturePendingId, setCapturePendingId] = useState(() => {
+    const p = new URLSearchParams(location.search);
+    return p.get('capturePending') || null;
   });
   const [loginHandoff, setLoginHandoff] = useState(() => {
     const p = new URLSearchParams(location.search);
@@ -159,6 +180,28 @@ export default function App() {
     applyTheme(data?.settings.theme);
     return watchSystemTheme(() => data?.settings.theme);
   }, [data?.settings.theme]);
+
+  useEffect(() => {
+    if (!data || !capturePendingId || capture) return;
+    let active = true;
+    api
+      .capturePending(capturePendingId)
+      .then((p) => {
+        if (!active || !p) return;
+        setCapture({
+          url: p.url,
+          title: p.linkName || hostOf(p.origin),
+          username: p.username,
+          password: p.password,
+          accountLabel: p.kind === 'update' ? p.linkName || '更新' : '捕获',
+          pendingId: p.id,
+        });
+      })
+      .catch((e) => flash('读取登录捕获失败：' + (e instanceof Error ? e.message : String(e))));
+    return () => {
+      active = false;
+    };
+  }, [data, capturePendingId, capture]);
 
   // 标签页重新获得焦点 / 变为可见时，探测后台是否已锁定（如空闲自动锁定）。已锁定则切到
   // 锁屏，避免停留在「已解锁」的旧界面、直到改东西保存时才报错。
@@ -868,13 +911,19 @@ export default function App() {
           data={data}
           initialUrl={capture.url}
           initialTitle={capture.title}
+          initialUsername={capture.username}
+          initialPassword={capture.password}
+          initialAccountLabel={capture.accountLabel}
           onClose={() => {
             setCapture(null);
+            setCapturePendingId(null);
             history.replaceState(null, '', location.pathname);
           }}
           onSave={async (next) => {
             await vault.save(next);
+            if (capture.pendingId) await api.captureDismiss(capture.pendingId).catch(() => {});
             setCapture(null);
+            setCapturePendingId(null);
             history.replaceState(null, '', location.pathname);
             flash('已保存到保险箱');
           }}

@@ -17,12 +17,18 @@ export function CaptureModal({
   data,
   initialUrl,
   initialTitle,
+  initialUsername,
+  initialPassword,
+  initialAccountLabel,
   onClose,
   onSave,
 }: {
   data: VaultData;
   initialUrl: string;
   initialTitle: string;
+  initialUsername?: string;
+  initialPassword?: string;
+  initialAccountLabel?: string;
   onClose: () => void;
   onSave: (next: VaultData) => Promise<void>;
 }) {
@@ -33,10 +39,10 @@ export function CaptureModal({
   const [envKind, setEnvKind] = useState<EnvKind>('dev');
   const [linkName, setLinkName] = useState(initialTitle || '');
   const [url, setUrl] = useState(initialUrl);
-  const [withAccount, setWithAccount] = useState(false);
-  const [label, setLabel] = useState('');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [withAccount, setWithAccount] = useState(Boolean(initialUsername || initialPassword || initialAccountLabel));
+  const [label, setLabel] = useState(initialAccountLabel ?? '');
+  const [username, setUsername] = useState(initialUsername ?? '');
+  const [password, setPassword] = useState(initialPassword ?? '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 

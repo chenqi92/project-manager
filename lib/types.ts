@@ -467,11 +467,14 @@ export interface VaultStatus {
 
 /** 登录捕获：检测到一次登录后等待用户确认保存/更新 */
 export interface CapturePending {
+  id?: string;
   kind: 'new' | 'update';
   origin: string;
   url: string;
   username: string;
   password: string;
+  tabId?: number;
+  createdAt?: number;
   accountId?: string;
   /** 展示用：匹配到的链接名（update 时） */
   linkName?: string;

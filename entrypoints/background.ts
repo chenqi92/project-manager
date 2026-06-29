@@ -1,5 +1,5 @@
 import { browser } from 'wxt/browser';
-import { fillCredentialsInPage, fillTotpInPage, getOrigin } from '@/lib/autofill';
+import { fillCredentialsInPage, fillTotpInPage, fillUsernameInPage, getOrigin } from '@/lib/autofill';
 import { fromB64, toB64 } from '@/lib/crypto';
 import { flatten, matchForUrl, search } from '@/lib/search';
 import { buildExport, mergeVaults, parseImport } from '@/lib/import-export';
@@ -59,7 +59,7 @@ let autoLockMinutes = 15;
 let lockTimer: ReturnType<typeof setTimeout> | null = null;
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let clipboardOffscreenReady = false;
-let pendingCapture: CapturePending | null = null;
+let pendingCaptures: Record<string, CapturePending> = {};
 
 export default defineBackground(() => {
   browser.storage.session
@@ -185,8 +185,10 @@ async function handle(msg: Msg, sender?: MsgSender): Promise<MsgResponse<unknown
   const pageMessage =
     msg.type === 'capture:login' ||
     msg.type === 'capture:save' ||
+    msg.type === 'capture:editSave' ||
     msg.type === 'capture:dismiss' ||
     msg.type === 'assist:matches' ||
+    msg.type === 'assist:fillUsername' ||
     msg.type === 'assist:fill' ||
     msg.type === 'assist:fillTotp';
   if ((senderUrl.startsWith('http://') || senderUrl.startsWith('https://')) && !pageMessage) {
@@ -482,6 +484,9 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
     case 'assist:matches':
       return assistMatches(sender);
 
+    case 'assist:fillUsername':
+      return assistFillUsername(sender, msg.accountId, msg.submit === true);
+
     case 'assist:fill':
       return assistFill(sender, msg.accountId, msg.submit === true);
 
@@ -492,16 +497,19 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       // 只信任 sender 的真实来源，丢弃消息体里可被伪造的 origin 字段；并要求 url 同源。
       const trusted = sender?.origin ?? getOrigin(sender?.url ?? '');
       if (!trusted || trusted !== getOrigin(msg.url)) return;
-      return handleCaptureLogin(trusted, msg.url, msg.username, msg.password);
+      return handleCaptureLogin(trusted, msg.url, msg.username, msg.password, sender?.tab?.id);
     }
     case 'capture:pending':
       await requireUnlocked();
-      return getPending();
+      return getPending(msg.id);
     case 'capture:save':
-      await applyCapture(senderOrigin(sender));
+      await applyCapture(msg.id, senderOrigin(sender), sender?.tab?.id);
+      return;
+    case 'capture:editSave':
+      await openCaptureEditor(msg.id, senderOrigin(sender), sender?.tab?.id);
       return;
     case 'capture:dismiss':
-      await clearPending(senderOrigin(sender));
+      await clearPending(msg.id, senderOrigin(sender), sender?.tab?.id);
       return;
   }
 }
@@ -560,6 +568,20 @@ async function findAssistEntry(sender: MsgSender | undefined, accountId: string)
   const tabId = sender?.tab?.id;
   if (tabId === undefined) throw new Error('无法定位当前标签页');
   return { data, entry, tabId };
+}
+
+async function assistFillUsername(
+  sender: MsgSender | undefined,
+  accountId: string,
+  submit: boolean,
+): Promise<unknown> {
+  const { entry, tabId } = await findAssistEntry(sender, accountId);
+  const res = await browser.scripting.executeScript({
+    target: { tabId },
+    func: fillUsernameInPage,
+    args: [entry.username, submit],
+  });
+  return res[0]?.result ?? { ok: true };
 }
 
 async function assistFill(
@@ -659,7 +681,15 @@ async function handleCaptureLogin(
   url: string,
   username: string,
   password: string,
-): Promise<{ pending: true; kind: CapturePending['kind']; origin: string; username: string; linkName?: string } | null> {
+  tabId?: number,
+): Promise<{
+  pending: true;
+  id?: string;
+  kind: CapturePending['kind'];
+  origin: string;
+  username: string;
+  linkName?: string;
+} | null> {
   await ensureRestored();
   if (!dek || !cachedData || !password) return null; // 锁定时忽略
 
@@ -686,28 +716,42 @@ async function handleCaptureLogin(
     return null; // 默认不捕获保险箱外的任意授权站点
   }
   if (exactSame) {
-    await clearPending(origin);
+    await clearPending(undefined, origin, tabId);
     return null; // 已是最新，无需提示
   }
   let pending: CapturePending;
   if (matchAccountId) {
-    pending = { kind: 'update', origin, url, username, password, accountId: matchAccountId, linkName };
+    pending = {
+      kind: 'update',
+      origin,
+      url,
+      username,
+      password,
+      tabId,
+      accountId: matchAccountId,
+      linkName,
+    };
   } else {
-    pending = { kind: 'new', origin, url, username, password, linkName };
+    pending = { kind: 'new', origin, url, username, password, tabId, linkName };
   }
-  await savePending(pending);
+  const saved = await savePending(pending);
   return {
     pending: true,
-    kind: pending.kind,
-    origin: pending.origin,
-    username: pending.username,
-    linkName: pending.linkName,
+    kind: saved.kind,
+    origin: saved.origin,
+    username: saved.username,
+    linkName: saved.linkName,
+    id: saved.id,
   };
 }
 
-async function applyCapture(senderOrigin?: string | null): Promise<void> {
+async function applyCapture(
+  id?: string,
+  senderOrigin?: string | null,
+  tabId?: number,
+): Promise<void> {
   await requireUnlocked();
-  const p = await getPending();
+  const p = await getPendingForContext(id, senderOrigin, tabId);
   if (!p) return;
   if (senderOrigin && p.origin !== senderOrigin) throw new Error('保存来源与当前网页不一致');
   const data = structuredClone(cachedData!);
@@ -753,31 +797,92 @@ async function applyCapture(senderOrigin?: string | null): Promise<void> {
 
   await persistData(data);
   scheduleAutoSync();
-  await clearPending();
+  await clearPending(p.id);
 }
 
-async function savePending(p: CapturePending): Promise<void> {
-  pendingCapture = p;
-  await browser.storage.session.set({ [PENDING_KEY]: p });
+async function savePending(p: CapturePending): Promise<CapturePending> {
+  const id = p.id ?? pendingId(p.origin, p.tabId);
+  const next = { ...p, id, createdAt: Date.now() };
+  pendingCaptures[id] = next;
+  await browser.storage.session.set({ [PENDING_KEY]: pendingCaptures });
   browser.action.setBadgeText({ text: '1' }).catch(() => {});
   browser.action.setBadgeBackgroundColor?.({ color: '#e11d48' }).catch(() => {});
+  return next;
 }
 
-async function clearPending(origin?: string | null): Promise<void> {
-  if (origin) {
-    const p = await getPending();
-    if (p && p.origin !== origin) return;
+async function clearPending(id?: string, origin?: string | null, tabId?: number): Promise<void> {
+  await ensurePendingRestored();
+  const p = await getPendingForContext(id, origin, tabId);
+  if (!p?.id) return;
+  delete pendingCaptures[p.id];
+  if (Object.keys(pendingCaptures).length > 0) {
+    await browser.storage.session.set({ [PENDING_KEY]: pendingCaptures });
+    browser.action.setBadgeText({ text: String(Math.min(9, Object.keys(pendingCaptures).length)) }).catch(() => {});
+  } else {
+    await browser.storage.session.remove(PENDING_KEY);
+    browser.action.setBadgeText({ text: '' }).catch(() => {});
   }
-  pendingCapture = null;
-  await browser.storage.session.remove(PENDING_KEY);
-  browser.action.setBadgeText({ text: '' }).catch(() => {});
 }
 
-async function getPending(): Promise<CapturePending | null> {
-  if (pendingCapture) return pendingCapture;
+async function getPending(id?: string): Promise<CapturePending | null> {
+  await ensurePendingRestored();
+  if (id) return pendingCaptures[id] ?? null;
+  return latestPending();
+}
+
+async function getPendingForContext(
+  id?: string,
+  origin?: string | null,
+  tabId?: number,
+): Promise<CapturePending | null> {
+  await ensurePendingRestored();
+  if (id && pendingCaptures[id]) return pendingCaptures[id];
+  const list = Object.values(pendingCaptures).sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  if (origin && tabId !== undefined) {
+    const exact = list.find((p) => p.origin === origin && p.tabId === tabId);
+    if (exact) return exact;
+  }
+  if (origin) {
+    const sameOrigin = list.find((p) => p.origin === origin);
+    if (sameOrigin) return sameOrigin;
+  }
+  return list[0] ?? null;
+}
+
+function pendingId(origin: string, tabId?: number): string {
+  return `${tabId ?? 'tab'}:${origin}`;
+}
+
+function latestPending(): CapturePending | null {
+  const list = Object.values(pendingCaptures);
+  if (list.length === 0) return null;
+  return list.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))[0] ?? null;
+}
+
+async function ensurePendingRestored(): Promise<void> {
+  if (Object.keys(pendingCaptures).length > 0) return;
   const s = await browser.storage.session.get(PENDING_KEY);
-  pendingCapture = (s[PENDING_KEY] as CapturePending | undefined) ?? null;
-  return pendingCapture;
+  const stored = s[PENDING_KEY] as Record<string, CapturePending> | CapturePending | undefined;
+  if (!stored) return;
+  if ('origin' in stored) {
+    const legacy = stored as CapturePending;
+    pendingCaptures = { [legacy.id ?? pendingId(legacy.origin, legacy.tabId)]: legacy };
+  } else {
+    pendingCaptures = stored;
+  }
+}
+
+async function openCaptureEditor(
+  id?: string,
+  origin?: string | null,
+  tabId?: number,
+): Promise<void> {
+  const p = await getPendingForContext(id, origin, tabId);
+  if (!p) throw new Error('没有可编辑的登录捕获');
+  const url =
+    browser.runtime.getURL('/options.html') +
+    `?capturePending=${encodeURIComponent(p.id ?? '')}`;
+  await browser.tabs.create({ url });
 }
 
 /** 打开链接 -> 等加载完成 -> 校验最终 origin 与链接一致 -> 注入填充（可选自动提交）。 */
@@ -928,7 +1033,7 @@ function lock(): void {
   dek = null;
   cachedData = null;
   cachedSettingsFingerprint = null;
-  pendingCapture = null;
+  pendingCaptures = {};
   if (lockTimer) {
     clearTimeout(lockTimer);
     lockTimer = null;

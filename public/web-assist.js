@@ -39,6 +39,33 @@
       (el) => el.value !== undefined && visible(el),
     );
 
+  const usernameFields = () =>
+    Array.from(
+      document.querySelectorAll(
+        'input[type="text"], input[type="email"], input[type="tel"], input:not([type])',
+      ),
+    ).filter((el) => {
+      if (el.type === 'password' || !visible(el)) return false;
+      const text = [
+        el.name,
+        el.id,
+        el.autocomplete,
+        el.inputMode,
+        el.placeholder,
+        el.getAttribute('aria-label') || '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      if (/(search|query|keyword|验证码|验证|code|otp|totp)/i.test(text)) return false;
+      return (
+        document.activeElement === el ||
+        el.type === 'email' ||
+        el.autocomplete === 'username' ||
+        el.autocomplete === 'email' ||
+        /(user|username|email|account|login|phone|mobile|apple.?id|账号|账户|邮箱|邮件|手机|电话|用户名)/i.test(text)
+      );
+    });
+
   const otpFields = () =>
     Array.from(document.querySelectorAll('input:not([type="password"]):not([type="hidden"])')).filter((el) => {
       if (!visible(el)) return false;
@@ -58,7 +85,39 @@
       );
     });
 
-  const hasLoginSurface = () => passwordFields().length > 0 || otpFields().length > 0;
+  const surfaceKind = () => {
+    if (passwordFields().length > 0) return 'password';
+    if (otpFields().length > 0) return 'otp';
+    if (usernameFields().length > 0) return 'username';
+    return 'none';
+  };
+
+  const preferredId = () => {
+    try {
+      return sessionStorage.getItem('pemAssistPreferredAccountId') || '';
+    } catch {
+      return '';
+    }
+  };
+
+  const remember = (accountId) => {
+    try {
+      sessionStorage.setItem('pemAssistPreferredAccountId', accountId);
+    } catch {
+      /* ignore private/session storage failures */
+    }
+  };
+
+  const sortMatches = (surface) => {
+    if (!snapshot?.matches?.length) return;
+    if (surface === 'otp') {
+      snapshot.matches.sort((a, b) => (a.hasTotp === b.hasTotp ? 0 : a.hasTotp ? -1 : 1));
+      return;
+    }
+    const preferred = preferredId();
+    if (!preferred) return;
+    snapshot.matches.sort((a, b) => (a.accountId === preferred ? -1 : b.accountId === preferred ? 1 : 0));
+  };
 
   const ensureRoot = () => {
     if (root) return root;
@@ -197,8 +256,16 @@
   const labelFor = (e) => e.accountLabel || e.username || e.linkName || '账号';
 
   const render = (message, tone = 'info') => {
+    const surface = surfaceKind();
+    sortMatches(surface);
     const shouldShowMatches =
-      !dismissed && snapshot && snapshot.enabled && snapshot.matches.length > 0 && hasLoginSurface();
+      !dismissed &&
+      snapshot &&
+      snapshot.enabled &&
+      snapshot.matches.length > 0 &&
+      (surface === 'password' ||
+        surface === 'username' ||
+        (surface === 'otp' && snapshot.matches.some((e) => e.hasTotp)));
     if (!capturePrompt && !shouldShowMatches) return destroy();
 
     const r = ensureRoot();
@@ -227,14 +294,24 @@
               ${
                 capturePrompt
                   ? `<button class="primary" data-act="save-capture">${capturePrompt.kind === 'update' ? '更新' : '保存'}</button>
+                     <button class="secondary" data-act="edit-capture">编辑</button>
                      <button class="secondary" data-act="dismiss-capture">忽略</button>`
-                  : `<button class="primary" data-act="fill" data-id="${esc(first.accountId)}">填充</button>
-                     <button class="secondary" data-act="login" data-id="${esc(first.accountId)}">登录</button>
-                     ${
-                       first.hasTotp
-                         ? `<button class="secondary" data-act="totp" data-id="${esc(first.accountId)}">验证码</button>`
-                         : ''
-                     }
+                  : `${
+                      surface === 'username'
+                        ? `<button class="primary" data-act="fill-user" data-id="${esc(first.accountId)}">填账号</button>
+                           <button class="secondary" data-act="continue-user" data-id="${esc(first.accountId)}">继续</button>`
+                        : surface === 'otp'
+                          ? first.hasTotp
+                            ? `<button class="primary" data-act="totp" data-id="${esc(first.accountId)}">验证码</button>`
+                            : ''
+                          : `<button class="primary" data-act="fill" data-id="${esc(first.accountId)}">填充</button>
+                             <button class="secondary" data-act="login" data-id="${esc(first.accountId)}">登录</button>
+                             ${
+                               first.hasTotp
+                                 ? `<button class="secondary" data-act="totp" data-id="${esc(first.accountId)}">验证码</button>`
+                                 : ''
+                             }`
+                    }
                      ${
                        matchCount > 1
                          ? `<button class="secondary" data-act="more">更多 ${matchCount}</button>`
@@ -255,9 +332,18 @@
                           <div class="title">${esc(e.linkName || e.projectName)} · ${esc(labelFor(e))}</div>
                           <div class="sub">${esc(e.username || '无用户名')} · ${esc(e.envName)}</div>
                         </div>
-                        <button class="tiny" data-act="fill" data-id="${esc(e.accountId)}">填充</button>
-                        <button class="tiny" data-act="login" data-id="${esc(e.accountId)}">登录</button>
-                        ${e.hasTotp ? `<button class="tiny" data-act="totp" data-id="${esc(e.accountId)}">验证码</button>` : ''}
+                        ${
+                          surface === 'username'
+                            ? `<button class="tiny" data-act="fill-user" data-id="${esc(e.accountId)}">填账号</button>
+                               <button class="tiny" data-act="continue-user" data-id="${esc(e.accountId)}">继续</button>`
+                            : surface === 'otp'
+                              ? e.hasTotp
+                                ? `<button class="tiny" data-act="totp" data-id="${esc(e.accountId)}">验证码</button>`
+                                : ''
+                              : `<button class="tiny" data-act="fill" data-id="${esc(e.accountId)}">填充</button>
+                                 <button class="tiny" data-act="login" data-id="${esc(e.accountId)}">登录</button>
+                                 ${e.hasTotp ? `<button class="tiny" data-act="totp" data-id="${esc(e.accountId)}">验证码</button>` : ''}`
+                        }
                       </div>`,
                     )
                     .join('')}
@@ -292,26 +378,43 @@
         return;
       }
       if (act === 'save-capture') {
-        await send({ type: 'capture:save' });
+        await send({ type: 'capture:save', id: capturePrompt?.id });
         capturePrompt = null;
         await loadSnapshot();
         render('已保存到保险箱');
         setTimeout(scheduleRefresh, 1400);
         return;
       }
+      if (act === 'edit-capture') {
+        await send({ type: 'capture:editSave', id: capturePrompt?.id });
+        render('已打开编辑保存');
+        return;
+      }
       if (act === 'dismiss-capture') {
-        await send({ type: 'capture:dismiss' });
+        await send({ type: 'capture:dismiss', id: capturePrompt?.id });
         capturePrompt = null;
         render('已忽略');
         setTimeout(scheduleRefresh, 900);
         return;
       }
+      if (act === 'fill-user' || act === 'continue-user') {
+        remember(accountId);
+        const res = await send({
+          type: 'assist:fillUsername',
+          accountId,
+          submit: act === 'continue-user',
+        });
+        render(res?.ok === false ? res.reason || '未能填账号' : act === 'continue-user' ? '已填账号并继续' : '已填账号', res?.ok === false ? 'warn' : 'info');
+        return;
+      }
       if (act === 'fill' || act === 'login') {
+        remember(accountId);
         const res = await send({ type: 'assist:fill', accountId, submit: act === 'login' });
         render(res?.ok === false ? res.reason || '未能填充' : act === 'login' ? '已填充并提交' : '已填充', res?.ok === false ? 'warn' : 'info');
         return;
       }
       if (act === 'totp') {
+        remember(accountId);
         const res = await send({ type: 'assist:fillTotp', accountId, submit: false });
         render(res?.ok === false ? res.reason || '未能填验证码' : '验证码已填充', res?.ok === false ? 'warn' : 'info');
       }

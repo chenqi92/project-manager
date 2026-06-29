@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { fillCredentialsInPage, fillTotpInPage, getOrigin, originsMatch } from '../lib/autofill';
+import {
+  fillCredentialsInPage,
+  fillTotpInPage,
+  fillUsernameInPage,
+  getOrigin,
+  originsMatch,
+} from '../lib/autofill';
 
 beforeEach(() => {
   document.body.innerHTML = '';
@@ -101,6 +107,43 @@ describe('fillCredentialsInPage', () => {
     fillCredentialsInPage('user@x.com', 'pw');
     expect((document.querySelector('#email') as HTMLInputElement).value).toBe('user@x.com');
     expect((document.querySelector('#search') as HTMLInputElement).value).toBe('');
+  });
+});
+
+describe('fillUsernameInPage', () => {
+  it('填充用户名/邮箱单步页面', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="email" autocomplete="username" />
+      </form>`;
+    const input = document.querySelector('input') as HTMLInputElement;
+    let inputEvents = 0;
+    input.addEventListener('input', () => inputEvents++);
+
+    const r = fillUsernameInPage('alice@example.com');
+    expect(r.ok).toBe(true);
+    expect(input.value).toBe('alice@example.com');
+    expect(inputEvents).toBeGreaterThan(0);
+  });
+
+  it('多个文本框时优先填当前聚焦字段', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" id="query" placeholder="Search" />
+        <input type="text" id="account" placeholder="Apple ID" />
+      </form>`;
+    const account = document.querySelector('#account') as HTMLInputElement;
+    account.focus();
+
+    const r = fillUsernameInPage('me@icloud.com');
+    expect(r.ok).toBe(true);
+    expect(account.value).toBe('me@icloud.com');
+    expect((document.querySelector('#query') as HTMLInputElement).value).toBe('');
+  });
+
+  it('没有用户名字段时返回失败', () => {
+    document.body.innerHTML = `<form><input type="password" /></form>`;
+    expect(fillUsernameInPage('alice').ok).toBe(false);
   });
 });
 

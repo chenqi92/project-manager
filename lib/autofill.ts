@@ -108,6 +108,90 @@ export function fillCredentialsInPage(
   return { ok: true };
 }
 
+/** 注入到目标页面执行的用户名/账号单步填充函数。 */
+export function fillUsernameInPage(username: string, submit = false): FillResult {
+  const value = username.trim();
+  if (!value) return { ok: false, reason: '用户名为空' };
+
+  const visible = (el: Element): boolean => {
+    const r = (el as HTMLElement).getBoundingClientRect();
+    const s = getComputedStyle(el as HTMLElement);
+    return (
+      r.width > 0 &&
+      r.height > 0 &&
+      s.visibility !== 'hidden' &&
+      s.display !== 'none'
+    );
+  };
+
+  const setValue = (el: HTMLInputElement, next: string): void => {
+    const proto = Object.getPrototypeOf(el) as object;
+    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    desc?.set ? desc.set.call(el, next) : (el.value = next);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  const fields = Array.from(
+    document.querySelectorAll<HTMLInputElement>(
+      'input[type="text"]:not([disabled]):not([readonly]), input[type="email"]:not([disabled]):not([readonly]), input[type="tel"]:not([disabled]):not([readonly]), input:not([type]):not([disabled]):not([readonly])',
+    ),
+  ).filter((el) => el.type !== 'password' && visible(el));
+
+  const textOf = (el: HTMLInputElement): string =>
+    [
+      el.name,
+      el.id,
+      el.autocomplete,
+      el.inputMode,
+      el.placeholder,
+      el.getAttribute('aria-label') ?? '',
+      el.getAttribute('data-testid') ?? '',
+    ]
+      .join(' ')
+      .toLowerCase();
+
+  const score = (el: HTMLInputElement): number => {
+    const text = textOf(el);
+    let n = 0;
+    if (document.activeElement === el) n += 8;
+    if (el.autocomplete === 'username' || el.autocomplete === 'email') n += 10;
+    if (el.type === 'email') n += 6;
+    if (/(user|username|email|account|login|phone|mobile|apple.?id|账号|账户|邮箱|邮件|手机|电话|用户名)/i.test(text)) n += 6;
+    if (/(search|query|keyword|验证码|验证|code|otp|totp)/i.test(text)) n -= 8;
+    return n;
+  };
+
+  const target = fields
+    .map((el) => ({ el, score: score(el) }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)[0]?.el;
+
+  if (!target) return { ok: false, reason: '页面上没找到用户名输入框' };
+  setValue(target, value);
+  if (submit) submitNear(target);
+  else target.focus();
+  return { ok: true };
+
+  function submitNear(el: HTMLInputElement): void {
+    setTimeout(() => {
+      const form = el.form;
+      if (form) {
+        const btn = form.querySelector<HTMLElement>(
+          'button[type="submit"], input[type="submit"], button:not([type])',
+        );
+        if (btn) btn.click();
+        else if (typeof form.requestSubmit === 'function') form.requestSubmit();
+        else form.submit();
+      } else {
+        el.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }),
+        );
+      }
+    }, 80);
+  }
+}
+
 /** 注入到目标页面执行的 TOTP/OTP 填充函数。 */
 export function fillTotpInPage(code: string, submit = false): FillResult {
   const value = code.trim();

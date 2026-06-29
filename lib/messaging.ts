@@ -88,13 +88,15 @@ export type Msg =
     }
   // 网页内助手（content script 发起；后台按 sender origin 二次校验）
   | { type: 'assist:matches' }
+  | { type: 'assist:fillUsername'; accountId: string; submit?: boolean }
   | { type: 'assist:fill'; accountId: string; submit?: boolean }
   | { type: 'assist:fillTotp'; accountId: string; submit?: boolean }
   // 登录捕获
   | { type: 'capture:login'; origin: string; url: string; username: string; password: string }
-  | { type: 'capture:pending' }
-  | { type: 'capture:save' }
-  | { type: 'capture:dismiss' };
+  | { type: 'capture:pending'; id?: string }
+  | { type: 'capture:save'; id?: string }
+  | { type: 'capture:editSave'; id?: string }
+  | { type: 'capture:dismiss'; id?: string };
 
 export interface ExportResult {
   filename: string;
@@ -202,7 +204,7 @@ export const api = {
   assistMatches: () => send<AssistSnapshot>({ type: 'assist:matches' }),
 
   // 登录捕获
-  capturePending: () => send<CapturePending | null>({ type: 'capture:pending' }),
-  captureSave: () => send<void>({ type: 'capture:save' }),
-  captureDismiss: () => send<void>({ type: 'capture:dismiss' }),
+  capturePending: (id?: string) => send<CapturePending | null>({ type: 'capture:pending', id }),
+  captureSave: (id?: string) => send<void>({ type: 'capture:save', id }),
+  captureDismiss: (id?: string) => send<void>({ type: 'capture:dismiss', id }),
 };
