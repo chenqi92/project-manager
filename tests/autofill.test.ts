@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { fillCredentialsInPage, getOrigin, originsMatch } from '../lib/autofill';
+import { fillCredentialsInPage, fillTotpInPage, getOrigin, originsMatch } from '../lib/autofill';
 
 beforeEach(() => {
   document.body.innerHTML = '';
@@ -101,5 +101,45 @@ describe('fillCredentialsInPage', () => {
     fillCredentialsInPage('user@x.com', 'pw');
     expect((document.querySelector('#email') as HTMLInputElement).value).toBe('user@x.com');
     expect((document.querySelector('#search') as HTMLInputElement).value).toBe('');
+  });
+});
+
+describe('fillTotpInPage', () => {
+  it('填充标准 one-time-code 输入框', () => {
+    document.body.innerHTML = `
+      <form>
+        <input autocomplete="one-time-code" inputmode="numeric" />
+      </form>`;
+    const input = document.querySelector('input') as HTMLInputElement;
+    let inputEvents = 0;
+    input.addEventListener('input', () => inputEvents++);
+
+    const r = fillTotpInPage('123456');
+    expect(r.ok).toBe(true);
+    expect(input.value).toBe('123456');
+    expect(inputEvents).toBeGreaterThan(0);
+  });
+
+  it('填充分格验证码输入框', () => {
+    document.body.innerHTML = `
+      <form>
+        <input maxlength="1" />
+        <input maxlength="1" />
+        <input maxlength="1" />
+        <input maxlength="1" />
+        <input maxlength="1" />
+        <input maxlength="1" />
+      </form>`;
+
+    const r = fillTotpInPage('654321');
+    expect(r.ok).toBe(true);
+    expect(Array.from(document.querySelectorAll('input')).map((el) => el.value).join('')).toBe(
+      '654321',
+    );
+  });
+
+  it('没有验证码输入框时返回失败', () => {
+    document.body.innerHTML = `<form><input type="text" name="search" /></form>`;
+    expect(fillTotpInPage('123456').ok).toBe(false);
   });
 });

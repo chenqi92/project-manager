@@ -107,3 +107,106 @@ export function fillCredentialsInPage(
   }
   return { ok: true };
 }
+
+/** 注入到目标页面执行的 TOTP/OTP 填充函数。 */
+export function fillTotpInPage(code: string, submit = false): FillResult {
+  const value = code.trim();
+  if (!value) return { ok: false, reason: '验证码为空' };
+
+  const visible = (el: Element): boolean => {
+    const r = (el as HTMLElement).getBoundingClientRect();
+    const s = getComputedStyle(el as HTMLElement);
+    return (
+      r.width > 0 &&
+      r.height > 0 &&
+      s.visibility !== 'hidden' &&
+      s.display !== 'none'
+    );
+  };
+
+  const setValue = (el: HTMLInputElement, next: string): void => {
+    const proto = Object.getPrototypeOf(el) as object;
+    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    desc?.set ? desc.set.call(el, next) : (el.value = next);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  const inputs = Array.from(
+    document.querySelectorAll<HTMLInputElement>(
+      'input:not([disabled]):not([readonly]), textarea:not([disabled]):not([readonly])',
+    ),
+  )
+    .filter((el) => {
+      const type = (el.getAttribute('type') || '').toLowerCase();
+      return type !== 'password' && type !== 'hidden' && visible(el);
+    })
+    .filter((el): el is HTMLInputElement => el instanceof HTMLInputElement);
+
+  const textOf = (el: HTMLInputElement): string =>
+    [
+      el.name,
+      el.id,
+      el.autocomplete,
+      el.inputMode,
+      el.placeholder,
+      el.getAttribute('aria-label') ?? '',
+      el.getAttribute('data-testid') ?? '',
+    ]
+      .join(' ')
+      .toLowerCase();
+
+  const score = (el: HTMLInputElement): number => {
+    const text = textOf(el);
+    let n = 0;
+    if (el.autocomplete === 'one-time-code') n += 10;
+    if (el.inputMode === 'numeric' || el.type === 'tel' || el.type === 'number') n += 3;
+    if (/(otp|totp|mfa|2fa|code|token|verify|verification|auth|验证码|验证|动态码)/i.test(text)) n += 6;
+    if ((el.maxLength > 0 && el.maxLength <= 10) || (el.size > 0 && el.size <= 10)) n += 1;
+    return n;
+  };
+
+  const single = inputs
+    .map((el) => ({ el, score: score(el) }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)[0]?.el;
+
+  if (single) {
+    setValue(single, value);
+    if (submit) submitNear(single);
+    else single.focus();
+    return { ok: true };
+  }
+
+  const boxes = inputs.filter((el) => {
+    const max = el.maxLength;
+    return (max === 1 || el.size === 1 || el.getAttribute('aria-label')?.match(/\d|digit/i)) && !el.value;
+  });
+  if (boxes.length >= value.length) {
+    [...value].forEach((ch, i) => setValue(boxes[i]!, ch));
+    const last = boxes[value.length - 1]!;
+    if (submit) submitNear(last);
+    else last.focus();
+    return { ok: true };
+  }
+
+  return { ok: false, reason: '页面上没找到验证码输入框' };
+
+  function submitNear(el: HTMLInputElement): void {
+    setTimeout(() => {
+      const form = el.form;
+      if (form) {
+        const btn = form.querySelector<HTMLElement>(
+          'button[type="submit"], input[type="submit"], button:not([type])',
+        );
+        if (btn) btn.click();
+        else if (typeof form.requestSubmit === 'function') form.requestSubmit();
+        else form.submit();
+      } else {
+        el.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }),
+        );
+      }
+    }, 80);
+  }
+}

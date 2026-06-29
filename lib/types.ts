@@ -353,6 +353,10 @@ export interface VaultSettings {
   syncAuto?: boolean;
   /** 填充后是否自动提交直接登录；只有 true 才开启 */
   autoSubmit?: boolean;
+  /** 网页内助手：在已授权站点显示账号候选、保存/更新提示、TOTP 填充入口 */
+  webAssist?: boolean;
+  /** 全站登录捕获：需用户额外授予 http(s) 全站权限，用于新网站登录后提示保存 */
+  webAssistAllSites?: boolean;
   /** 主题；undefined 视为跟随系统 */
   theme?: 'light' | 'dark' | 'system';
   /** 首页仪表盘布局 */
@@ -471,6 +475,25 @@ export interface CapturePending {
   accountId?: string;
   /** 展示用：匹配到的链接名（update 时） */
   linkName?: string;
+}
+
+export interface AssistEntry {
+  accountId: string;
+  projectName: string;
+  envName: string;
+  envKind: EnvKind;
+  linkName: string;
+  accountLabel: string;
+  username: string;
+  hasTotp: boolean;
+}
+
+export interface AssistSnapshot {
+  locked: boolean;
+  enabled: boolean;
+  origin: string;
+  autoSubmit: boolean;
+  matches: AssistEntry[];
 }
 
 export type ExportMode = 'encrypted' | 'json' | 'csv';

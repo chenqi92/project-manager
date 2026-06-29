@@ -5,6 +5,7 @@
 import { browser } from 'wxt/browser';
 import type { PreflightResult } from './sync-providers/types';
 import type {
+  AssistSnapshot,
   BioEnrollmentPublic,
   CapturePending,
   ExportMode,
@@ -85,6 +86,10 @@ export type Msg =
       password: string;
       submit: boolean;
     }
+  // 网页内助手（content script 发起；后台按 sender origin 二次校验）
+  | { type: 'assist:matches' }
+  | { type: 'assist:fill'; accountId: string; submit?: boolean }
+  | { type: 'assist:fillTotp'; accountId: string; submit?: boolean }
   // 登录捕获
   | { type: 'capture:login'; origin: string; url: string; username: string; password: string }
   | { type: 'capture:pending' }
@@ -192,6 +197,9 @@ export const api = {
       password,
       submit,
     }),
+
+  // 网页内助手
+  assistMatches: () => send<AssistSnapshot>({ type: 'assist:matches' }),
 
   // 登录捕获
   capturePending: () => send<CapturePending | null>({ type: 'capture:pending' }),

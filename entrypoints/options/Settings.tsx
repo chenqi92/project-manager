@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { browser } from 'wxt/browser';
 import { Fingerprint, Layers, Loader2, Palette, Plus, Trash2 } from 'lucide-react';
 import {
   Banner,
@@ -56,6 +57,8 @@ export function Settings({
   const { confirm } = useDialog();
   const [pwOpen, setPwOpen] = useState(false);
   const [views, setViews] = useState<SyncTargetView[]>([]);
+  const [assistBusy, setAssistBusy] = useState(false);
+  const [assistMsg, setAssistMsg] = useState<{ tone: 'info' | 'error'; text: string } | null>(null);
   useEffect(() => {
     api.syncTargets().then((r) => setViews(r.targets)).catch(() => {});
   }, []);
@@ -69,7 +72,34 @@ export function Settings({
 
   const memoOn = data.settings.floatingMemoHidden !== true;
   const autoSubmit = data.settings.autoSubmit === true;
+  const webAssist = data.settings.webAssist === true;
+  const webAssistAllSites = data.settings.webAssistAllSites === true;
   const lockN = data.settings.autoLockMinutes ?? 10;
+
+  const setWebAssistAllSites = async (next: boolean) => {
+    setAssistMsg(null);
+    if (!next) {
+      await setSetting((d) => void (d.settings.webAssistAllSites = false));
+      return;
+    }
+    setAssistBusy(true);
+    try {
+      const granted = await browser.permissions.request({ origins: ['https://*/*', 'http://*/*'] });
+      if (!granted) {
+        setAssistMsg({ tone: 'error', text: '未获得全站访问权限，已保持关闭。' });
+        return;
+      }
+      await setSetting((d) => {
+        d.settings.webAssist = true;
+        d.settings.webAssistAllSites = true;
+      });
+      setAssistMsg({ tone: 'info', text: '已开启全站登录捕获。新打开的页面需刷新后生效。' });
+    } catch (e) {
+      setAssistMsg({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setAssistBusy(false);
+    }
+  };
 
   const reset = async () => {
     if (
@@ -160,6 +190,35 @@ export function Settings({
                 onChange={() => setSetting((d) => void (d.settings.autoSubmit = !autoSubmit))}
               />
             </SettingsRow>
+            <SettingsRow
+              title="网页内账号提示"
+              desc="在已授权的网站显示顶部候选条，可选择账号填充、登录或填 TOTP"
+            >
+              <Toggle
+                checked={webAssist}
+                onChange={(v) =>
+                  setSetting((d) => {
+                    d.settings.webAssist = v;
+                    if (!v) d.settings.webAssistAllSites = false;
+                  })
+                }
+              />
+            </SettingsRow>
+            <SettingsRow
+              title="新网站登录捕获"
+              desc="需要额外授权所有网站；用于用户首次在新网址登录后提示保存"
+            >
+              <Toggle
+                checked={webAssistAllSites}
+                disabled={assistBusy}
+                onChange={(v) => void setWebAssistAllSites(v)}
+              />
+            </SettingsRow>
+            {assistMsg && (
+              <div className="pb-3.5">
+                <Banner tone={assistMsg.tone}>{assistMsg.text}</Banner>
+              </div>
+            )}
             <BiometricRow refresh={refresh} />
           </SettingsCard>
         </div>

@@ -1,5 +1,5 @@
 import { browser } from 'wxt/browser';
-import { fillCredentialsInPage, getOrigin } from '@/lib/autofill';
+import { fillCredentialsInPage, fillTotpInPage, getOrigin } from '@/lib/autofill';
 import { fromB64, toB64 } from '@/lib/crypto';
 import { flatten, matchForUrl, search } from '@/lib/search';
 import { buildExport, mergeVaults, parseImport } from '@/lib/import-export';
@@ -7,6 +7,7 @@ import type { Msg, MsgResponse } from '@/lib/messaging';
 import { authorizeDrive } from '@/lib/oauth';
 import { vaultBackend } from '@/lib/storage';
 import { SyncClient } from '@/lib/sync';
+import { generateTotp, parseTotp } from '@/lib/totp';
 import {
   SyncEngineError,
   forcePullFromProvider,
@@ -19,6 +20,8 @@ import {
 import { synologyLogin } from '@/lib/sync-providers/synology';
 import { VAULT_LOCKED_MSG } from '@/lib/types';
 import type {
+  AssistEntry,
+  AssistSnapshot,
   BioEnrollmentPublic,
   CapturePending,
   PlatformLink,
@@ -176,10 +179,17 @@ async function fillActiveTab(): Promise<void> {
 type MsgSender = { url?: string; origin?: string; tab?: { id?: number } };
 
 async function handle(msg: Msg, sender?: MsgSender): Promise<MsgResponse<unknown>> {
-  // 来源校验：除登录捕获（由内容脚本从网页发出）外，其余特权消息只接受扩展自身页面
+  // 来源校验：网页内容脚本只允许走捕获/助手消息；其它特权消息只接受扩展自身页面
   // （popup / options，chrome-extension://）发起，阻止被注入网页的脚本索取解密明文。
   const senderUrl = sender?.url ?? '';
-  if ((senderUrl.startsWith('http://') || senderUrl.startsWith('https://')) && msg.type !== 'capture:login') {
+  const pageMessage =
+    msg.type === 'capture:login' ||
+    msg.type === 'capture:save' ||
+    msg.type === 'capture:dismiss' ||
+    msg.type === 'assist:matches' ||
+    msg.type === 'assist:fill' ||
+    msg.type === 'assist:fillTotp';
+  if ((senderUrl.startsWith('http://') || senderUrl.startsWith('https://')) && !pageMessage) {
     return { ok: false, error: '来源不可信' };
   }
   try {
@@ -469,26 +479,120 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
     case 'tab:openAndFill':
       return openAndFill(msg.url, msg.username, msg.password, msg.submit);
 
+    case 'assist:matches':
+      return assistMatches(sender);
+
+    case 'assist:fill':
+      return assistFill(sender, msg.accountId, msg.submit === true);
+
+    case 'assist:fillTotp':
+      return assistFillTotp(sender, msg.accountId, msg.submit === true);
+
     case 'capture:login': {
       // 只信任 sender 的真实来源，丢弃消息体里可被伪造的 origin 字段；并要求 url 同源。
       const trusted = sender?.origin ?? getOrigin(sender?.url ?? '');
       if (!trusted || trusted !== getOrigin(msg.url)) return;
-      await handleCaptureLogin(trusted, msg.url, msg.username, msg.password);
-      return;
+      return handleCaptureLogin(trusted, msg.url, msg.username, msg.password);
     }
     case 'capture:pending':
       await requireUnlocked();
       return getPending();
     case 'capture:save':
-      await applyCapture();
+      await applyCapture(senderOrigin(sender));
       return;
     case 'capture:dismiss':
-      await clearPending();
+      await clearPending(senderOrigin(sender));
       return;
   }
 }
 
-// --------------------------- 登录捕获 ---------------------------
+// --------------------------- 网页内助手 / 登录捕获 ---------------------------
+
+function senderOrigin(sender?: MsgSender): string | null {
+  return sender?.origin ?? getOrigin(sender?.url ?? '');
+}
+
+function senderPageUrl(sender?: MsgSender): string | null {
+  const origin = senderOrigin(sender);
+  if (!origin) return null;
+  if (sender?.url && getOrigin(sender.url) === origin) return sender.url;
+  return `${origin}/`;
+}
+
+function toAssistEntry(e: ReturnType<typeof matchForUrl>[number]): AssistEntry {
+  return {
+    accountId: e.accountId,
+    projectName: e.projectName,
+    envName: e.envName,
+    envKind: e.envKind as AssistEntry['envKind'],
+    linkName: e.linkName,
+    accountLabel: e.accountLabel,
+    username: e.username,
+    hasTotp: Boolean(e.totp),
+  };
+}
+
+async function assistMatches(sender?: MsgSender): Promise<AssistSnapshot> {
+  await ensureRestored();
+  const origin = senderOrigin(sender) ?? '';
+  const enabled =
+    cachedData?.settings.webAssist === true || cachedData?.settings.webAssistAllSites === true;
+  if (!dek || !cachedData) {
+    return { locked: true, enabled: false, origin, autoSubmit: false, matches: [] };
+  }
+  const pageUrl = senderPageUrl(sender);
+  const matches = enabled && pageUrl ? matchForUrl(cachedData, pageUrl).map(toAssistEntry) : [];
+  return {
+    locked: false,
+    enabled,
+    origin,
+    autoSubmit: cachedData.settings.autoSubmit === true,
+    matches,
+  };
+}
+
+async function findAssistEntry(sender: MsgSender | undefined, accountId: string) {
+  const data = await requireData();
+  const pageUrl = senderPageUrl(sender);
+  if (!pageUrl) throw new Error('无法确认当前网页来源');
+  const entry = matchForUrl(data, pageUrl).find((e) => e.accountId === accountId);
+  if (!entry) throw new Error('该账号与当前网页来源不匹配，已阻止填充');
+  const tabId = sender?.tab?.id;
+  if (tabId === undefined) throw new Error('无法定位当前标签页');
+  return { data, entry, tabId };
+}
+
+async function assistFill(
+  sender: MsgSender | undefined,
+  accountId: string,
+  submit: boolean,
+): Promise<unknown> {
+  const { entry, tabId } = await findAssistEntry(sender, accountId);
+  const res = await browser.scripting.executeScript({
+    target: { tabId },
+    func: fillCredentialsInPage,
+    args: [entry.username, entry.password, submit],
+  });
+  return res[0]?.result ?? { ok: true };
+}
+
+async function assistFillTotp(
+  sender: MsgSender | undefined,
+  accountId: string,
+  submit: boolean,
+): Promise<unknown> {
+  const { entry, tabId } = await findAssistEntry(sender, accountId);
+  if (!entry.totp) throw new Error('该账号没有 TOTP');
+  const cfg = parseTotp(entry.totp);
+  if (!cfg) throw new Error('TOTP 密钥无效');
+  const { code } = await generateTotp(cfg, Date.now());
+  const res = await browser.scripting.executeScript({
+    target: { tabId },
+    func: fillTotpInPage,
+    args: [code, submit],
+  });
+  return res[0]?.result ?? { ok: true };
+}
 
 async function refreshCaptureRegistration(): Promise<void> {
   try {
@@ -502,17 +606,26 @@ async function refreshCaptureRegistration(): Promise<void> {
 async function registerCaptureForData(data: VaultData | null): Promise<void> {
   try {
     await browser.scripting.unregisterContentScripts({ ids: ['capture'] }).catch(() => {});
+    await browser.scripting.unregisterContentScripts({ ids: ['web-assist'] }).catch(() => {});
     if (!data) return;
     const perms = await browser.permissions.getAll();
     const granted = perms.origins ?? [];
-    const origins = captureMatchPatterns(data).filter((pattern) =>
+    const knownOrigins = captureMatchPatterns(data).filter((pattern) =>
       hasOriginPermission(pattern, granted),
     );
+    const assistEnabled =
+      data.settings.webAssist === true || data.settings.webAssistAllSites === true;
+    const allSiteOrigins: string[] = [];
+    if (data.settings.webAssistAllSites === true) {
+      if (hasOriginPermission('https://*/*', granted)) allSiteOrigins.push('https://*/*');
+      if (hasOriginPermission('http://*/*', granted)) allSiteOrigins.push('http://*/*');
+    }
+    const origins = [...new Set([...(assistEnabled ? allSiteOrigins : []), ...knownOrigins])];
     if (origins.length === 0) return;
     await browser.scripting.registerContentScripts([
       {
-        id: 'capture',
-        js: ['capture.js'],
+        id: assistEnabled ? 'web-assist' : 'capture',
+        js: [assistEnabled ? 'web-assist.js' : 'capture.js'],
         matches: origins,
         runAt: 'document_idle',
       },
@@ -546,9 +659,9 @@ async function handleCaptureLogin(
   url: string,
   username: string,
   password: string,
-): Promise<void> {
+): Promise<{ pending: true; kind: CapturePending['kind']; origin: string; username: string; linkName?: string } | null> {
   await ensureRestored();
-  if (!dek || !cachedData || !password) return; // 锁定时忽略
+  if (!dek || !cachedData || !password) return null; // 锁定时忽略
 
   let matchAccountId: string | undefined;
   let linkName: string | undefined;
@@ -569,19 +682,34 @@ async function handleCaptureLogin(
       }
     }
   }
-  if (!matchedLinkOrigin) return; // 不捕获保险箱外的任意授权站点
-  if (exactSame) return clearPending(); // 已是最新，无需提示
-  if (matchAccountId) {
-    await savePending({ kind: 'update', origin, url, username, password, accountId: matchAccountId, linkName });
-  } else {
-    await savePending({ kind: 'new', origin, url, username, password });
+  if (!matchedLinkOrigin && cachedData.settings.webAssistAllSites !== true) {
+    return null; // 默认不捕获保险箱外的任意授权站点
   }
+  if (exactSame) {
+    await clearPending(origin);
+    return null; // 已是最新，无需提示
+  }
+  let pending: CapturePending;
+  if (matchAccountId) {
+    pending = { kind: 'update', origin, url, username, password, accountId: matchAccountId, linkName };
+  } else {
+    pending = { kind: 'new', origin, url, username, password, linkName };
+  }
+  await savePending(pending);
+  return {
+    pending: true,
+    kind: pending.kind,
+    origin: pending.origin,
+    username: pending.username,
+    linkName: pending.linkName,
+  };
 }
 
-async function applyCapture(): Promise<void> {
+async function applyCapture(senderOrigin?: string | null): Promise<void> {
   await requireUnlocked();
   const p = await getPending();
   if (!p) return;
+  if (senderOrigin && p.origin !== senderOrigin) throw new Error('保存来源与当前网页不一致');
   const data = structuredClone(cachedData!);
 
   if (p.kind === 'update' && p.accountId) {
@@ -635,7 +763,11 @@ async function savePending(p: CapturePending): Promise<void> {
   browser.action.setBadgeBackgroundColor?.({ color: '#e11d48' }).catch(() => {});
 }
 
-async function clearPending(): Promise<void> {
+async function clearPending(origin?: string | null): Promise<void> {
+  if (origin) {
+    const p = await getPending();
+    if (p && p.origin !== origin) return;
+  }
   pendingCapture = null;
   await browser.storage.session.remove(PENDING_KEY);
   browser.action.setBadgeText({ text: '' }).catch(() => {});
