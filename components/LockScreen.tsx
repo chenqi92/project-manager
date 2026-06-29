@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Eye, EyeOff, Fingerprint, KeyRound, Loader2, Lock } from 'lucide-react';
 import { Banner, Button, Input, Label, cx } from './ui';
 
@@ -73,6 +73,7 @@ export function LockScreen({
   const [showAdopt, setShowAdopt] = useState(false);
   const [serverUrl, setServerUrl] = useState('');
   const [token, setToken] = useState('');
+  const autoBioTried = useRef(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,11 +102,18 @@ export function LockScreen({
     try {
       await onBioUnlock();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(/取消|cancel|abort/i.test(msg) ? '已取消生物识别，可输入主密码解锁' : msg);
     } finally {
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!initialized || compact || !hasBiometric || !onBioUnlock || autoBioTried.current) return;
+    autoBioTried.current = true;
+    void runBio();
+  }, [initialized, compact, hasBiometric, onBioUnlock]);
 
   const runAdopt = async () => {
     if (!onAdopt) return;
@@ -138,7 +146,11 @@ export function LockScreen({
           {initialized ? '欢迎回来' : '创建保险箱'}
         </div>
         <div className="text-[12.5px] text-gray-400">
-          {initialized ? '输入主密码解锁保险箱' : '主密码用于加密全部数据，本地派生、永不上传'}
+          {initialized
+            ? hasBiometric
+              ? '可用生物识别或主密码解锁保险箱'
+              : '输入主密码解锁保险箱'
+            : '主密码用于加密全部数据，本地派生、永不上传'}
         </div>
       </div>
 

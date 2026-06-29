@@ -5,6 +5,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  KeyRound,
   Lock,
   LogIn,
   Plus,
@@ -40,6 +41,8 @@ export default function App() {
   const [usage, setUsage] = useState<Record<string, number>>({});
   const [quickLinkId, setQuickLinkId] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [selectedCaptureAccountId, setSelectedCaptureAccountId] = useState('');
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   async function doSync() {
@@ -63,6 +66,10 @@ export default function App() {
   }, [status]);
 
   useEffect(() => {
+    setSelectedCaptureAccountId(pending?.accountId || pending?.updateCandidates?.[0]?.accountId || '');
+  }, [pending?.id, pending?.accountId, pending?.updateCandidates]);
+
+  useEffect(() => {
     applyTheme(data?.settings.theme);
     return watchSystemTheme(() => data?.settings.theme);
   }, [data?.settings.theme]);
@@ -73,6 +80,16 @@ export default function App() {
       .then(([t]) => setTab(t ? { id: t.id, url: t.url, title: t.title } : null))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!status || status.locked || !tab?.id || !tab.url || !getOrigin(tab.url)) return;
+    browser.scripting
+      .executeScript({
+        target: { tabId: tab.id },
+        files: ['/web-assist.js'],
+      })
+      .catch(() => {});
+  }, [status, tab?.id, tab?.url]);
 
   const flash = (m: string) => {
     setToast(m);
@@ -190,6 +207,33 @@ export default function App() {
     window.close();
   }
 
+  async function captureCurrentInput() {
+    if (!tab?.id) return flash('无法读取当前标签页');
+    setCapturing(true);
+    try {
+      const injected = (await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: collectLoginInputInPage,
+      })) as Array<{ result?: CaptureInputResult }>;
+      const result = injected[0]?.result;
+      if (!result?.ok) {
+        flash(result?.reason ?? '没有找到可保存的登录输入');
+        return;
+      }
+      const p = await api.captureManual(tab.id, result.url, result.username, result.password);
+      if (!p) {
+        flash('该登录已是最新，暂无需要保存的变化');
+        return;
+      }
+      setPending(p);
+      flash(p.kind === 'update' ? '检测到可更新的登录' : '检测到可保存的登录');
+    } catch (e) {
+      flash('捕获失败：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setCapturing(false);
+    }
+  }
+
   async function copy(text: string, what: string) {
     try {
       await copyWithAutoClear(text);
@@ -299,12 +343,32 @@ export default function App() {
             {pending.kind === 'update'
               ? `，更新「${pending.linkName ?? ''}」的密码？`
               : `（${pending.username || '无用户名'}），保存到保险箱？`}
+            {pending.kind === 'new' && pending.updateCandidates?.length
+              ? ' 也可以更新已有账号。'
+              : ''}
           </div>
+          {pending.kind === 'new' && pending.updateCandidates?.length ? (
+            <select
+              value={selectedCaptureAccountId}
+              onChange={(e) => setSelectedCaptureAccountId(e.target.value)}
+              className="mb-2 w-full rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs text-amber-900 outline-none"
+            >
+              {pending.updateCandidates.map((c) => (
+                <option key={c.accountId} value={c.accountId}>
+                  {(c.accountLabel || c.linkName || '已保存账号') + ' · ' + (c.username || '无用户名')}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <div className="flex gap-2">
             <Button
               onClick={async () => {
                 try {
-                  await api.captureSave();
+                  await api.captureSave(pending.id, undefined, {
+                    username: pending.username,
+                    accountLabel: pending.accountLabel,
+                    targetLinkId: pending.targetLinkId,
+                  });
                   setPending(null);
                   await vault.reload();
                   flash('已保存到保险箱');
@@ -315,11 +379,31 @@ export default function App() {
             >
               {pending.kind === 'update' ? '更新' : '保存'}
             </Button>
+            {pending.kind === 'new' && pending.updateCandidates?.[0] && (
+              <Button
+                variant="subtle"
+                onClick={async () => {
+                  try {
+                    await api.captureSave(pending.id, selectedCaptureAccountId, {
+                      username: pending.username,
+                      accountLabel: pending.accountLabel,
+                    });
+                    setPending(null);
+                    await vault.reload();
+                    flash('已更新保险箱');
+                  } catch (e) {
+                    flash('更新失败：' + (e instanceof Error ? e.message : String(e)));
+                  }
+                }}
+              >
+                更新已有
+              </Button>
+            )}
             <Button
               variant="subtle"
               onClick={async () => {
                 try {
-                  await api.captureDismiss();
+                  await api.captureDismiss(pending.id);
                   setPending(null);
                 } catch (e) {
                   flash('忽略失败：' + (e instanceof Error ? e.message : String(e)));
@@ -489,15 +573,31 @@ export default function App() {
 
       {!query.trim() && (
         <div className="shrink-0 border-t border-gray-200 bg-surface p-3">
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 gap-2">
             {tab?.url && (
-              <Button variant="subtle" className="min-w-0 flex-1" onClick={saveCurrentPage}>
+              <Button
+                variant="subtle"
+                className="h-10 min-w-0 whitespace-nowrap px-2 text-[13px]"
+                disabled={capturing}
+                onClick={captureCurrentInput}
+                title="手动读取当前页面已填写的用户名和密码，用于自动提示未出现时兜底"
+              >
+                <KeyRound size={15} /> 手动捕获
+              </Button>
+            )}
+            {tab?.url && (
+              <Button
+                variant="subtle"
+                className="h-10 min-w-0 whitespace-nowrap px-2 text-[13px]"
+                onClick={saveCurrentPage}
+                title="只保存当前网页链接，可稍后在管理页补账号"
+              >
                 <Plus size={15} /> 保存当前页
               </Button>
             )}
             <Button
               variant="ghost"
-              className="min-w-0 flex-1"
+              className="col-span-2 h-9 min-w-0 whitespace-nowrap px-2 text-[13px]"
               onClick={() => browser.runtime.openOptionsPage()}
             >
               管理全部
@@ -521,6 +621,42 @@ function hostOf(origin: string): string {
   } catch {
     return origin;
   }
+}
+
+type CaptureInputResult =
+  | { ok: true; url: string; username: string; password: string }
+  | { ok: false; reason: string };
+
+function collectLoginInputInPage(): CaptureInputResult {
+  const visible = (el: Element): boolean => {
+    const r = (el as HTMLElement).getBoundingClientRect();
+    const s = getComputedStyle(el as HTMLElement);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+  };
+
+  const pw = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="password"]'))
+    .filter((el) => el.value && visible(el))[0];
+  if (!pw?.value) return { ok: false, reason: '页面上没有已填写的密码框' };
+
+  const scope = pw.form ?? document;
+  const candidates = Array.from(
+    scope.querySelectorAll<HTMLInputElement>(
+      'input[type="text"], input[type="email"], input[type="tel"], input:not([type])',
+    ),
+  ).filter((el) => el.type !== 'password' && el.value && visible(el));
+
+  let username = '';
+  for (const el of candidates) {
+    if (el.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING) username = el.value;
+  }
+  if (!username && candidates[0]) username = candidates[0].value;
+
+  return {
+    ok: true,
+    url: location.href,
+    username,
+    password: pw.value,
+  };
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

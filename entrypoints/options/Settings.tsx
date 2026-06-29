@@ -72,9 +72,10 @@ export function Settings({
 
   const memoOn = data.settings.floatingMemoHidden !== true;
   const autoSubmit = data.settings.autoSubmit === true;
-  const webAssist = data.settings.webAssist === true;
+  const webAssist = data.settings.webAssist !== false;
   const webAssistAllSites = data.settings.webAssistAllSites === true;
   const lockN = data.settings.autoLockMinutes ?? 10;
+  const capturePlacement = data.settings.capturePromptPlacement ?? 'top-right';
 
   const setWebAssistAllSites = async (next: boolean) => {
     setAssistMsg(null);
@@ -192,7 +193,7 @@ export function Settings({
             </SettingsRow>
             <SettingsRow
               title="网页内账号提示"
-              desc="在已授权的网站显示顶部候选条，可选择账号填充、登录或填 TOTP"
+              desc="默认开启；在已授权的网站显示候选条和保存/更新提示"
             >
               <Toggle
                 checked={webAssist}
@@ -205,8 +206,25 @@ export function Settings({
               />
             </SettingsRow>
             <SettingsRow
+              title="保存提示位置"
+              desc="登录后保存/更新面板显示在右上角或页面中间"
+            >
+              <Segmented
+                value={capturePlacement}
+                onChange={(v) =>
+                  setSetting((d) => {
+                    d.settings.capturePromptPlacement = v as 'top-right' | 'center';
+                  })
+                }
+                options={[
+                  { value: 'top-right', label: '右上角' },
+                  { value: 'center', label: '居中' },
+                ]}
+              />
+            </SettingsRow>
+            <SettingsRow
               title="新网站登录捕获"
-              desc="需要额外授权所有网站；用于用户首次在新网址登录后提示保存"
+              desc="浏览器要求手动授权所有网站；开启后新网址登录也会提示保存"
             >
               <Toggle
                 checked={webAssistAllSites}

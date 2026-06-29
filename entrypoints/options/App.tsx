@@ -80,7 +80,7 @@ import { Settings } from './Settings';
 import { SidePanel } from './SidePanel';
 import { SyncPage } from './SyncPage';
 import { ToolsModal } from './ToolsModal';
-import { BackupOnboardingModal } from './BackupGuard';
+import { FeatureOnboardingModal } from './BackupGuard';
 
 type Editing =
   | { kind: 'project'; project?: Project }
@@ -265,11 +265,35 @@ export default function App() {
     }
   };
 
-  // 备份引导相关的轻量写入（失败不影响主流程）：标记已展示一次性强提示；记录一次成功备份的时间。
-  const ackOnboardBackup = () =>
-    update((d) => void (d.settings.onboardedBackup = true)).catch(() => {});
+  // 备份相关的轻量写入（失败不影响主流程）：记录一次成功备份的时间。
   const recordBackup = () =>
     update((d) => void (d.settings.lastBackupAt = Date.now())).catch(() => {});
+  const ackFeatureOnboarding = () =>
+    update((d) => void (d.settings.onboardedFeatureSwitches = true)).catch(() => {});
+  const enableFeatureAssist = async () => {
+    await update((d) => void (d.settings.webAssist = true));
+    flash('已开启网页内账号提示');
+  };
+  const enableFeatureNetwork = async () => {
+    await update((d) => void (d.settings.weatherEnabled = true));
+    flash('已开启联网磁贴');
+  };
+  const enableFeatureAllSites = async () => {
+    try {
+      const granted = await browser.permissions.request({ origins: ['https://*/*', 'http://*/*'] });
+      if (!granted) {
+        flash('未获得全站访问权限');
+        return;
+      }
+      await update((d) => {
+        d.settings.webAssist = true;
+        d.settings.webAssistAllSites = true;
+      });
+      flash('已开启新网站登录捕获，新打开或刷新后的页面生效');
+    } catch (e) {
+      flash('授权失败：' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
 
   const projects = data?.projects ?? [];
   // 显示顺序 = 数组顺序（可拖拽调整）；收藏星标只作标记，不再自动置顶。
@@ -385,6 +409,8 @@ export default function App() {
         : window.matchMedia?.('(prefers-color-scheme: dark)').matches
           ? 'dark'
           : 'light';
+  const showFeatureOnboarding =
+    !data.settings.onboardedFeatureSwitches && !capture && !loginHandoff;
 
   const deleteSelectedProject = async () => {
     if (!selected) return;
@@ -955,24 +981,17 @@ export default function App() {
         />
       )}
 
-      {/* 首次创建保险箱后的一次性强提示：本地数据无兜底，引导备份或开同步。
-          已开同步（已有云端副本）或正在走捕获 / 登录交接流程时不打扰。 */}
-      {status?.syncEnabled !== true &&
-        !data.settings.onboardedBackup &&
-        !capture &&
-        !loginHandoff && (
-          <BackupOnboardingModal
-            onExport={() => {
-              ackOnboardBackup();
-              openPage('io');
-            }}
-            onEnableSync={() => {
-              ackOnboardBackup();
-              openPage('settings');
-            }}
-            onAck={ackOnboardBackup}
-          />
-        )}
+      {showFeatureOnboarding && (
+        <FeatureOnboardingModal
+          webAssist={data.settings.webAssist !== false}
+          webAssistAllSites={data.settings.webAssistAllSites === true}
+          networkEnabled={data.settings.weatherEnabled === true}
+          onEnableAssist={enableFeatureAssist}
+          onEnableAllSites={enableFeatureAllSites}
+          onEnableNetwork={enableFeatureNetwork}
+          onDone={ackFeatureOnboarding}
+        />
+      )}
 
       <MemoWidget data={data} selectedProjectId={selected?.id ?? null} onUpdate={update} />
 

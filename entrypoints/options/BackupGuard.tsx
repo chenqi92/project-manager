@@ -1,4 +1,5 @@
-import { Cloud, Download, ShieldAlert } from 'lucide-react';
+import { useState } from 'react';
+import { Cloud, Download, Globe2, KeyRound, ShieldAlert, Wifi } from 'lucide-react';
 import { Banner, Button, Modal } from '@/components/ui';
 
 /** 创建保险箱后的一次性强提示：本地数据无兜底，引导导出备份或开启同步。 */
@@ -64,6 +65,131 @@ export function BackupReminder({
           稍后
         </button>
       </div>
+    </div>
+  );
+}
+
+export function FeatureOnboardingModal({
+  webAssist,
+  webAssistAllSites,
+  networkEnabled,
+  onEnableAssist,
+  onEnableAllSites,
+  onEnableNetwork,
+  onDone,
+}: {
+  webAssist: boolean;
+  webAssistAllSites: boolean;
+  networkEnabled: boolean;
+  onEnableAssist: () => void | Promise<void>;
+  onEnableAllSites: () => void | Promise<void>;
+  onEnableNetwork: () => void | Promise<void>;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState<'assist' | 'sites' | 'network' | null>(null);
+
+  const run = async (key: 'assist' | 'sites' | 'network', fn: () => void | Promise<void>) => {
+    if (busy) return;
+    setBusy(key);
+    try {
+      await fn();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Modal title="快速打开常用功能" onClose={() => !busy && onDone()}>
+      <div className="flex flex-col gap-4 text-sm text-gray-700">
+        <Banner tone="info">
+          先把常用开关放在这里。登录保存、更新提示可直接用；全站捕获需要浏览器授权，联网磁贴只在你开启后请求第三方数据。
+        </Banner>
+        <div className="flex flex-col gap-2.5">
+          <FeatureSwitchRow
+            icon={<KeyRound size={17} />}
+            title="网页内账号提示"
+            desc="在授权网站显示账号候选，并在登录成功后提示保存或更新。"
+            enabled={webAssist}
+            enabledLabel="已开启"
+            actionLabel="开启"
+            busy={busy === 'assist'}
+            disabled={busy !== null}
+            onAction={() => run('assist', onEnableAssist)}
+          />
+          <FeatureSwitchRow
+            icon={<Globe2 size={17} />}
+            title="新网站登录捕获"
+            desc="首次登录新网站后提示保存，需要确认 http/https 全站访问权限。"
+            enabled={webAssistAllSites}
+            enabledLabel="已授权"
+            actionLabel="授权开启"
+            busy={busy === 'sites'}
+            disabled={busy !== null}
+            onAction={() => run('sites', onEnableAllSites)}
+          />
+          <FeatureSwitchRow
+            icon={<Wifi size={17} />}
+            title="联网磁贴"
+            desc="天气、今日热榜、股票和联网工具会在开启后访问外部数据源。"
+            enabled={networkEnabled}
+            enabledLabel="已开启"
+            actionLabel="开启"
+            busy={busy === 'network'}
+            disabled={busy !== null}
+            onAction={() => run('network', onEnableNetwork)}
+          />
+        </div>
+        <div className="flex justify-end gap-2 border-t border-gray-100 pt-3">
+          <Button variant="ghost" disabled={busy !== null} onClick={onDone}>
+            稍后
+          </Button>
+          <Button disabled={busy !== null} onClick={onDone}>
+            完成
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function FeatureSwitchRow({
+  icon,
+  title,
+  desc,
+  enabled,
+  enabledLabel,
+  actionLabel,
+  busy,
+  disabled,
+  onAction,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  desc: string;
+  enabled: boolean;
+  enabledLabel: string;
+  actionLabel: string;
+  busy: boolean;
+  disabled: boolean;
+  onAction: () => void;
+}) {
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-surface px-3.5 py-3">
+      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-brand-50 text-brand-700">
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] font-bold text-gray-900">{title}</div>
+        <div className="mt-0.5 text-[11.5px] leading-relaxed text-gray-500">{desc}</div>
+      </div>
+      <Button
+        variant={enabled ? 'outline' : 'subtle'}
+        disabled={enabled || disabled}
+        onClick={onAction}
+        className="shrink-0"
+      >
+        {enabled ? enabledLabel : busy ? '处理中…' : actionLabel}
+      </Button>
     </div>
   );
 }

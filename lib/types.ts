@@ -357,6 +357,8 @@ export interface VaultSettings {
   webAssist?: boolean;
   /** 全站登录捕获：需用户额外授予 http(s) 全站权限，用于新网站登录后提示保存 */
   webAssistAllSites?: boolean;
+  /** 保存/更新提示面板位置：右上角或居中 */
+  capturePromptPlacement?: 'top-right' | 'center';
   /** 主题；undefined 视为跟随系统 */
   theme?: 'light' | 'dark' | 'system';
   /** 首页仪表盘布局 */
@@ -365,6 +367,8 @@ export interface VaultSettings {
   weatherEnabled?: boolean;
   /** 是否已展示过首次创建后的备份引导（一次性强提示）；undefined 视为未展示 */
   onboardedBackup?: boolean;
+  /** 是否已展示过功能速启引导（网页提示 / 新网站捕获 / 联网磁贴） */
+  onboardedFeatureSwitches?: boolean;
   /** 上次成功导出加密备份的时间（epoch ms）；用于提醒久未备份 */
   lastBackupAt?: number;
   /** 备份提醒「稍后再说」的静默截止时间（epoch ms）；在此之前不再提醒 */
@@ -466,6 +470,22 @@ export interface VaultStatus {
 }
 
 /** 登录捕获：检测到一次登录后等待用户确认保存/更新 */
+export interface CaptureUpdateCandidate {
+  accountId: string;
+  accountLabel: string;
+  username: string;
+  linkName: string;
+}
+
+export interface CaptureSaveTarget {
+  projectId: string;
+  projectName: string;
+  envId: string;
+  envName: string;
+  linkId: string;
+  linkName: string;
+}
+
 export interface CapturePending {
   id?: string;
   kind: 'new' | 'update';
@@ -478,6 +498,22 @@ export interface CapturePending {
   accountId?: string;
   /** 展示用：匹配到的链接名（update 时） */
   linkName?: string;
+  /** 同一来源下可被本次捕获更新的已有账号（用户名变更/识别不准时供用户选择） */
+  updateCandidates?: CaptureUpdateCandidate[];
+  /** 可直接保存到的已有链接候选 */
+  saveTargets?: CaptureSaveTarget[];
+  /** UI 草稿：账号显示名 */
+  accountLabel?: string;
+  /** UI 草稿：保存到已有链接 */
+  targetLinkId?: string;
+}
+
+/** 内容脚本观察到的登录后页面状态，用于降低错误密码时的保存误报。 */
+export interface CaptureSuccessSignals {
+  visiblePasswordFields: number;
+  filledPasswordFields: number;
+  visibleOtpFields: number;
+  successHint: boolean;
 }
 
 export interface AssistEntry {
@@ -496,6 +532,7 @@ export interface AssistSnapshot {
   enabled: boolean;
   origin: string;
   autoSubmit: boolean;
+  capturePromptPlacement?: 'top-right' | 'center';
   matches: AssistEntry[];
 }
 

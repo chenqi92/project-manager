@@ -24,6 +24,9 @@ import type {
   AssistSnapshot,
   BioEnrollmentPublic,
   CapturePending,
+  CaptureSaveTarget,
+  CaptureSuccessSignals,
+  CaptureUpdateCandidate,
   PlatformLink,
   SyncState,
   SyncStateMap,
@@ -57,6 +60,8 @@ const SESSION_DEK = 'dek';
 const SYNC_STATE_KEY = 'syncState'; // 旧版单一自托管同步状态（迁移后仅用于清理）
 const SYNC_MAP_KEY = 'syncStateMap'; // 按目标 id 的多端同步状态
 const PENDING_KEY = 'pendingCapture';
+const LOGIN_CANDIDATES_KEY = 'loginCaptureCandidates';
+const LOGIN_CANDIDATE_TTL_MS = 5 * 60_000;
 
 // 全部仅存在于内存（SW 重启后从 session 恢复，浏览器关闭即丢失）。
 let dek: Uint8Array | null = null;
@@ -67,6 +72,11 @@ let lockTimer: ReturnType<typeof setTimeout> | null = null;
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let clipboardOffscreenReady = false;
 let pendingCaptures: Record<string, CapturePending> = {};
+let loginCandidates: Record<string, LoginCaptureCandidate> = {};
+
+type LoginCaptureCandidate = Pick<CapturePending, 'origin' | 'url' | 'username' | 'password' | 'tabId'> & {
+  createdAt: number;
+};
 
 export default defineBackground(() => {
   browser.storage.session
@@ -190,6 +200,8 @@ async function handle(msg: Msg, sender?: MsgSender): Promise<MsgResponse<unknown
   // （popup / options，chrome-extension://）发起，阻止被注入网页的脚本索取解密明文。
   const senderUrl = sender?.url ?? '';
   const pageMessage =
+    msg.type === 'capture:candidate' ||
+    msg.type === 'capture:successCheck' ||
     msg.type === 'capture:login' ||
     msg.type === 'capture:save' ||
     msg.type === 'capture:editSave' ||
@@ -500,17 +512,45 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
     case 'assist:fillTotp':
       return assistFillTotp(sender, msg.accountId, msg.submit === true);
 
+    case 'capture:candidate': {
+      const trusted = senderOrigin(sender);
+      if (!trusted || trusted !== getOrigin(msg.url)) return;
+      await handleCaptureCandidate(trusted, msg.url, msg.username, msg.password, sender?.tab?.id);
+      return;
+    }
+    case 'capture:successCheck': {
+      const trusted = senderOrigin(sender);
+      if (!trusted || trusted !== getOrigin(msg.url)) return null;
+      return handleCaptureSuccessCheck(trusted, msg.url, msg.signals, sender?.tab?.id);
+    }
     case 'capture:login': {
       // 只信任 sender 的真实来源，丢弃消息体里可被伪造的 origin 字段；并要求 url 同源。
-      const trusted = sender?.origin ?? getOrigin(sender?.url ?? '');
+      const trusted = senderOrigin(sender);
       if (!trusted || trusted !== getOrigin(msg.url)) return;
       return handleCaptureLogin(trusted, msg.url, msg.username, msg.password, sender?.tab?.id);
+    }
+    case 'capture:manual': {
+      const origin = getOrigin(msg.url);
+      if (!origin) throw new Error('当前网页地址不支持保存登录');
+      if (msg.tabId !== undefined) {
+        const tab = await browser.tabs.get(msg.tabId).catch(() => null);
+        if (tab?.url && getOrigin(tab.url) !== origin) {
+          throw new Error('当前网页已变化，请重新捕获');
+        }
+      }
+      return handleCaptureLogin(origin, msg.url, msg.username, msg.password, msg.tabId, {
+        allowUnknownOrigin: true,
+      });
     }
     case 'capture:pending':
       await requireUnlocked();
       return getPending(msg.id);
     case 'capture:save':
-      await applyCapture(msg.id, senderOrigin(sender), sender?.tab?.id);
+      await applyCapture(msg.id, senderOrigin(sender), sender?.tab?.id, msg.accountId, {
+        username: msg.username,
+        accountLabel: msg.accountLabel,
+        targetLinkId: msg.targetLinkId,
+      });
       return;
     case 'capture:editSave':
       await openCaptureEditor(msg.id, senderOrigin(sender), sender?.tab?.id);
@@ -524,7 +564,9 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
 // --------------------------- 网页内助手 / 登录捕获 ---------------------------
 
 function senderOrigin(sender?: MsgSender): string | null {
-  return sender?.origin ?? getOrigin(sender?.url ?? '');
+  const raw = sender?.origin ?? '';
+  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+  return getOrigin(sender?.url ?? '');
 }
 
 function senderPageUrl(sender?: MsgSender): string | null {
@@ -551,7 +593,7 @@ async function assistMatches(sender?: MsgSender): Promise<AssistSnapshot> {
   await ensureRestored();
   const origin = senderOrigin(sender) ?? '';
   const enabled =
-    cachedData?.settings.webAssist === true || cachedData?.settings.webAssistAllSites === true;
+    cachedData?.settings.webAssist !== false || cachedData?.settings.webAssistAllSites === true;
   if (!dek || !cachedData) {
     return { locked: true, enabled: false, origin, autoSubmit: false, matches: [] };
   }
@@ -562,6 +604,7 @@ async function assistMatches(sender?: MsgSender): Promise<AssistSnapshot> {
     enabled,
     origin,
     autoSubmit: cachedData.settings.autoSubmit === true,
+    capturePromptPlacement: cachedData.settings.capturePromptPlacement ?? 'top-right',
     matches,
   };
 }
@@ -643,7 +686,7 @@ async function registerCaptureForData(data: VaultData | null): Promise<void> {
       hasOriginPermission(pattern, granted),
     );
     const assistEnabled =
-      data.settings.webAssist === true || data.settings.webAssistAllSites === true;
+      data.settings.webAssist !== false || data.settings.webAssistAllSites === true;
     const allSiteOrigins: string[] = [];
     if (data.settings.webAssistAllSites === true) {
       if (hasOriginPermission('https://*/*', granted)) allSiteOrigins.push('https://*/*');
@@ -683,11 +726,33 @@ function hasOriginPermission(pattern: string, granted: string[]): boolean {
   return false;
 }
 
-async function handleCaptureLogin(
+async function handleCaptureCandidate(
   origin: string,
   url: string,
   username: string,
   password: string,
+  tabId?: number,
+): Promise<void> {
+  await ensureRestored();
+  if (!dek || !cachedData || !password) return;
+  if (!captureAllowedForOrigin(cachedData, origin)) return;
+  await ensureLoginCandidatesRestored();
+  pruneLoginCandidates();
+  loginCandidates[pendingId(origin, tabId)] = {
+    origin,
+    url,
+    username,
+    password,
+    tabId,
+    createdAt: Date.now(),
+  };
+  await saveLoginCandidates();
+}
+
+async function handleCaptureSuccessCheck(
+  origin: string,
+  url: string,
+  signals: CaptureSuccessSignals,
   tabId?: number,
 ): Promise<{
   pending: true;
@@ -698,12 +763,148 @@ async function handleCaptureLogin(
   linkName?: string;
 } | null> {
   await ensureRestored();
+  if (!dek || !cachedData) return null;
+  await ensureLoginCandidatesRestored();
+  pruneLoginCandidates();
+  const candidate = getLoginCandidateForContext(origin, tabId);
+  if (!candidate) {
+    await saveLoginCandidates();
+    return null;
+  }
+  if (candidate.origin !== origin || getOrigin(url) !== origin) return null;
+  if (!loginSuccessLooksLikely(candidate, url, signals)) {
+    await saveLoginCandidates();
+    return null;
+  }
+
+  delete loginCandidates[pendingId(candidate.origin, candidate.tabId)];
+  await saveLoginCandidates();
+  return handleCaptureLogin(
+    candidate.origin,
+    candidate.url,
+    candidate.username,
+    candidate.password,
+    candidate.tabId,
+  );
+}
+
+function captureAllowedForOrigin(data: VaultData, origin: string): boolean {
+  if (data.settings.webAssistAllSites === true) return true;
+  for (const proj of data.projects)
+    for (const env of proj.environments)
+      for (const link of env.links)
+        if (linkUrls(link).some((u) => getOrigin(u) === origin)) return true;
+  return false;
+}
+
+function captureSaveTargets(data: VaultData, origin: string): CaptureSaveTarget[] {
+  const out: CaptureSaveTarget[] = [];
+  for (const proj of data.projects)
+    for (const env of proj.environments)
+      for (const link of env.links)
+        if (linkUrls(link).some((u) => getOrigin(u) === origin)) {
+          out.push({
+            projectId: proj.id,
+            projectName: proj.name,
+            envId: env.id,
+            envName: env.name,
+            linkId: link.id,
+            linkName: link.name,
+          });
+        }
+  return out;
+}
+
+function loginSuccessLooksLikely(
+  candidate: LoginCaptureCandidate,
+  currentUrl: string,
+  signals: CaptureSuccessSignals,
+): boolean {
+  const age = Date.now() - candidate.createdAt;
+  if (age < 450) return false;
+  if (age > LOGIN_CANDIDATE_TTL_MS) return false;
+  if (signals.visiblePasswordFields > 0 || signals.filledPasswordFields > 0) return false;
+
+  const leftSubmitPage = normalizeCaptureUrl(candidate.url) !== normalizeCaptureUrl(currentUrl);
+  if (signals.successHint) return true;
+  if (leftSubmitPage) return true;
+
+  // SPA 登录弹窗常常原地消失；等一会儿且没有 OTP 步骤时再认为通过。
+  return age >= 2_500 && signals.visibleOtpFields === 0;
+}
+
+function normalizeCaptureUrl(url: string): string {
+  try {
+    return new URL(url).toString();
+  } catch {
+    return url;
+  }
+}
+
+function pruneLoginCandidates(): void {
+  const cutoff = Date.now() - LOGIN_CANDIDATE_TTL_MS;
+  for (const [id, c] of Object.entries(loginCandidates)) {
+    if ((c.createdAt ?? 0) < cutoff) delete loginCandidates[id];
+  }
+}
+
+function getLoginCandidateForContext(origin: string, tabId?: number): LoginCaptureCandidate | null {
+  const id = pendingId(origin, tabId);
+  if (loginCandidates[id]) return loginCandidates[id]!;
+  const list = Object.values(loginCandidates)
+    .filter((c) => c.origin === origin)
+    .sort((a, b) => b.createdAt - a.createdAt);
+  if (tabId !== undefined) {
+    const sameTab = list.find((c) => c.tabId === tabId);
+    if (sameTab) return sameTab;
+  }
+  return list[0] ?? null;
+}
+
+async function ensureLoginCandidatesRestored(): Promise<void> {
+  if (Object.keys(loginCandidates).length > 0) return;
+  const s = await browser.storage.session.get(LOGIN_CANDIDATES_KEY);
+  loginCandidates = (s[LOGIN_CANDIDATES_KEY] as Record<string, LoginCaptureCandidate> | undefined) ?? {};
+}
+
+async function saveLoginCandidates(): Promise<void> {
+  pruneLoginCandidates();
+  if (Object.keys(loginCandidates).length > 0) {
+    await browser.storage.session.set({ [LOGIN_CANDIDATES_KEY]: loginCandidates });
+  } else {
+    await browser.storage.session.remove(LOGIN_CANDIDATES_KEY);
+  }
+}
+
+async function handleCaptureLogin(
+  origin: string,
+  url: string,
+  username: string,
+  password: string,
+  tabId?: number,
+  opts: { allowUnknownOrigin?: boolean } = {},
+): Promise<{
+  pending: true;
+  id?: string;
+  kind: CapturePending['kind'];
+  origin: string;
+  username: string;
+  accountId?: string;
+  linkName?: string;
+  updateCandidates?: CaptureUpdateCandidate[];
+  saveTargets?: CaptureSaveTarget[];
+  accountLabel?: string;
+  targetLinkId?: string;
+} | null> {
+  await ensureRestored();
   if (!dek || !cachedData || !password) return null; // 锁定时忽略
 
   let matchAccountId: string | undefined;
   let linkName: string | undefined;
   let exactSame = false;
   let matchedLinkOrigin = false;
+  const updateCandidates: CaptureUpdateCandidate[] = [];
+  const saveTargets = captureSaveTargets(cachedData, origin);
   for (const proj of cachedData.projects) {
     for (const env of proj.environments) {
       for (const link of env.links) {
@@ -711,6 +912,12 @@ async function handleCaptureLogin(
         matchedLinkOrigin = true;
         linkName = link.name;
         for (const acc of link.accounts) {
+          updateCandidates.push({
+            accountId: acc.id,
+            accountLabel: acc.label,
+            username: acc.username,
+            linkName: link.name,
+          });
           if (acc.username && username && acc.username.toLowerCase() === username.toLowerCase()) {
             matchAccountId = acc.id;
             if (acc.password === password) exactSame = true;
@@ -720,7 +927,7 @@ async function handleCaptureLogin(
     }
   }
   if (!matchedLinkOrigin && cachedData.settings.webAssistAllSites !== true) {
-    return null; // 默认不捕获保险箱外的任意授权站点
+    if (!opts.allowUnknownOrigin) return null; // 默认不捕获保险箱外的任意授权站点
   }
   if (exactSame) {
     await clearPending(undefined, origin, tabId);
@@ -737,9 +944,22 @@ async function handleCaptureLogin(
       tabId,
       accountId: matchAccountId,
       linkName,
+      updateCandidates: updateCandidates.slice(0, 8),
+      saveTargets,
     };
   } else {
-    pending = { kind: 'new', origin, url, username, password, tabId, linkName };
+    pending = {
+      kind: 'new',
+      origin,
+      url,
+      username,
+      password,
+      tabId,
+      linkName,
+      updateCandidates: updateCandidates.slice(0, 8),
+      saveTargets,
+      targetLinkId: saveTargets[0]?.linkId,
+    };
   }
   const saved = await savePending(pending);
   return {
@@ -747,8 +967,13 @@ async function handleCaptureLogin(
     kind: saved.kind,
     origin: saved.origin,
     username: saved.username,
+    accountId: saved.accountId,
     linkName: saved.linkName,
     id: saved.id,
+    updateCandidates: saved.updateCandidates,
+    saveTargets: saved.saveTargets,
+    accountLabel: saved.accountLabel,
+    targetLinkId: saved.targetLinkId,
   };
 }
 
@@ -756,28 +981,55 @@ async function applyCapture(
   id?: string,
   senderOrigin?: string | null,
   tabId?: number,
+  updateAccountId?: string,
+  edits: { username?: string; accountLabel?: string; targetLinkId?: string } = {},
 ): Promise<void> {
   await requireUnlocked();
   const p = await getPendingForContext(id, senderOrigin, tabId);
   if (!p) return;
   if (senderOrigin && p.origin !== senderOrigin) throw new Error('保存来源与当前网页不一致');
   const data = structuredClone(cachedData!);
+  const targetAccountId = updateAccountId || (p.kind === 'update' ? p.accountId : undefined);
+  const nextUsername = (edits.username ?? p.username).trim();
+  const nextLabel = (edits.accountLabel ?? p.accountLabel ?? '').trim();
+  if (
+    updateAccountId &&
+    updateAccountId !== p.accountId &&
+    !(p.updateCandidates ?? []).some((c) => c.accountId === updateAccountId)
+  ) {
+    throw new Error('该账号不是本次登录捕获的更新候选');
+  }
 
-  if (p.kind === 'update' && p.accountId) {
+  if (targetAccountId) {
+    let updated = false;
     for (const proj of data.projects)
       for (const env of proj.environments)
         for (const link of env.links)
           for (const acc of link.accounts)
-            if (acc.id === p.accountId) {
+            if (acc.id === targetAccountId) {
+              if (nextUsername) acc.username = nextUsername;
+              if (nextLabel) acc.label = nextLabel;
               acc.password = p.password;
               acc.updatedAt = Date.now();
+              updated = true;
             }
+    if (!updated) throw new Error('找不到要更新的账号');
   } else {
     let target: PlatformLink | null = null;
+    if (edits.targetLinkId || p.targetLinkId) {
+      const targetLinkId = edits.targetLinkId || p.targetLinkId;
+      for (const proj of data.projects)
+        for (const env of proj.environments)
+          for (const link of env.links)
+            if (link.id === targetLinkId && linkUrls(link).some((u) => getOrigin(u) === p.origin)) {
+              target = link;
+            }
+      if (!target) throw new Error('找不到要保存到的链接');
+    }
     for (const proj of data.projects)
       for (const env of proj.environments)
         for (const link of env.links)
-          if (linkUrls(link).some((u) => getOrigin(u) === p.origin)) target = link;
+          if (!target && linkUrls(link).some((u) => getOrigin(u) === p.origin)) target = link;
 
     if (!target) {
       let proj = data.projects.find((x) => x.name === '捕获');
@@ -799,7 +1051,9 @@ async function applyCapture(
       target = newLink({ name: host, url: p.origin });
       env.links.push(target);
     }
-    target.accounts.push(newAccount({ label: '捕获', username: p.username, password: p.password }));
+    target.accounts.push(
+      newAccount({ label: nextLabel || '捕获', username: nextUsername, password: p.password }),
+    );
   }
 
   await persistData(data);
@@ -1044,12 +1298,14 @@ function lock(): void {
   cachedData = null;
   cachedSettingsFingerprint = null;
   pendingCaptures = {};
+  loginCandidates = {};
   if (lockTimer) {
     clearTimeout(lockTimer);
     lockTimer = null;
   }
   browser.storage.session.remove(SESSION_DEK).catch(() => {});
   browser.storage.session.remove(PENDING_KEY).catch(() => {});
+  browser.storage.session.remove(LOGIN_CANDIDATES_KEY).catch(() => {});
   browser.action.setBadgeText({ text: '' }).catch(() => {});
   registerCaptureForData(null).catch(() => {});
 }

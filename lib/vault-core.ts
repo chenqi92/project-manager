@@ -14,6 +14,7 @@ import {
   randomBytes,
   toB64,
 } from './crypto';
+import { BACKUP_REMIND_AFTER_MS } from './backup';
 import type { BioEnrollment, EncryptedVault, KdfConfig, VaultData } from './types';
 
 export const VAULT_SCHEMA_VERSION = 1;
@@ -22,7 +23,14 @@ export function emptyVaultData(): VaultData {
   return {
     version: VAULT_SCHEMA_VERSION,
     projects: [],
-    settings: { autoLockMinutes: 15, kdf: DEFAULT_KDF, autoSubmit: false },
+    settings: {
+      autoLockMinutes: 15,
+      kdf: DEFAULT_KDF,
+      autoSubmit: false,
+      webAssist: true,
+      capturePromptPlacement: 'top-right',
+      backupSnoozeUntil: Date.now() + BACKUP_REMIND_AFTER_MS,
+    },
     tombstones: [],
   };
 }
