@@ -56,7 +56,6 @@ import type {
 import {
   ENV_KIND_COLORS,
   ENV_KIND_LABELS,
-  addTombstone,
   gitCloneCommand,
   newAccount,
   newEnvironment,
@@ -112,11 +111,37 @@ function hostOf(origin: string): string {
   }
 }
 
+function tombstoneProjectTree(data: VaultData, project: Project): void {
+  addDeleteTombstone(data, project.id, project.updatedAt);
+  for (const doc of project.docs ?? []) addDeleteTombstone(data, doc.id, doc.updatedAt);
+  for (const memo of project.memos ?? []) addDeleteTombstone(data, memo.id, memo.updatedAt);
+  for (const env of project.environments) {
+    addDeleteTombstone(data, env.id, env.updatedAt);
+    for (const link of env.links) {
+      addDeleteTombstone(data, link.id, link.updatedAt);
+      for (const account of link.accounts) addDeleteTombstone(data, account.id, account.updatedAt);
+    }
+  }
+}
+
+function addDeleteTombstone(data: VaultData, id: string, updatedAt = 0): void {
+  const deletedAt = Math.max(Date.now(), updatedAt + 1);
+  addMoveTombstone(data, id, deletedAt);
+}
+
+function addMoveTombstone(data: VaultData, id: string, deletedAt: number): void {
+  data.tombstones = data.tombstones ?? [];
+  const existing = data.tombstones.find((t) => t.id === id);
+  if (existing) existing.deletedAt = Math.max(existing.deletedAt, deletedAt);
+  else data.tombstones.push({ id, deletedAt });
+}
+
 type CaptureDraft = {
   url: string;
   title: string;
   username?: string;
   password?: string;
+  totp?: string;
   accountLabel?: string;
   pendingId?: string;
 };
@@ -125,6 +150,8 @@ export default function App() {
   const vault = useVault();
   const { status, data, loading } = vault;
   const { confirm } = useDialog();
+  const appVersion = browser.runtime.getManifest().version;
+  const [firstRunWelcome] = useState(() => new URLSearchParams(location.search).get('welcome') === '1');
 
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -193,7 +220,8 @@ export default function App() {
           title: p.linkName || hostOf(p.origin),
           username: p.username,
           password: p.password,
-          accountLabel: p.kind === 'update' ? p.linkName || '更新' : '捕获',
+          totp: p.totp,
+          accountLabel: p.accountLabel ?? '',
           pendingId: p.id,
         });
       })
@@ -259,7 +287,7 @@ export default function App() {
         password,
         data?.settings.autoSubmit === true,
       );
-      if (!r.filled && r.reason) flash(r.reason);
+      if (r.reason) flash(r.reason);
     } catch (e) {
       flash('打开失败：' + (e instanceof Error ? e.message : String(e)));
     }
@@ -337,7 +365,8 @@ export default function App() {
     update((d) => {
       const p = d.projects.find((x) => x.id === projectId);
       if (p) {
-        if ((p.memos ?? []).some((m) => m.id === memoId)) addTombstone(d, memoId);
+        const memo = p.memos?.find((m) => m.id === memoId);
+        if (memo) addDeleteTombstone(d, memo.id, memo.updatedAt);
         p.memos = (p.memos ?? []).filter((m) => m.id !== memoId);
         p.updatedAt = Date.now();
       }
@@ -354,6 +383,7 @@ export default function App() {
     return (
       <LockScreen
         initialized={status?.initialized ?? false}
+        firstRun={firstRunWelcome && !(status?.initialized ?? false)}
         hasBiometric={status?.hasBiometric}
         onUnlock={vault.unlock}
         onCreate={vault.create}
@@ -416,12 +446,88 @@ export default function App() {
     if (!selected) return;
     if (!(await confirm({ message: `删除项目「${selected.name}」及其全部内容？`, danger: true })))
       return;
-    update((d) => {
+    await update((d) => {
       d.projects = d.projects.filter((p) => p.id !== selected.id);
-      addTombstone(d, selected.id);
+      tombstoneProjectTree(d, selected);
     });
     setSelectedId(null);
     setShowHome(true);
+    flash('项目已删除');
+  };
+
+  const saveLinkDraft = async (
+    sourceProjectId: string,
+    sourceEnvId: string,
+    existing: PlatformLink | undefined,
+    value: {
+      name: string;
+      url: string;
+      note?: string;
+      urls?: string[];
+      gitRepos?: GitRepo[];
+    },
+    target?: {
+      projectId: string;
+      envId: string;
+    },
+  ) => {
+    let nextProjectId: string | null = null;
+    await update((d) => {
+      const now = Date.now();
+      const sourceProject = d.projects.find((p) => p.id === sourceProjectId);
+      const sourceEnv = sourceProject?.environments.find((env) => env.id === sourceEnvId);
+      if (!sourceProject || !sourceEnv) throw new Error('找不到当前环境');
+
+      if (!existing) {
+        sourceEnv.links.push(newLink(value));
+        sourceEnv.updatedAt = now;
+        sourceProject.updatedAt = now;
+        return;
+      }
+
+      const sourceIndex = sourceEnv.links.findIndex((link) => link.id === existing.id);
+      if (sourceIndex < 0) throw new Error('找不到要编辑的链接');
+
+      const targetProjectId = target?.projectId || sourceProjectId;
+      const targetEnvId = target?.envId || sourceEnvId;
+      const sameLocation = targetProjectId === sourceProjectId && targetEnvId === sourceEnvId;
+      if (sameLocation) {
+        Object.assign(sourceEnv.links[sourceIndex]!, value, { updatedAt: now });
+        sourceEnv.updatedAt = now;
+        sourceProject.updatedAt = now;
+        return;
+      }
+
+      const [moved] = sourceEnv.links.splice(sourceIndex, 1);
+      if (!moved) throw new Error('找不到要移动的链接');
+      const movedAt = now;
+      const updatedAt = movedAt + 1;
+      addMoveTombstone(d, moved.id, movedAt);
+      Object.assign(moved, value, { updatedAt });
+      sourceEnv.updatedAt = updatedAt;
+      sourceProject.updatedAt = updatedAt;
+
+      const targetProject = d.projects.find((project) => project.id === targetProjectId);
+      if (!targetProject) throw new Error('找不到目标项目');
+      let targetEnv = targetProject.environments.find((env) => env.id === targetEnvId);
+      if (!targetEnv) {
+        targetEnv = targetProject.environments[0];
+      }
+      if (!targetEnv) {
+        targetEnv = newEnvironment({ name: '默认', kind: 'other' });
+        targetProject.environments.push(targetEnv);
+      }
+
+      targetEnv.links.push(moved);
+      targetEnv.updatedAt = updatedAt;
+      targetProject.updatedAt = updatedAt;
+      nextProjectId = targetProject.id;
+    });
+    if (nextProjectId) {
+      setSelectedId(nextProjectId);
+      setShowHome(false);
+      flash('已移动链接');
+    }
   };
 
   return (
@@ -449,7 +555,9 @@ export default function App() {
           </span>
           <div className="min-w-0 flex-1 leading-tight">
             <div className="truncate text-[13.5px] font-bold">项目环境管家</div>
-            <div className="font-mono text-[10.5px] text-gray-400">env vault</div>
+            <div className="truncate font-mono text-[10.5px] text-gray-400">
+              env vault · v{appVersion}
+            </div>
           </div>
           <button
             onClick={toggleNav}
@@ -732,14 +840,9 @@ export default function App() {
               onSetTheme={setTheme}
               onLock={() => vault.lock()}
               right={
-                <>
-                  <IconButton title="大屏只读展示" onClick={() => setBigScreenId(selected.id)}>
-                    <Monitor size={16} />
-                  </IconButton>
-                  <IconButton title="删除项目" onClick={deleteSelectedProject} danger>
-                    <Trash2 size={16} />
-                  </IconButton>
-                </>
+                <IconButton title="大屏只读展示" onClick={() => setBigScreenId(selected.id)}>
+                  <Monitor size={16} />
+                </IconButton>
               }
             />
             <div className="flex min-h-0 flex-1 flex-col">
@@ -756,6 +859,7 @@ export default function App() {
                   })
                 }
                 onEditProject={() => setEditing({ kind: 'project', project: selected })}
+                onDeleteProject={deleteSelectedProject}
                 onAddEnv={() => setEditing({ kind: 'env', projectId: selected.id })}
             onEditEnv={(env) => setEditing({ kind: 'env', projectId: selected.id, env })}
             onDeleteEnv={async (env) => {
@@ -763,7 +867,7 @@ export default function App() {
               update((d) => {
                 const p = d.projects.find((x) => x.id === selected.id);
                 if (p) p.environments = p.environments.filter((e) => e.id !== env.id);
-                addTombstone(d, env.id);
+                addDeleteTombstone(d, env.id, env.updatedAt);
               });
             }}
             onAddLink={(envId) => setEditing({ kind: 'link', projectId: selected.id, envId })}
@@ -777,7 +881,7 @@ export default function App() {
                   .find((x) => x.id === selected.id)
                   ?.environments.find((x) => x.id === envId);
                 if (e) e.links = e.links.filter((l) => l.id !== link.id);
-                addTombstone(d, link.id);
+                addDeleteTombstone(d, link.id, link.updatedAt);
               });
             }}
             onAddAccount={(envId, linkId) =>
@@ -795,7 +899,7 @@ export default function App() {
                   ?.environments.find((x) => x.id === envId)
                   ?.links.find((x) => x.id === linkId);
                 if (l) l.accounts = l.accounts.filter((a) => a.id !== account.id);
-                addTombstone(d, account.id);
+                addDeleteTombstone(d, account.id, account.updatedAt);
               });
             }}
             onCopy={copy}
@@ -868,20 +972,14 @@ export default function App() {
       {editing?.kind === 'link' && (
         <LinkEditor
           initial={editing.link}
+          location={
+            editing.link
+              ? { projects: data.projects, projectId: editing.projectId, envId: editing.envId }
+              : undefined
+          }
           onClose={() => setEditing(null)}
-          onSave={(v) => {
-            update((d) => {
-              const e = d.projects
-                .find((x) => x.id === editing.projectId)
-                ?.environments.find((x) => x.id === editing.envId);
-              if (!e) return;
-              if (editing.link) {
-                const t = e.links.find((l) => l.id === editing.link!.id);
-                if (t) Object.assign(t, v, { updatedAt: Date.now() });
-              } else {
-                e.links.push(newLink(v));
-              }
-            });
+          onSave={async (v, target) => {
+            await saveLinkDraft(editing.projectId, editing.envId, editing.link, v, target);
             setEditing(null);
           }}
         />
@@ -908,7 +1006,6 @@ export default function App() {
           }}
         />
       )}
-
       {docsProject && (
         <DocsModal
           projectName={docsProject.name}
@@ -920,7 +1017,7 @@ export default function App() {
               if (p) {
                 const nextIds = new Set(docs.map((doc) => doc.id));
                 for (const old of p.docs ?? []) {
-                  if (!nextIds.has(old.id)) addTombstone(d, old.id);
+                  if (!nextIds.has(old.id)) addDeleteTombstone(d, old.id, old.updatedAt);
                 }
                 p.docs = docs.map((doc) => ({ ...doc }));
                 p.updatedAt = Date.now();
@@ -939,6 +1036,7 @@ export default function App() {
           initialTitle={capture.title}
           initialUsername={capture.username}
           initialPassword={capture.password}
+          initialTotp={capture.totp}
           initialAccountLabel={capture.accountLabel}
           onClose={() => {
             setCapture(null);
@@ -1099,6 +1197,7 @@ interface ProjectViewProps {
   onBack: () => void;
   onToggleFav: () => void;
   onEditProject: () => void;
+  onDeleteProject: () => void;
   onAddEnv: () => void;
   onEditEnv: (env: Environment) => void;
   onDeleteEnv: (env: Environment) => void;
@@ -1167,9 +1266,18 @@ function ProjectView(props: ProjectViewProps) {
               {t}
             </span>
           ))}
-          <Button variant="outline" onClick={props.onEditProject}>
-            <Pencil size={13} /> 编辑
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="outline" onClick={props.onEditProject}>
+              <Pencil size={13} /> 编辑
+            </Button>
+            <Button
+              variant="outline"
+              onClick={props.onDeleteProject}
+              className="border-rose-100 text-rose-600 hover:bg-rose-50"
+            >
+              <Trash2 size={13} /> 删除
+            </Button>
+          </div>
         </div>
 
         {project.note && <p className="mb-4 text-sm text-gray-500">{project.note}</p>}

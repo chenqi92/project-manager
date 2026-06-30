@@ -158,6 +158,35 @@ describe('mergeVaultData', () => {
     expect(m.projects[0]!.memos).toEqual([]);
   });
 
+  it('移动链接时墓碑清理旧位置，同时保留更新后的目标位置', () => {
+    const oldLink = { ...newLink({ name: '登录页', url: 'https://x.test' }), id: 'l1', updatedAt: NOW - 20 };
+    const movedLink = { ...oldLink, updatedAt: NOW - 5 };
+    const sourceEnvLocal = { ...newEnvironment({ name: '默认', updatedAt: NOW - 5 }), id: 'source-env', links: [] };
+    const sourceEnvRemote = { ...sourceEnvLocal, updatedAt: NOW - 20, links: [oldLink] };
+    const targetEnv = {
+      ...newEnvironment({ name: '默认', updatedAt: NOW - 5 }),
+      id: 'target-env',
+      links: [movedLink],
+    };
+    const local = vault(
+      [
+        { ...newProject({ name: '捕获' }), id: 'capture', updatedAt: NOW - 5, environments: [sourceEnvLocal] },
+        { ...newProject({ name: '正式项目' }), id: 'target', updatedAt: NOW - 5, environments: [targetEnv] },
+      ],
+      [{ id: 'l1', deletedAt: NOW - 10 }],
+    );
+    const remote = vault([
+      { ...newProject({ name: '捕获' }), id: 'capture', updatedAt: NOW - 20, environments: [sourceEnvRemote] },
+    ]);
+
+    const m = mergeVaultData(local, remote, NOW);
+
+    const sourceLinks = m.projects.find((p) => p.id === 'capture')!.environments[0]!.links;
+    const targetLinks = m.projects.find((p) => p.id === 'target')!.environments[0]!.links;
+    expect(sourceLinks).toEqual([]);
+    expect(targetLinks.map((link) => link.id)).toEqual(['l1']);
+  });
+
   it('账号级合并：两个不同账号都在，重名账号取较新', () => {
     const link = newLink({ name: 'L', url: 'https://x.com' });
     const acc1 = { ...newAccount({ label: '管理员', password: 'old' }), id: 'a1', updatedAt: 100 };

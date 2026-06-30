@@ -13,9 +13,22 @@ const ALL_PROJECTS = '__all__';
 interface WidgetState {
   x: number;
   y: number;
+  anchor?: 'bottom-right';
   collapsed: boolean;
   /** 组件内「隐藏」（眼睛按钮）→ 只剩右下角圆形 FAB 可复显；区别于设置里的整体隐藏。 */
   hidden: boolean;
+}
+
+const EDGE = 8;
+const LEGACY_HIDDEN = { w: 46, h: 46 };
+const LEGACY_COLLAPSED = { w: 104, h: 42 };
+const LEGACY_PANEL = { w: 300, h: 420 };
+
+function clampAnchor(x: number, y: number, minW = LEGACY_HIDDEN.w, minH = LEGACY_HIDDEN.h) {
+  return {
+    x: Math.min(Math.max(x, minW + EDGE), window.innerWidth - EDGE),
+    y: Math.min(Math.max(y, minH + EDGE), window.innerHeight - EDGE),
+  };
 }
 
 export function MemoWidget({
@@ -27,10 +40,7 @@ export function MemoWidget({
   selectedProjectId?: string | null;
   onUpdate: (recipe: (d: VaultData) => void) => Promise<void>;
 }) {
-  const [pos, setPos] = useState(() => ({
-    x: Math.max(8, window.innerWidth - 340),
-    y: Math.max(8, window.innerHeight - 540),
-  }));
+  const [pos, setPos] = useState(() => clampAnchor(window.innerWidth - 24, window.innerHeight - 24));
   const [collapsed, setCollapsed] = useState(true); // 默认收起，遮挡隐私
   const [hidden, setHidden] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -45,9 +55,18 @@ export function MemoWidget({
       .then((r) => {
         const s = r[KEY] as Partial<WidgetState> | undefined;
         if (s) {
-          if (typeof s.x === 'number' && typeof s.y === 'number') setPos({ x: s.x, y: s.y });
-          setCollapsed(s.collapsed ?? true);
-          setHidden(s.hidden ?? false);
+          const nextCollapsed = s.collapsed ?? true;
+          const nextHidden = s.hidden ?? false;
+          if (typeof s.x === 'number' && typeof s.y === 'number') {
+            if (s.anchor === 'bottom-right') {
+              setPos(clampAnchor(s.x, s.y));
+            } else {
+              const box = nextHidden ? LEGACY_HIDDEN : nextCollapsed ? LEGACY_COLLAPSED : LEGACY_PANEL;
+              setPos(clampAnchor(s.x + box.w, s.y + box.h, box.w, box.h));
+            }
+          }
+          setCollapsed(nextCollapsed);
+          setHidden(nextHidden);
         }
         setLoaded(true);
       })
@@ -55,24 +74,21 @@ export function MemoWidget({
   }, []);
 
   const save = (s: WidgetState) => {
-    browser.storage.local.set({ [KEY]: s }).catch(() => {});
+    browser.storage.local.set({ [KEY]: { ...s, anchor: 'bottom-right' } }).catch(() => {});
   };
 
-  // 展开时把面板夹回视口内：收起态小圆按钮可能停在右/下边缘，若仍以左上角为锚点展开，
-  // 面板会越界、显示不全。这里按实际面板尺寸把锚点向左/上回移，使其完整可见。
+  // 位置以右下角为锚点，展开/收起不会改变同一个锚点；这里只在展开后按实际尺寸夹回视口。
   useLayoutEffect(() => {
     if (collapsed || hidden) return;
     const el = panelRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const margin = 8;
-    const maxLeft = Math.max(margin, window.innerWidth - rect.width - margin);
-    const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
-    const nx = Math.min(Math.max(posRef.current.x, margin), maxLeft);
-    const ny = Math.min(Math.max(posRef.current.y, margin), maxTop);
+    const nx = Math.min(Math.max(posRef.current.x, rect.width + margin), window.innerWidth - margin);
+    const ny = Math.min(Math.max(posRef.current.y, rect.height + margin), window.innerHeight - margin);
     if (nx !== posRef.current.x || ny !== posRef.current.y) {
       setPos({ x: nx, y: ny });
-      save({ x: nx, y: ny, collapsed: false, hidden: false });
+      save({ x: nx, y: ny, collapsed: false, hidden: false, anchor: 'bottom-right' });
     }
   }, [collapsed, hidden]);
 
@@ -83,18 +99,18 @@ export function MemoWidget({
     const sy = e.clientY;
     const ox = posRef.current.x;
     const oy = posRef.current.y;
+    const rect = panelRef.current?.getBoundingClientRect();
+    const minW = rect?.width ?? LEGACY_PANEL.w;
+    const minH = rect?.height ?? LEGACY_PANEL.h;
     let last = { x: ox, y: oy };
     const move = (ev: PointerEvent) => {
-      last = {
-        x: Math.min(Math.max(ox + ev.clientX - sx, 4), window.innerWidth - 60),
-        y: Math.min(Math.max(oy + ev.clientY - sy, 4), window.innerHeight - 40),
-      };
+      last = clampAnchor(ox + ev.clientX - sx, oy + ev.clientY - sy, minW, minH);
       setPos(last);
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
-      save({ x: last.x, y: last.y, collapsed, hidden });
+      save({ x: last.x, y: last.y, collapsed, hidden, anchor: 'bottom-right' });
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -114,20 +130,18 @@ export function MemoWidget({
     const sy = e.clientY;
     const ox = posRef.current.x;
     const oy = posRef.current.y;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     let moved = false;
     let last = { x: ox, y: oy };
     const onMove = (ev: PointerEvent) => {
       if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 4) moved = true;
-      last = {
-        x: Math.min(Math.max(ox + ev.clientX - sx, 4), window.innerWidth - 60),
-        y: Math.min(Math.max(oy + ev.clientY - sy, 4), window.innerHeight - 40),
-      };
+      last = clampAnchor(ox + ev.clientX - sx, oy + ev.clientY - sy, rect.width, rect.height);
       if (moved) setPos(last);
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      if (moved) save({ x: last.x, y: last.y, collapsed, hidden });
+      if (moved) save({ x: last.x, y: last.y, collapsed, hidden, anchor: 'bottom-right' });
       else onTap();
     };
     window.addEventListener('pointermove', onMove);
@@ -136,11 +150,11 @@ export function MemoWidget({
 
   const hide = () => {
     setHidden(true);
-    save({ ...posRef.current, collapsed, hidden: true });
+    save({ ...posRef.current, collapsed, hidden: true, anchor: 'bottom-right' });
   };
   const show = () => {
     setHidden(false);
-    save({ ...posRef.current, collapsed, hidden: false });
+    save({ ...posRef.current, collapsed, hidden: false, anchor: 'bottom-right' });
   };
 
   const mutate = (id: string, fn: (m: MemoItem) => void) =>
@@ -202,7 +216,7 @@ export function MemoWidget({
     return (
       <button
         onPointerDown={(e) => startMoveOrTap(e, show)}
-        style={{ left: pos.x, top: pos.y, touchAction: 'none' }}
+        style={{ left: pos.x, top: pos.y, transform: 'translate(-100%, -100%)', touchAction: 'none' }}
         className={cx(
           'fixed z-40 flex h-[46px] w-[46px] items-center justify-center rounded-full text-white shadow-[0_12px_28px_-8px_rgba(13,148,136,.45)] active:cursor-grabbing',
           alarmCount > 0 ? 'memo-shake bg-rose-600' : 'bg-brand-600',
@@ -219,7 +233,7 @@ export function MemoWidget({
     return (
       <button
         onPointerDown={(e) => startMoveOrTap(e, toggleCollapsed)}
-        style={{ left: pos.x, top: pos.y, touchAction: 'none' }}
+        style={{ left: pos.x, top: pos.y, transform: 'translate(-100%, -100%)', touchAction: 'none' }}
         className={cx(
           'fixed z-40 flex cursor-grab items-center gap-2 rounded-full border bg-surface px-4 py-2.5 text-[12.5px] font-semibold shadow-[0_12px_30px_-10px_rgba(20,26,40,.3)] active:cursor-grabbing',
           alarmCount > 0 ? 'memo-shake border-rose-200' : 'border-gray-200',
@@ -247,7 +261,7 @@ export function MemoWidget({
   return (
     <div
       ref={panelRef}
-      style={{ left: pos.x, top: pos.y }}
+      style={{ left: pos.x, top: pos.y, transform: 'translate(-100%, -100%)' }}
       className="fixed z-40 flex max-h-[72vh] w-[300px] flex-col overflow-hidden rounded-[14px] border border-gray-200 bg-surface shadow-[0_18px_44px_-12px_rgba(20,26,40,.32)]"
     >
       <div

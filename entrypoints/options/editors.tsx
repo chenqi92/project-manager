@@ -191,10 +191,16 @@ export function EnvEditor({
 
 export function LinkEditor({
   initial,
+  location,
   onClose,
   onSave,
 }: {
   initial?: PlatformLink;
+  location?: {
+    projects: Project[];
+    projectId: string;
+    envId: string;
+  };
   onClose: () => void;
   onSave: (v: {
     name: string;
@@ -202,17 +208,59 @@ export function LinkEditor({
     note?: string;
     urls?: string[];
     gitRepos?: GitRepo[];
-  }) => void;
+  }, location?: { projectId: string; envId: string }) => void;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [url, setUrl] = useState(initial?.url ?? '');
   const [extraUrls, setExtraUrls] = useState((initial?.urls ?? []).join('\n'));
   const [note, setNote] = useState(initial?.note ?? '');
   const [repos, setRepos] = useState<GitRepo[]>(initial?.gitRepos ?? []);
+  const [projectId, setProjectId] = useState(location?.projectId ?? '');
+  const [envId, setEnvId] = useState(location?.envId ?? '');
+  const selectedProject = location?.projects.find((p) => p.id === projectId);
+  const envs = selectedProject?.environments ?? [];
+  const selectedEnvId = envs.some((env) => env.id === envId) ? envId : '';
+  const changeProject = (nextProjectId: string) => {
+    setProjectId(nextProjectId);
+    const nextProject = location?.projects.find((p) => p.id === nextProjectId);
+    setEnvId(nextProject?.environments[0]?.id ?? '');
+  };
 
   return (
     <Modal title={initial ? '编辑链接' : '新建链接 / 平台'} onClose={onClose}>
       <div className="flex flex-col gap-3">
+        {initial && location && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>所属项目</Label>
+              <Select value={projectId} onChange={(e) => changeProject(e.target.value)}>
+                {location.projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <Label>所属环境</Label>
+              <Select
+                value={selectedEnvId}
+                onChange={(e) => setEnvId(e.target.value)}
+                disabled={envs.length === 0}
+              >
+                {envs.length === 0 ? (
+                  <option value="">自动创建默认环境</option>
+                ) : (
+                  envs.map((env) => (
+                    <option key={env.id} value={env.id}>
+                      {env.name}
+                    </option>
+                  ))
+                )}
+              </Select>
+            </div>
+          </div>
+        )}
         <div>
           <Label>名称</Label>
           <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：管理后台" />
@@ -259,7 +307,7 @@ export function LinkEditor({
               note: note.trim() || undefined,
               urls: urls.length ? urls : undefined,
               gitRepos: cleanRepos(repos),
-            });
+            }, location ? { projectId, envId: selectedEnvId } : undefined);
           }}
         >
           保存
