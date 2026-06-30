@@ -21,7 +21,7 @@ import { produce } from '@/lib/vault-ops';
 import { enrollBiometricCredential, isPlatformAuthAvailable } from '@/lib/webauthn';
 
 const LOCK_OPTS = [0, 1, 5, 10, 15, 30, 60];
-const lockLabel = (n: number) => (n <= 0 ? '不自动锁定' : `${n} 分钟`);
+const lockLabel = (n: number) => (n <= 0 ? '永不（直到浏览器关闭/关机）' : `${n} 分钟`);
 
 const PROVIDER_TAG: Record<SyncTargetType, { tag: string; bg: string; color: string }> = {
   'self-hosted': { tag: 'SH', bg: '#eef1f4', color: '#5b6472' },
@@ -72,6 +72,7 @@ export function Settings({
 
   const memoOn = data.settings.floatingMemoHidden !== true;
   const autoSubmit = data.settings.autoSubmit === true;
+  const autoFlow = data.settings.autoFlow !== false;
   const webAssist = data.settings.webAssist !== false;
   const webAssistAllSites = data.settings.webAssistAllSites === true;
   const lockN = data.settings.autoLockMinutes ?? 10;
@@ -167,20 +168,30 @@ export function Settings({
                 修改主密码
               </Button>
             </SettingsRow>
-            <SettingsRow title="空闲自动锁定" desc="无操作达到时长后自动锁定金库（0 = 不锁，不推荐）">
-              <select
-                value={lockN}
-                onChange={(e) =>
-                  setSetting((d) => void (d.settings.autoLockMinutes = Number(e.target.value)))
-                }
-                className="h-[34px] rounded-[9px] border border-gray-200 bg-surface px-3 text-[12.5px] font-semibold text-gray-800 outline-none focus:border-brand-500"
-              >
-                {LOCK_OPTS.map((n) => (
-                  <option key={n} value={n}>
-                    {lockLabel(n)}
-                  </option>
-                ))}
-              </select>
+            <SettingsRow
+              title="空闲自动锁定"
+              desc="无操作达到时长后自动锁定；选“永不”后，本次浏览器会话内会一直保持可用，仍可手动锁定"
+            >
+              <div className="flex flex-col items-end gap-1">
+                <select
+                  value={lockN}
+                  onChange={(e) =>
+                    setSetting((d) => void (d.settings.autoLockMinutes = Number(e.target.value)))
+                  }
+                  className="h-[34px] rounded-[9px] border border-gray-200 bg-surface px-3 text-[12.5px] font-semibold text-gray-800 outline-none focus:border-brand-500"
+                >
+                  {LOCK_OPTS.map((n) => (
+                    <option key={n} value={n}>
+                      {lockLabel(n)}
+                    </option>
+                  ))}
+                </select>
+                {lockN <= 0 && (
+                  <span className="text-[10.5px] font-medium text-amber-600">
+                    适合可信设备；离开电脑前建议手动锁定
+                  </span>
+                )}
+              </div>
             </SettingsRow>
             <SettingsRow
               title="填充后自动登录"
@@ -189,6 +200,15 @@ export function Settings({
               <Toggle
                 checked={autoSubmit}
                 onChange={() => setSetting((d) => void (d.settings.autoSubmit = !autoSubmit))}
+              />
+            </SettingsRow>
+            <SettingsRow
+              title="多步登录自动续填"
+              desc="点首步后自动把后续步骤（密码 / 验证码）填完并前进；遇验证码会暂停交给你（默认开启）"
+            >
+              <Toggle
+                checked={autoFlow}
+                onChange={() => setSetting((d) => void (d.settings.autoFlow = !autoFlow))}
               />
             </SettingsRow>
             <SettingsRow

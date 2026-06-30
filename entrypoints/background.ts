@@ -1,5 +1,11 @@
 import { browser } from 'wxt/browser';
-import { fillCredentialsInPage, fillTotpInPage, fillUsernameInPage, getOrigin } from '@/lib/autofill';
+import {
+  fillCredentialsInPage,
+  fillTotpInPage,
+  fillUsernameInPage,
+  getOrigin,
+  registrableDomain,
+} from '@/lib/autofill';
 import { fromB64, toB64 } from '@/lib/crypto';
 import { flatten, matchForUrl, search } from '@/lib/search';
 import { buildExport, mergeVaults, parseImport } from '@/lib/import-export';
@@ -74,7 +80,10 @@ let clipboardOffscreenReady = false;
 let pendingCaptures: Record<string, CapturePending> = {};
 let loginCandidates: Record<string, LoginCaptureCandidate> = {};
 
-type LoginCaptureCandidate = Pick<CapturePending, 'origin' | 'url' | 'username' | 'password' | 'tabId'> & {
+type LoginCaptureCandidate = Pick<
+  CapturePending,
+  'origin' | 'url' | 'pageTitle' | 'username' | 'password' | 'totp' | 'tabId'
+> & {
   createdAt: number;
 };
 
@@ -92,12 +101,17 @@ export default defineBackground(() => {
   });
 
   // 右键菜单：在任意页面/链接上保存到保险箱。
-  browser.runtime.onInstalled.addListener(() => {
+  browser.runtime.onInstalled.addListener((details) => {
     browser.contextMenus.create({
       id: 'save-to-vault',
       title: '保存到项目环境管家',
       contexts: ['page', 'link'],
     });
+    if (details.reason === 'install') {
+      browser.tabs
+        .create({ url: browser.runtime.getURL('/options.html?welcome=1') })
+        .catch(() => browser.runtime.openOptionsPage());
+    }
   });
   browser.contextMenus.onClicked.addListener((info, tab) => {
     const url = info.linkUrl || info.pageUrl || tab?.url || '';
@@ -170,6 +184,42 @@ function escapeXml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function siteForFill(url: string): string {
+  try {
+    return registrableDomain(new URL(url).hostname);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 注入凭据填充到所有 frame（带同主域护栏），并聚合各 frame 结果；site 为空时退回只填顶层 frame。
+ * 使登录表单在「同主域跨域 iframe」（如阿里云 passport.aliyun.com 嵌在 account.aliyun.com）里也能被填。
+ * 跨域 iframe 需扩展已获得该 iframe 域名的主机权限才会被注入（否则该 frame 被跳过）。
+ */
+async function injectCredentialFill(
+  tabId: number,
+  username: string,
+  password: string,
+  submit: boolean,
+  url: string,
+): Promise<ReturnType<typeof fillCredentialsInPage>> {
+  const site = siteForFill(url);
+  const res = await browser.scripting.executeScript({
+    target: site ? { tabId, allFrames: true } : { tabId },
+    func: fillCredentialsInPage,
+    args: [username, password, submit, site || undefined],
+  });
+  const results = res
+    .map((r) => r.result)
+    .filter((r): r is NonNullable<typeof r> => Boolean(r));
+  return (
+    results.find((r) => r.ok === true) ??
+    results.find((r) => r.reason && r.reason !== 'frame-not-allowed') ??
+    results[0] ?? { ok: true }
+  );
+}
+
 /** 快捷键「填充当前页」：唯一匹配则直接填，否则打开 popup 让用户选。 */
 async function fillActiveTab(): Promise<void> {
   await ensureRestored();
@@ -182,11 +232,13 @@ async function fillActiveTab(): Promise<void> {
   const matches = matchForUrl(cachedData, tab.url);
   if (matches.length === 1) {
     const m = matches[0]!;
-    await browser.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: fillCredentialsInPage,
-      args: [m.username, m.password, cachedData.settings.autoSubmit === true],
-    });
+    await injectCredentialFill(
+      tab.id,
+      m.username,
+      m.password,
+      cachedData.settings.autoSubmit === true,
+      m.url,
+    );
   } else {
     browser.action.openPopup?.().catch(() => {});
   }
@@ -206,6 +258,7 @@ async function handle(msg: Msg, sender?: MsgSender): Promise<MsgResponse<unknown
     msg.type === 'capture:save' ||
     msg.type === 'capture:editSave' ||
     msg.type === 'capture:dismiss' ||
+    msg.type === 'ui:openUnlock' ||
     msg.type === 'assist:matches' ||
     msg.type === 'assist:fillUsername' ||
     msg.type === 'assist:fill' ||
@@ -302,6 +355,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       lock();
       await vaultBackend.clear();
       await browser.storage.local.remove(SYNC_STATE_KEY);
+      await unregisterAssistScripts();
       return getStatus();
 
     case 'activity':
@@ -310,6 +364,12 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
 
     case 'clipboard:clearLater':
       await scheduleClipboardClear(msg.clearMs);
+      return;
+
+    case 'ui:openUnlock':
+      await browser.tabs
+        .create({ url: browser.runtime.getURL('/options.html?unlock=1') })
+        .catch(() => browser.runtime.openOptionsPage());
       return;
 
     // ---------------- 生物识别 ----------------
@@ -515,19 +575,36 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
     case 'capture:candidate': {
       const trusted = senderOrigin(sender);
       if (!trusted || trusted !== getOrigin(msg.url)) return;
-      await handleCaptureCandidate(trusted, msg.url, msg.username, msg.password, sender?.tab?.id);
+      await handleCaptureCandidate(
+        trusted,
+        msg.url,
+        msg.username,
+        msg.password,
+        sender?.tab?.id,
+        msg.title,
+        msg.totp,
+      );
       return;
     }
     case 'capture:successCheck': {
       const trusted = senderOrigin(sender);
       if (!trusted || trusted !== getOrigin(msg.url)) return null;
-      return handleCaptureSuccessCheck(trusted, msg.url, msg.signals, sender?.tab?.id);
+      return handleCaptureSuccessCheck(trusted, msg.url, msg.signals, sender?.tab?.id, msg.title);
     }
     case 'capture:login': {
       // 只信任 sender 的真实来源，丢弃消息体里可被伪造的 origin 字段；并要求 url 同源。
       const trusted = senderOrigin(sender);
       if (!trusted || trusted !== getOrigin(msg.url)) return;
-      return handleCaptureLogin(trusted, msg.url, msg.username, msg.password, sender?.tab?.id);
+      return handleCaptureLogin(
+        trusted,
+        msg.url,
+        msg.username,
+        msg.password,
+        sender?.tab?.id,
+        {},
+        msg.title,
+        msg.totp,
+      );
     }
     case 'capture:manual': {
       const origin = getOrigin(msg.url);
@@ -538,9 +615,18 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
           throw new Error('当前网页已变化，请重新捕获');
         }
       }
-      return handleCaptureLogin(origin, msg.url, msg.username, msg.password, msg.tabId, {
-        allowUnknownOrigin: true,
-      });
+      return handleCaptureLogin(
+        origin,
+        msg.url,
+        msg.username,
+        msg.password,
+        msg.tabId,
+        {
+          allowUnknownOrigin: true,
+        },
+        msg.title,
+        msg.totp,
+      );
     }
     case 'capture:pending':
       await requireUnlocked();
@@ -550,6 +636,8 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
         username: msg.username,
         accountLabel: msg.accountLabel,
         targetLinkId: msg.targetLinkId,
+        targetProjectId: msg.targetProjectId,
+        newProjectName: msg.newProjectName,
       });
       return;
     case 'capture:editSave':
@@ -595,7 +683,7 @@ async function assistMatches(sender?: MsgSender): Promise<AssistSnapshot> {
   const enabled =
     cachedData?.settings.webAssist !== false || cachedData?.settings.webAssistAllSites === true;
   if (!dek || !cachedData) {
-    return { locked: true, enabled: false, origin, autoSubmit: false, matches: [] };
+    return { locked: true, enabled: false, origin, autoSubmit: false, theme: 'system', matches: [] };
   }
   const pageUrl = senderPageUrl(sender);
   const matches = enabled && pageUrl ? matchForUrl(cachedData, pageUrl).map(toAssistEntry) : [];
@@ -604,6 +692,8 @@ async function assistMatches(sender?: MsgSender): Promise<AssistSnapshot> {
     enabled,
     origin,
     autoSubmit: cachedData.settings.autoSubmit === true,
+    autoFlow: cachedData.settings.autoFlow !== false,
+    theme: cachedData.settings.theme ?? 'system',
     capturePromptPlacement: cachedData.settings.capturePromptPlacement ?? 'top-right',
     matches,
   };
@@ -640,12 +730,7 @@ async function assistFill(
   submit: boolean,
 ): Promise<unknown> {
   const { entry, tabId } = await findAssistEntry(sender, accountId);
-  const res = await browser.scripting.executeScript({
-    target: { tabId },
-    func: fillCredentialsInPage,
-    args: [entry.username, entry.password, submit],
-  });
-  return res[0]?.result ?? { ok: true };
+  return injectCredentialFill(tabId, entry.username, entry.password, submit, entry.url);
 }
 
 async function assistFillTotp(
@@ -677,9 +762,8 @@ async function refreshCaptureRegistration(): Promise<void> {
 
 async function registerCaptureForData(data: VaultData | null): Promise<void> {
   try {
-    await browser.scripting.unregisterContentScripts({ ids: ['capture'] }).catch(() => {});
-    await browser.scripting.unregisterContentScripts({ ids: ['web-assist'] }).catch(() => {});
     if (!data) return;
+    await unregisterAssistScripts();
     const perms = await browser.permissions.getAll();
     const granted = perms.origins ?? [];
     const knownOrigins = captureMatchPatterns(data).filter((pattern) =>
@@ -732,6 +816,8 @@ async function handleCaptureCandidate(
   username: string,
   password: string,
   tabId?: number,
+  pageTitle?: string,
+  rawTotp?: string,
 ): Promise<void> {
   await ensureRestored();
   if (!dek || !cachedData || !password) return;
@@ -741,8 +827,10 @@ async function handleCaptureCandidate(
   loginCandidates[pendingId(origin, tabId)] = {
     origin,
     url,
+    pageTitle: cleanCaptureTitle(pageTitle),
     username,
     password,
+    totp: normalizeCapturedTotp(rawTotp),
     tabId,
     createdAt: Date.now(),
   };
@@ -754,6 +842,7 @@ async function handleCaptureSuccessCheck(
   url: string,
   signals: CaptureSuccessSignals,
   tabId?: number,
+  pageTitle?: string,
 ): Promise<{
   pending: true;
   id?: string;
@@ -772,7 +861,12 @@ async function handleCaptureSuccessCheck(
     return null;
   }
   if (candidate.origin !== origin || getOrigin(url) !== origin) return null;
+  const totp = normalizeCapturedTotp(signals.totp) || candidate.totp;
   if (!loginSuccessLooksLikely(candidate, url, signals)) {
+    if (totp && signals.visiblePasswordFields === 0) {
+      candidate.totp = totp;
+      candidate.createdAt = Date.now();
+    }
     await saveLoginCandidates();
     return null;
   }
@@ -785,6 +879,9 @@ async function handleCaptureSuccessCheck(
     candidate.username,
     candidate.password,
     candidate.tabId,
+    {},
+    candidate.pageTitle || pageTitle,
+    totp,
   );
 }
 
@@ -815,6 +912,59 @@ function captureSaveTargets(data: VaultData, origin: string): CaptureSaveTarget[
   return out;
 }
 
+function captureProjectTargets(data: VaultData): NonNullable<CapturePending['projectTargets']> {
+  return data.projects.map((proj) => ({ projectId: proj.id, projectName: proj.name }));
+}
+
+function cleanCaptureTitle(title?: string): string | undefined {
+  const clean = (title ?? '').replace(/\s+/g, ' ').trim();
+  if (!clean) return undefined;
+  if (/^(登录|登陆|用户登录|login|sign in|signin)$/i.test(clean)) return undefined;
+  return clean.slice(0, 80);
+}
+
+function normalizeCapturedTotp(raw?: string): string | undefined {
+  const text = (raw ?? '').trim();
+  if (!text) return undefined;
+  const candidate = text.startsWith('otpauth://') ? text : text.replace(/[\s-]+/g, '');
+  return parseTotp(candidate) ? candidate : undefined;
+}
+
+function captureLinkNameFrom(origin: string, url: string, pageTitle?: string): string {
+  const title = cleanCaptureTitle(pageTitle);
+  if (title) return title;
+  try {
+    return new URL(url).host || new URL(origin).host;
+  } catch {
+    try {
+      return new URL(origin).host;
+    } catch {
+      return origin;
+    }
+  }
+}
+
+async function unregisterAssistScripts(): Promise<void> {
+  await browser.scripting.unregisterContentScripts({ ids: ['capture'] }).catch(() => {});
+  await browser.scripting.unregisterContentScripts({ ids: ['web-assist'] }).catch(() => {});
+}
+
+function captureLinkName(p: CapturePending): string {
+  return p.linkName || captureLinkNameFrom(p.origin, p.url, p.pageTitle);
+}
+
+function captureHostName(p: CapturePending): string {
+  try {
+    return new URL(p.url).host || new URL(p.origin).host;
+  } catch {
+    try {
+      return new URL(p.origin).host;
+    } catch {
+      return p.origin;
+    }
+  }
+}
+
 function loginSuccessLooksLikely(
   candidate: LoginCaptureCandidate,
   currentUrl: string,
@@ -824,6 +974,7 @@ function loginSuccessLooksLikely(
   if (age < 450) return false;
   if (age > LOGIN_CANDIDATE_TTL_MS) return false;
   if (signals.visiblePasswordFields > 0 || signals.filledPasswordFields > 0) return false;
+  if (normalizeCapturedTotp(signals.totp) && age >= 450) return true;
 
   const leftSubmitPage = normalizeCaptureUrl(candidate.url) !== normalizeCaptureUrl(currentUrl);
   if (signals.successHint) return true;
@@ -883,6 +1034,8 @@ async function handleCaptureLogin(
   password: string,
   tabId?: number,
   opts: { allowUnknownOrigin?: boolean } = {},
+  pageTitle?: string,
+  rawTotp?: string,
 ): Promise<{
   pending: true;
   id?: string;
@@ -893,11 +1046,14 @@ async function handleCaptureLogin(
   linkName?: string;
   updateCandidates?: CaptureUpdateCandidate[];
   saveTargets?: CaptureSaveTarget[];
+  projectTargets?: NonNullable<CapturePending['projectTargets']>;
   accountLabel?: string;
   targetLinkId?: string;
+  totp?: string;
 } | null> {
   await ensureRestored();
   if (!dek || !cachedData || !password) return null; // 锁定时忽略
+  const totp = normalizeCapturedTotp(rawTotp);
 
   let matchAccountId: string | undefined;
   let linkName: string | undefined;
@@ -905,6 +1061,8 @@ async function handleCaptureLogin(
   let matchedLinkOrigin = false;
   const updateCandidates: CaptureUpdateCandidate[] = [];
   const saveTargets = captureSaveTargets(cachedData, origin);
+  const projectTargets = captureProjectTargets(cachedData);
+  const cleanPageTitle = cleanCaptureTitle(pageTitle);
   for (const proj of cachedData.projects) {
     for (const env of proj.environments) {
       for (const link of env.links) {
@@ -920,7 +1078,7 @@ async function handleCaptureLogin(
           });
           if (acc.username && username && acc.username.toLowerCase() === username.toLowerCase()) {
             matchAccountId = acc.id;
-            if (acc.password === password) exactSame = true;
+            if (acc.password === password && (!totp || acc.totp === totp)) exactSame = true;
           }
         }
       }
@@ -933,31 +1091,38 @@ async function handleCaptureLogin(
     await clearPending(undefined, origin, tabId);
     return null; // 已是最新，无需提示
   }
+  const suggestedLinkName = linkName || captureLinkNameFrom(origin, url, cleanPageTitle);
   let pending: CapturePending;
   if (matchAccountId) {
     pending = {
       kind: 'update',
       origin,
       url,
+      pageTitle: cleanPageTitle,
       username,
       password,
+      totp,
       tabId,
       accountId: matchAccountId,
-      linkName,
+      linkName: suggestedLinkName,
       updateCandidates: updateCandidates.slice(0, 8),
       saveTargets,
+      projectTargets,
     };
   } else {
     pending = {
       kind: 'new',
       origin,
       url,
+      pageTitle: cleanPageTitle,
       username,
       password,
+      totp,
       tabId,
-      linkName,
+      linkName: suggestedLinkName,
       updateCandidates: updateCandidates.slice(0, 8),
       saveTargets,
+      projectTargets,
       targetLinkId: saveTargets[0]?.linkId,
     };
   }
@@ -972,8 +1137,10 @@ async function handleCaptureLogin(
     id: saved.id,
     updateCandidates: saved.updateCandidates,
     saveTargets: saved.saveTargets,
+    projectTargets: saved.projectTargets,
     accountLabel: saved.accountLabel,
     targetLinkId: saved.targetLinkId,
+    totp: saved.totp,
   };
 }
 
@@ -982,7 +1149,13 @@ async function applyCapture(
   senderOrigin?: string | null,
   tabId?: number,
   updateAccountId?: string,
-  edits: { username?: string; accountLabel?: string; targetLinkId?: string } = {},
+  edits: {
+    username?: string;
+    accountLabel?: string;
+    targetLinkId?: string;
+    targetProjectId?: string;
+    newProjectName?: string;
+  } = {},
 ): Promise<void> {
   await requireUnlocked();
   const p = await getPendingForContext(id, senderOrigin, tabId);
@@ -1009,6 +1182,7 @@ async function applyCapture(
             if (acc.id === targetAccountId) {
               if (nextUsername) acc.username = nextUsername;
               if (nextLabel) acc.label = nextLabel;
+              if (p.totp) acc.totp = p.totp;
               acc.password = p.password;
               acc.updatedAt = Date.now();
               updated = true;
@@ -1016,6 +1190,8 @@ async function applyCapture(
     if (!updated) throw new Error('找不到要更新的账号');
   } else {
     let target: PlatformLink | null = null;
+    let targetProject: VaultData['projects'][number] | null = null;
+    let targetEnv: VaultData['projects'][number]['environments'][number] | null = null;
     if (edits.targetLinkId || p.targetLinkId) {
       const targetLinkId = edits.targetLinkId || p.targetLinkId;
       for (const proj of data.projects)
@@ -1023,37 +1199,50 @@ async function applyCapture(
           for (const link of env.links)
             if (link.id === targetLinkId && linkUrls(link).some((u) => getOrigin(u) === p.origin)) {
               target = link;
+              targetProject = proj;
+              targetEnv = env;
             }
       if (!target) throw new Error('找不到要保存到的链接');
     }
     for (const proj of data.projects)
       for (const env of proj.environments)
         for (const link of env.links)
-          if (!target && linkUrls(link).some((u) => getOrigin(u) === p.origin)) target = link;
+          if (!target && linkUrls(link).some((u) => getOrigin(u) === p.origin)) {
+            target = link;
+            targetProject = proj;
+            targetEnv = env;
+          }
 
-    if (!target) {
-      let proj = data.projects.find((x) => x.name === '捕获');
-      if (!proj) {
-        proj = newProject({ name: '捕获' });
-        data.projects.push(proj);
+    if (!target && (edits.targetProjectId || edits.newProjectName !== undefined)) {
+      if (edits.targetProjectId) {
+        targetProject = data.projects.find((proj) => proj.id === edits.targetProjectId) ?? null;
+        if (!targetProject) throw new Error('找不到要保存到的项目');
+      } else {
+        targetProject = newProject({ name: edits.newProjectName?.trim() || captureHostName(p) });
+        data.projects.push(targetProject);
       }
-      let env = proj.environments[0];
-      if (!env) {
-        env = newEnvironment({ name: '默认', kind: 'other' });
-        proj.environments.push(env);
+
+      targetEnv =
+        targetProject.environments.find((env) => env.name === '默认') ??
+        targetProject.environments[0] ??
+        null;
+      if (!targetEnv) {
+        targetEnv = newEnvironment({ name: '默认', kind: 'other' });
+        targetProject.environments.push(targetEnv);
       }
-      let host = p.origin;
-      try {
-        host = new URL(p.url).host;
-      } catch {
-        /* keep origin */
-      }
-      target = newLink({ name: host, url: p.origin });
-      env.links.push(target);
+
+      target = newLink({ name: captureLinkName(p), url: p.url || p.origin });
+      targetEnv.links.push(target);
     }
+
+    if (!target) throw new Error('请选择保存项目或新建项目');
+    const now = Date.now();
     target.accounts.push(
-      newAccount({ label: nextLabel || '捕获', username: nextUsername, password: p.password }),
+      newAccount({ label: nextLabel, username: nextUsername, password: p.password, totp: p.totp }),
     );
+    target.updatedAt = now;
+    if (targetEnv) targetEnv.updatedAt = now;
+    if (targetProject) targetProject.updatedAt = now;
   }
 
   await persistData(data);
@@ -1167,12 +1356,9 @@ async function openAndFill(
     return { filled: false, reason: '页面最终地址与链接不一致，已阻止填充' };
   }
 
-  await browser.scripting.executeScript({
-    target: { tabId },
-    func: fillCredentialsInPage,
-    args: [username, password, submit],
-  });
-  return { filled: true };
+  const result = await injectCredentialFill(tabId, username, password, submit, url);
+  if (result.ok === false) return { filled: false, reason: result.reason ?? '未能填充' };
+  return { filled: true, reason: result.submitSkipped ? result.reason : undefined };
 }
 
 function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {

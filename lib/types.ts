@@ -353,6 +353,8 @@ export interface VaultSettings {
   syncAuto?: boolean;
   /** 填充后是否自动提交直接登录；只有 true 才开启 */
   autoSubmit?: boolean;
+  /** 多步登录自动续填：点首步后自动填完后续步骤（密码 / TOTP）并前进；undefined 视为开启 */
+  autoFlow?: boolean;
   /** 网页内助手：在已授权站点显示账号候选、保存/更新提示、TOTP 填充入口 */
   webAssist?: boolean;
   /** 全站登录捕获：需用户额外授予 http(s) 全站权限，用于新网站登录后提示保存 */
@@ -486,13 +488,22 @@ export interface CaptureSaveTarget {
   linkName: string;
 }
 
+export interface CaptureProjectTarget {
+  projectId: string;
+  projectName: string;
+}
+
 export interface CapturePending {
   id?: string;
   kind: 'new' | 'update';
   origin: string;
   url: string;
+  /** 捕获时的网页标题，用于给新建链接命名 */
+  pageTitle?: string;
   username: string;
   password: string;
+  /** 注册或启用两步验证时捕获到的 TOTP 密钥 / otpauth:// URI */
+  totp?: string;
   tabId?: number;
   createdAt?: number;
   accountId?: string;
@@ -502,6 +513,8 @@ export interface CapturePending {
   updateCandidates?: CaptureUpdateCandidate[];
   /** 可直接保存到的已有链接候选 */
   saveTargets?: CaptureSaveTarget[];
+  /** 可选择保存并自动新建网站链接的项目候选 */
+  projectTargets?: CaptureProjectTarget[];
   /** UI 草稿：账号显示名 */
   accountLabel?: string;
   /** UI 草稿：保存到已有链接 */
@@ -514,6 +527,8 @@ export interface CaptureSuccessSignals {
   filledPasswordFields: number;
   visibleOtpFields: number;
   successHint: boolean;
+  /** 页面上展示的 TOTP 设置密钥 / otpauth:// URI（注册二次验证步骤） */
+  totp?: string;
 }
 
 export interface AssistEntry {
@@ -532,6 +547,9 @@ export interface AssistSnapshot {
   enabled: boolean;
   origin: string;
   autoSubmit: boolean;
+  /** 多步登录自动续填：点首步后自动把后续步骤（密码 / TOTP）填完并前进；undefined 视为开启 */
+  autoFlow?: boolean;
+  theme?: 'light' | 'dark' | 'system';
   capturePromptPlacement?: 'top-right' | 'center';
   matches: AssistEntry[];
 }

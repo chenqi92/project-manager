@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { browser } from 'wxt/browser';
 import { api } from '@/lib/messaging';
+import { VAULT_KEY } from '@/lib/storage';
 import { VAULT_LOCKED_MSG, type VaultData, type VaultStatus } from '@/lib/types';
 import { normalizeVaultData } from '@/lib/vault-ops';
 
@@ -55,6 +57,18 @@ export function useVault(): VaultController {
       })
       .finally(() => setLoading(false));
     api.activity().catch(() => {});
+  }, [refresh]);
+
+  useEffect(() => {
+    const onChanged = (
+      changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
+      areaName: string,
+    ) => {
+      if (areaName !== 'local' || !(VAULT_KEY in changes)) return;
+      refresh().catch((e) => console.warn('vault refresh after storage change failed:', e));
+    };
+    browser.storage.onChanged.addListener(onChanged);
+    return () => browser.storage.onChanged.removeListener(onChanged);
   }, [refresh]);
 
   const unlock = useCallback(

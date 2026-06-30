@@ -12,6 +12,19 @@ import {
 
 const NEW = '__new';
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
+  }
+}
+
+function defaultLinkName(title: string, url: string): string {
+  const cleanTitle = title.replace(/\s+/g, ' ').trim();
+  return cleanTitle || hostOf(url) || url.trim();
+}
+
 /** 把当前页/链接快速存入保险箱：选择或新建 项目 + 环境，可顺带存一个账号。 */
 export function CaptureModal({
   data,
@@ -19,6 +32,7 @@ export function CaptureModal({
   initialTitle,
   initialUsername,
   initialPassword,
+  initialTotp,
   initialAccountLabel,
   onClose,
   onSave,
@@ -28,6 +42,7 @@ export function CaptureModal({
   initialTitle: string;
   initialUsername?: string;
   initialPassword?: string;
+  initialTotp?: string;
   initialAccountLabel?: string;
   onClose: () => void;
   onSave: (next: VaultData) => Promise<void>;
@@ -37,12 +52,13 @@ export function CaptureModal({
   const [envId, setEnvId] = useState(NEW);
   const [newEnvName, setNewEnvName] = useState('');
   const [envKind, setEnvKind] = useState<EnvKind>('dev');
-  const [linkName, setLinkName] = useState(initialTitle || '');
+  const [linkName, setLinkName] = useState(() => defaultLinkName(initialTitle, initialUrl));
   const [url, setUrl] = useState(initialUrl);
-  const [withAccount, setWithAccount] = useState(Boolean(initialUsername || initialPassword || initialAccountLabel));
+  const [withAccount, setWithAccount] = useState(Boolean(initialUsername || initialPassword || initialTotp || initialAccountLabel));
   const [label, setLabel] = useState(initialAccountLabel ?? '');
   const [username, setUsername] = useState(initialUsername ?? '');
   const [password, setPassword] = useState(initialPassword ?? '');
+  const [totp, setTotp] = useState(initialTotp ?? '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -70,10 +86,10 @@ export function CaptureModal({
           env = newEnvironment({ name: newEnvName.trim() || '默认', kind: envKind });
           proj.environments.push(env);
         }
-        const link = newLink({ name: linkName.trim() || url.trim(), url: url.trim() });
-        if (withAccount && (username.trim() || label.trim() || password)) {
+        const link = newLink({ name: linkName.trim() || defaultLinkName('', url), url: url.trim() });
+        if (withAccount && (username.trim() || label.trim() || password || totp.trim())) {
           link.accounts.push(
-            newAccount({ label: label.trim(), username: username.trim(), password }),
+            newAccount({ label: label.trim(), username: username.trim(), password, totp: totp.trim() || undefined }),
           );
         }
         env.links.push(link);
@@ -160,7 +176,7 @@ export function CaptureModal({
           顺便存一个账号
         </label>
         {withAccount && (
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="账号备注名" />
             <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="用户名" />
             <Input
@@ -168,6 +184,12 @@ export function CaptureModal({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="密码"
+            />
+            <Input
+              value={totp}
+              onChange={(e) => setTotp(e.target.value)}
+              placeholder="TOTP 密钥 / otpauth://（可选）"
+              className="font-mono"
             />
           </div>
         )}

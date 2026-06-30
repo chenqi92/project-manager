@@ -18,7 +18,13 @@ import { LockScreen } from '@/components/LockScreen';
 import { TotpBadge } from '@/components/TotpBadge';
 import { Button, Input, cx } from '@/components/ui';
 import { useVault } from '@/hooks/useVault';
-import { fillCredentialsInPage, getOrigin, originsMatch } from '@/lib/autofill';
+import {
+  fillCredentialsInPage,
+  getOrigin,
+  isSameSite,
+  originsMatch,
+  registrableDomain,
+} from '@/lib/autofill';
 import { copyWithAutoClear } from '@/lib/clipboard';
 import { envSwitchTargets } from '@/lib/env-switch';
 import { api } from '@/lib/messaging';
@@ -43,7 +49,11 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [selectedCaptureAccountId, setSelectedCaptureAccountId] = useState('');
+  // 顶层没找到密码框、但登录表单在同主域的跨域 iframe 里时，引导一键授权该 iframe 域名后填充。
+  const [needGrant, setNeedGrant] = useState<{ entry: FlatEntry; origin: string } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pendingNeedsLocation =
+    pending?.kind === 'new' && !pending.targetLinkId && !(pending.saveTargets?.length);
 
   async function doSync() {
     if (syncing) return;
@@ -149,12 +159,43 @@ export default function App() {
   }, [data]);
   const pageOrigin = tab?.url ? getOrigin(tab.url) : null;
 
+  // 注入填充：site 非空时按「所有 frame + 同主域护栏」注入，使登录表单在同主域跨域 iframe
+  // （如阿里云 passport.aliyun.com）里也能被填；site 为空时退回只填顶层 frame。聚合各 frame 结果。
+  async function injectFill(tabId: number, entry: FlatEntry) {
+    const site = siteOf(entry.url);
+    const res = await browser.scripting.executeScript({
+      target: site ? { tabId, allFrames: true } : { tabId },
+      func: fillCredentialsInPage,
+      args: [entry.username, entry.password, data?.settings.autoSubmit === true, site || undefined],
+    });
+    const results = res
+      .map((r) => r.result)
+      .filter((r): r is NonNullable<typeof r> => Boolean(r));
+    return {
+      filled: results.find((r) => r.ok === true),
+      iframe: results.find((r) => r.loginFrameOrigin)?.loginFrameOrigin,
+      reason: results.find((r) => r.reason && r.reason !== 'frame-not-allowed')?.reason,
+    };
+  }
+
+  async function applyFillOutcome(
+    entry: FlatEntry,
+    outcome: Awaited<ReturnType<typeof injectFill>>,
+  ): Promise<boolean> {
+    if (!outcome.filled) return false;
+    await recordUse(entry.accountId);
+    if (outcome.filled.submitSkipped && outcome.filled.reason) flash(outcome.filled.reason);
+    else window.close();
+    return true;
+  }
+
   async function doFill(entry: FlatEntry) {
     if (!tab?.id || !tab.url) return;
     if (!originsMatch(entry.url, tab.url)) {
       flash('当前页面网址与该条目不一致，已阻止填充');
       return;
     }
+    setNeedGrant(null);
     try {
       // 注入前以标签页「当前」URL 再复核一次 origin：popup 打开后页面可能已重定向，
       // 缓存的 tab.url 只能作 UI 提示，不能作安全边界（防 TOCTOU 跨源填充）。
@@ -163,13 +204,46 @@ export default function App() {
         flash('当前页面网址已变化，已阻止填充');
         return;
       }
-      await browser.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: fillCredentialsInPage,
-        args: [entry.username, entry.password, data?.settings.autoSubmit === true],
-      });
-      await recordUse(entry.accountId);
-      window.close();
+      const outcome = await injectFill(tab.id, entry);
+      if (await applyFillOutcome(entry, outcome)) return;
+      // 顶层没找到密码框，但检测到同主域的内嵌登录 iframe：引导一键授权该域名后再填。
+      const entryOrigin = getOrigin(entry.url);
+      if (outcome.iframe && entryOrigin && isSameSite(outcome.iframe, entryOrigin)) {
+        setNeedGrant({ entry, origin: outcome.iframe });
+        return;
+      }
+      flash(outcome.reason ?? '未能填充');
+    } catch (e) {
+      flash('填充失败：' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  // 授权内嵌登录 iframe 的域名后重试填充。permissions.request 需用户手势，故必须由按钮直接触发，
+  // 且作为点击处理里的首个动作（不能放在 await 之后）。
+  async function grantAndFill() {
+    if (!needGrant || !tab?.id) return;
+    const { entry, origin } = needGrant;
+    let granted = false;
+    try {
+      granted = await browser.permissions.request({ origins: [origin + '/*'] });
+    } catch {
+      flash('授权请求失败');
+      return;
+    }
+    if (!granted) {
+      flash('未授权，无法填充内嵌登录框');
+      return;
+    }
+    setNeedGrant(null);
+    try {
+      const live = await browser.tabs.get(tab.id);
+      if (!live.url || !originsMatch(entry.url, live.url)) {
+        flash('当前页面网址已变化，已阻止填充');
+        return;
+      }
+      const outcome = await injectFill(tab.id, entry);
+      if (await applyFillOutcome(entry, outcome)) return;
+      flash(outcome.reason ?? '授权后仍未找到登录框');
     } catch (e) {
       flash('填充失败：' + (e instanceof Error ? e.message : String(e)));
     }
@@ -220,7 +294,13 @@ export default function App() {
         flash(result?.reason ?? '没有找到可保存的登录输入');
         return;
       }
-      const p = await api.captureManual(tab.id, result.url, result.username, result.password);
+      const p = await api.captureManual(
+        tab.id,
+        result.url,
+        result.username,
+        result.password,
+        tab.title,
+      );
       if (!p) {
         flash('该登录已是最新，暂无需要保存的变化');
         return;
@@ -257,7 +337,7 @@ export default function App() {
           data?.settings.autoSubmit === true,
         );
         await recordUse(entry.accountId);
-        if (!r.filled && r.reason) flash(r.reason);
+        if (r.reason) flash(r.reason);
         window.close();
         return;
       }
@@ -301,7 +381,7 @@ export default function App() {
   }
 
   return (
-    <div className="relative w-[380px] bg-gray-50">
+    <div className="relative flex h-[600px] max-h-[calc(100vh-24px)] w-[380px] flex-col overflow-hidden bg-gray-50">
       {/* header */}
       <div className="flex items-center gap-2.5 border-b border-gray-200 bg-surface px-4 py-2.5">
         <span className="flex h-6 w-6 items-center justify-center rounded-[7px] bg-brand-600 text-white">
@@ -339,13 +419,16 @@ export default function App() {
       {pending && (
         <div className="border-b border-amber-200 bg-amber-50 px-3 py-2.5 text-xs">
           <div className="mb-1.5 text-amber-800">
-            检测到在 <b>{hostOf(pending.origin)}</b> 的登录
+            检测到在 <b>{hostOf(pending.origin)}</b> 的登录/注册
             {pending.kind === 'update'
               ? `，更新「${pending.linkName ?? ''}」的密码？`
-              : `（${pending.username || '无用户名'}），保存到保险箱？`}
+              : pendingNeedsLocation
+                ? `（${pending.username || '无用户名'}），选择项目后保存？`
+                : `（${pending.username || '无用户名'}），保存到保险箱？`}
             {pending.kind === 'new' && pending.updateCandidates?.length
               ? ' 也可以更新已有账号。'
               : ''}
+            {pending.totp ? ' 已检测到二次验证密钥，会一起保存。' : ''}
           </div>
           {pending.kind === 'new' && pending.updateCandidates?.length ? (
             <select
@@ -364,10 +447,15 @@ export default function App() {
             <Button
               onClick={async () => {
                 try {
+                  if (pendingNeedsLocation) {
+                    await api.captureEditSave(pending.id);
+                    window.close();
+                    return;
+                  }
                   await api.captureSave(pending.id, undefined, {
                     username: pending.username,
                     accountLabel: pending.accountLabel,
-                    targetLinkId: pending.targetLinkId,
+                    targetLinkId: pending.targetLinkId || pending.saveTargets?.[0]?.linkId,
                   });
                   setPending(null);
                   await vault.reload();
@@ -377,7 +465,7 @@ export default function App() {
                 }
               }}
             >
-              {pending.kind === 'update' ? '更新' : '保存'}
+              {pending.kind === 'update' ? '更新' : pendingNeedsLocation ? '选择位置' : '保存'}
             </Button>
             {pending.kind === 'new' && pending.updateCandidates?.[0] && (
               <Button
@@ -433,7 +521,7 @@ export default function App() {
         </div>
       </div>
 
-      <div className="max-h-[440px] overflow-auto p-3">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 [scrollbar-gutter:stable]">
         {query.trim() ? (
           <Section
             title={`搜索结果（${rawResults.length}${hiddenResultCount ? `，显示前 ${POPUP_RESULT_LIMIT}` : ''}）`}
@@ -606,7 +694,27 @@ export default function App() {
         </div>
       )}
 
-      {toast && (
+      {needGrant && (
+        <div className="absolute inset-x-0 bottom-3 mx-auto w-[92%] rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs shadow-lg">
+          <div className="mb-2 text-amber-800">
+            登录框在内嵌页 <b>{hostOf(needGrant.origin)}</b> 里（与当前站点同主域）。授权该地址后即可填充。
+          </div>
+          <div className="flex gap-2">
+            <Button className="h-7 flex-1 px-2 py-1 text-xs" onClick={grantAndFill}>
+              授权并填充
+            </Button>
+            <Button
+              variant="subtle"
+              className="h-7 px-2 py-1 text-xs"
+              onClick={() => setNeedGrant(null)}
+            >
+              取消
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {toast && !needGrant && (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 mx-auto w-fit rounded-lg bg-neutral-800/95 px-3 py-1.5 text-xs text-white">
           {toast}
         </div>
@@ -623,6 +731,15 @@ function hostOf(origin: string): string {
   }
 }
 
+/** 取条目网址的可注册域(eTLD+1)，作为跨 frame 填充的同主域护栏；无法解析时返回空串（退回只填顶层）。 */
+function siteOf(url: string): string {
+  try {
+    return registrableDomain(new URL(url).hostname);
+  } catch {
+    return '';
+  }
+}
+
 type CaptureInputResult =
   | { ok: true; url: string; username: string; password: string }
   | { ok: false; reason: string };
@@ -632,6 +749,18 @@ function collectLoginInputInPage(): CaptureInputResult {
     const r = (el as HTMLElement).getBoundingClientRect();
     const s = getComputedStyle(el as HTMLElement);
     return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+  };
+  const readRememberedUsername = (): string => {
+    try {
+      const raw = sessionStorage.getItem('pemLastLoginUsername');
+      if (!raw) return '';
+      const saved = JSON.parse(raw) as { origin?: string; value?: string; ts?: number };
+      if (saved.origin !== location.origin || Date.now() - Number(saved.ts ?? 0) > 10 * 60_000)
+        return '';
+      return typeof saved.value === 'string' ? saved.value : '';
+    } catch {
+      return '';
+    }
   };
 
   const pw = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="password"]'))
@@ -650,6 +779,7 @@ function collectLoginInputInPage(): CaptureInputResult {
     if (el.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING) username = el.value;
   }
   if (!username && candidates[0]) username = candidates[0].value;
+  if (!username) username = readRememberedUsername();
 
   return {
     ok: true,

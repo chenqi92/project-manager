@@ -6,7 +6,7 @@
 import { browser } from 'wxt/browser';
 import type { EncryptedVault } from './types';
 
-const VAULT_KEY = 'vault';
+export const VAULT_KEY = 'vault';
 
 export interface VaultBackend {
   load(): Promise<EncryptedVault | null>;

@@ -43,6 +43,7 @@ export type Msg =
   | { type: 'vault:reset' }
   | { type: 'activity' }
   | { type: 'clipboard:clearLater'; clearMs: number }
+  | { type: 'ui:openUnlock' }
   // 生物识别
   | { type: 'vault:bioEnrollments' }
   | { type: 'vault:unlockWithPrf'; enrollmentId: string; prfOutput: string }
@@ -93,10 +94,34 @@ export type Msg =
   | { type: 'assist:fill'; accountId: string; submit?: boolean }
   | { type: 'assist:fillTotp'; accountId: string; submit?: boolean }
   // 登录捕获
-  | { type: 'capture:candidate'; origin: string; url: string; username: string; password: string }
-  | { type: 'capture:successCheck'; origin: string; url: string; signals: CaptureSuccessSignals }
-  | { type: 'capture:login'; origin: string; url: string; username: string; password: string }
-  | { type: 'capture:manual'; tabId?: number; url: string; username: string; password: string }
+  | {
+      type: 'capture:candidate';
+      origin: string;
+      url: string;
+      title?: string;
+      username: string;
+      password: string;
+      totp?: string;
+    }
+  | { type: 'capture:successCheck'; origin: string; url: string; title?: string; signals: CaptureSuccessSignals }
+  | {
+      type: 'capture:login';
+      origin: string;
+      url: string;
+      title?: string;
+      username: string;
+      password: string;
+      totp?: string;
+    }
+  | {
+      type: 'capture:manual';
+      tabId?: number;
+      url: string;
+      title?: string;
+      username: string;
+      password: string;
+      totp?: string;
+    }
   | { type: 'capture:pending'; id?: string }
   | {
       type: 'capture:save';
@@ -105,6 +130,8 @@ export type Msg =
       username?: string;
       accountLabel?: string;
       targetLinkId?: string;
+      targetProjectId?: string;
+      newProjectName?: string;
     }
   | { type: 'capture:editSave'; id?: string }
   | { type: 'capture:dismiss'; id?: string };
@@ -215,13 +242,27 @@ export const api = {
   assistMatches: () => send<AssistSnapshot>({ type: 'assist:matches' }),
 
   // 登录捕获
-  captureManual: (tabId: number | undefined, url: string, username: string, password: string) =>
-    send<CapturePending | null>({ type: 'capture:manual', tabId, url, username, password }),
+  captureManual: (
+    tabId: number | undefined,
+    url: string,
+    username: string,
+    password: string,
+    title?: string,
+    totp?: string,
+  ) =>
+    send<CapturePending | null>({ type: 'capture:manual', tabId, url, title, username, password, totp }),
   capturePending: (id?: string) => send<CapturePending | null>({ type: 'capture:pending', id }),
   captureSave: (
     id?: string,
     accountId?: string,
-    edits?: { username?: string; accountLabel?: string; targetLinkId?: string },
+    edits?: {
+      username?: string;
+      accountLabel?: string;
+      targetLinkId?: string;
+      targetProjectId?: string;
+      newProjectName?: string;
+    },
   ) => send<void>({ type: 'capture:save', id, accountId, ...edits }),
+  captureEditSave: (id?: string) => send<void>({ type: 'capture:editSave', id }),
   captureDismiss: (id?: string) => send<void>({ type: 'capture:dismiss', id }),
 };

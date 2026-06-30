@@ -47,6 +47,7 @@ function PasswordField({
 
 export function LockScreen({
   initialized,
+  firstRun,
   compact,
   hasBiometric,
   onUnlock,
@@ -55,6 +56,7 @@ export function LockScreen({
   onAdopt,
 }: {
   initialized: boolean;
+  firstRun?: boolean;
   compact?: boolean;
   hasBiometric?: boolean;
   onUnlock: (password: string) => Promise<void>;
@@ -74,12 +76,15 @@ export function LockScreen({
   const [serverUrl, setServerUrl] = useState('');
   const [token, setToken] = useState('');
   const autoBioTried = useRef(false);
+  const creating = !initialized;
+  const showFirstRunGuide = Boolean(firstRun && creating && !compact);
+  const passwordLabel = creating ? '保险库密码' : '主密码';
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr(null);
     if (!initialized) {
-      if (pw.length < 8) return setErr('主密码至少 8 位');
+      if (pw.length < 8) return setErr('保险库密码至少 8 位');
       if (pw !== pw2) return setErr('两次输入不一致');
     } else if (!pw) {
       return setErr('请输入主密码');
@@ -135,7 +140,10 @@ export function LockScreen({
         'flex flex-col',
         compact
           ? 'gap-3 p-5'
-          : 'w-[360px] gap-0 rounded-[18px] bg-surface p-7 shadow-[0_30px_60px_-20px_rgba(20,26,40,.3),0_0_0_1px_rgba(20,26,40,.04)]',
+          : cx(
+              showFirstRunGuide ? 'w-[420px]' : 'w-[360px]',
+              'gap-0 rounded-[18px] bg-surface p-7 shadow-[0_30px_60px_-20px_rgba(20,26,40,.3),0_0_0_1px_rgba(20,26,40,.04)]',
+            ),
       )}
     >
       <div className="flex flex-col items-center gap-2 text-center">
@@ -143,24 +151,38 @@ export function LockScreen({
           {initialized ? <KeyRound size={26} /> : <Lock size={26} />}
         </span>
         <div className="mt-2 text-lg font-bold text-gray-900">
-          {initialized ? '欢迎回来' : '创建保险箱'}
+          {initialized ? '欢迎回来' : firstRun ? '先创建保险库密码' : '创建保险箱'}
         </div>
         <div className="text-[12.5px] text-gray-400">
           {initialized
             ? hasBiometric
               ? '可用生物识别或主密码解锁保险箱'
               : '输入主密码解锁保险箱'
-            : '主密码用于加密全部数据，本地派生、永不上传'}
+            : '保险库密码用于加密全部数据，本地派生、永不上传'}
         </div>
       </div>
 
+      {showFirstRunGuide && (
+        <div className="mt-5 rounded-[14px] border border-brand-100 bg-brand-50/70 p-3.5 text-left">
+          <div className="text-[12px] font-bold text-brand-700">首次使用</div>
+          <div className="mt-1 text-[12px] leading-5 text-gray-600">
+            先设置一个只有你知道的保险库密码。创建后会进入管理页面，可继续新建项目、导入备份或开启同步。
+          </div>
+          <div className="mt-2 grid gap-1 text-[11.5px] font-medium text-gray-500">
+            <div>1. 创建保险库密码</div>
+            <div>2. 进入管理页添加项目和账号</div>
+            <div>3. 后续登录网站时自动保存和填充</div>
+          </div>
+        </div>
+      )}
+
       <form onSubmit={submit} className="mt-5 flex flex-col gap-3">
         <div>
-          {!initialized && <Label>主密码</Label>}
+          {!initialized && <Label>{passwordLabel}</Label>}
           <PasswordField
             value={pw}
             onChange={setPw}
-            placeholder="主密码"
+            placeholder={initialized ? '主密码' : '设置保险库密码'}
             autoFocus={!hasBiometric}
             autoComplete={initialized ? 'current-password' : 'new-password'}
             show={show}
@@ -169,11 +191,11 @@ export function LockScreen({
         </div>
         {!initialized && (
           <div>
-            <Label>确认主密码</Label>
+            <Label>确认{passwordLabel}</Label>
             <PasswordField
               value={pw2}
               onChange={setPw2}
-              placeholder="再次输入"
+              placeholder="再次输入保险库密码"
               autoComplete="new-password"
               show={showConfirm}
               onToggleShow={() => setShowConfirm((s) => !s)}
@@ -184,7 +206,7 @@ export function LockScreen({
         {err && <Banner tone="error">{err}</Banner>}
         {!initialized && (
           <Banner tone="warn">
-            主密码无法找回。一旦遗忘，已加密的数据将<strong>永久无法解密</strong>
+            保险库密码无法找回。一旦遗忘，已加密的数据将<strong>永久无法解密</strong>
             。请务必牢记并定期做加密备份导出。
           </Banner>
         )}
@@ -195,7 +217,7 @@ export function LockScreen({
           className="flex h-[46px] items-center justify-center gap-2 rounded-[11px] bg-brand-600 text-sm font-semibold text-white shadow-[0_6px_16px_-4px_rgba(13,148,136,.42)] hover:bg-brand-700 disabled:opacity-50"
         >
           {busy && <Loader2 size={16} className="animate-spin" />}
-          {initialized ? '解锁' : '创建并解锁'}
+          {initialized ? '解锁' : '创建保险库并进入'}
         </button>
       </form>
 
