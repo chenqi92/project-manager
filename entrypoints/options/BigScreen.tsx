@@ -129,6 +129,11 @@ export function BigScreen({ project, onClose }: { project: Project; onClose: () 
                             <span className="truncate font-mono">{gitCloneCommand(r)}</span>
                           </div>
                         ))}
+                        {(link.customFields ?? []).length > 0 && (
+                          <div className="mt-1 inline-flex rounded-md bg-surface px-1.5 py-0.5 text-[10.5px] font-semibold text-gray-500">
+                            {(link.customFields ?? []).length} 项补充信息
+                          </div>
+                        )}
                         {link.accounts.length > 0 && (
                           <div className="mt-2 space-y-1">
                             {link.accounts.map((a) => (
@@ -138,6 +143,11 @@ export function BigScreen({ project, onClose }: { project: Project; onClose: () 
                               >
                                 <span className="truncate text-gray-700">
                                   {a.label || '默认'}：{a.username || '—'}
+                                  {(a.customFields ?? []).length > 0 && (
+                                    <span className="ml-1 text-[10px] text-gray-400">
+                                      +{(a.customFields ?? []).length} 信息
+                                    </span>
+                                  )}
                                 </span>
                                 <span className="shrink-0 font-mono text-gray-500">
                                   {showPw ? a.password : '••••••'}

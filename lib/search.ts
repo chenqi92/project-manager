@@ -22,6 +22,15 @@ export interface FlatEntry {
   totp?: string;
   updatedAt: number;
   note?: string;
+  customText?: string;
+}
+
+function customFieldText(...groups: Array<PlatformLink['customFields'] | Account['customFields']>): string {
+  return groups
+    .flatMap((fields) => fields ?? [])
+    .flatMap((f) => [f.label, f.value])
+    .filter(Boolean)
+    .join(' ');
 }
 
 function buildEntry(
@@ -47,6 +56,7 @@ function buildEntry(
     totp: a.totp,
     updatedAt: a.updatedAt,
     note: a.note ?? l.note,
+    customText: customFieldText(l.customFields, a.customFields),
   };
 }
 
@@ -75,6 +85,7 @@ export function search(data: VaultData, query: string): FlatEntry[] {
       e.accountLabel,
       e.username,
       e.note ?? '',
+      e.customText ?? '',
     ]
       .join(' ')
       .toLowerCase();

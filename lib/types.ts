@@ -2,6 +2,28 @@
 // 数据模型：项目 → 环境 → 平台/链接 → 多个账号
 // ---------------------------------------------------------------------------
 
+export type CustomFieldType =
+  | 'text'
+  | 'url'
+  | 'email'
+  | 'address'
+  | 'date'
+  | 'otp'
+  | 'password'
+  | 'phone'
+  | 'login'
+  | 'file';
+
+/** 类似 1Password 的自定义字段：用于保存链接或账号的补充信息。 */
+export interface CustomField {
+  id: string;
+  type: CustomFieldType;
+  label: string;
+  value: string;
+  /** 敏感字段默认在列表里遮蔽；password/otp 默认视为敏感。 */
+  sensitive?: boolean;
+}
+
 export interface Account {
   id: string;
   /** 账号备注名，例如「管理员」「测试账号 A」，用于一个链接下区分多个账号 */
@@ -11,6 +33,8 @@ export interface Account {
   note?: string;
   /** TOTP 两步验证：base32 密钥或 otpauth:// URI */
   totp?: string;
+  /** 账号级补充字段，如恢复码、手机号、登录方式、备用邮箱等 */
+  customFields?: CustomField[];
   createdAt: number;
   updatedAt: number;
 }
@@ -37,6 +61,8 @@ export interface PlatformLink {
   /** 关联的 Git 仓库（可一个或多个） */
   gitRepos?: GitRepo[];
   note?: string;
+  /** 链接/平台级补充字段，如控制台地址、厂商工单号、维护电话、附件说明等 */
+  customFields?: CustomField[];
   accounts: Account[];
   updatedAt: number;
 }
@@ -502,6 +528,8 @@ export interface CapturePending {
   pageTitle?: string;
   username: string;
   password: string;
+  /** 第三方登录来源，例如 Google / GitHub；这类登录可能没有本地密码。 */
+  authProvider?: string;
   /** 注册或启用两步验证时捕获到的 TOTP 密钥 / otpauth:// URI */
   totp?: string;
   tabId?: number;

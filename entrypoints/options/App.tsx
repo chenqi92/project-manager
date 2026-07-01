@@ -46,6 +46,7 @@ import { search, type FlatEntry } from '@/lib/search';
 import { VAULT_LOCKED_MSG } from '@/lib/types';
 import type {
   Account,
+  CustomField,
   Environment,
   GitRepo,
   MemoItem,
@@ -465,6 +466,7 @@ export default function App() {
       note?: string;
       urls?: string[];
       gitRepos?: GitRepo[];
+      customFields?: CustomField[];
     },
     target?: {
       projectId: string;
@@ -1386,6 +1388,8 @@ function LinkBlock({
   ...props
 }: { env: Environment; link: PlatformLink } & ProjectViewProps) {
   const acc0 = link.accounts[0];
+  const fields = link.customFields ?? [];
+  const [fieldsOpen, setFieldsOpen] = useState(false);
   const canOpenDefaultLogin = Boolean(link.url && acc0);
   const openDefaultLogin = () => {
     if (!link.url || !acc0) return;
@@ -1431,6 +1435,13 @@ function LinkBlock({
         {link.gitRepos?.map((r) => (
           <GitRepoChip key={r.id} repo={r} onCopy={props.onCopy} />
         ))}
+        {fields.length > 0 && (
+          <CustomFieldsToggle
+            count={fields.length}
+            open={fieldsOpen}
+            onClick={() => setFieldsOpen((v) => !v)}
+          />
+        )}
         {canOpenDefaultLogin && (
           <button
             onClick={openDefaultLogin}
@@ -1454,6 +1465,7 @@ function LinkBlock({
           <Trash2 size={13} />
         </IconButton>
       </div>
+      {fieldsOpen && <CustomFieldsPanel fields={fields} onCopy={props.onCopy} />}
       <div className="space-y-1.5">
         {link.accounts.map((a) => (
           <AccountRow
@@ -1492,46 +1504,186 @@ function AccountRow({
   onOpenLogin?: () => void;
 }) {
   const [show, setShow] = useState(false);
+  const [fieldsOpen, setFieldsOpen] = useState(false);
+  const fields = account.customFields ?? [];
   return (
-    <div className="flex items-center gap-2.5 rounded-[10px] bg-gray-50 px-3 py-2.5 text-sm">
-      <Avatar name={account.label || account.username || '账号'} size={28} radius={7} />
-      <div className="w-[130px] min-w-0">
-        <div className="truncate text-[12.5px] font-semibold text-gray-800">
-          {account.username || '—'}
+    <div className="rounded-[10px] bg-gray-50 text-sm">
+      <div className="flex items-center gap-2.5 px-3 py-2.5">
+        <Avatar name={account.label || account.username || '账号'} size={28} radius={7} />
+        <div className="w-[130px] min-w-0">
+          <div className="truncate text-[12.5px] font-semibold text-gray-800">
+            {account.username || '—'}
+          </div>
+          <div className="truncate text-[10.5px] text-gray-400">
+            {account.label || '（默认账号）'}
+          </div>
         </div>
-        <div className="truncate text-[10.5px] text-gray-400">
-          {account.label || '（默认账号）'}
+        <div className="min-w-0 flex-1 truncate font-mono text-[12.5px] tracking-wide text-gray-500">
+          {show ? account.password : '••••••••••'}
         </div>
-      </div>
-      <div className="min-w-0 flex-1 truncate font-mono text-[12.5px] tracking-wide text-gray-500">
-        {show ? account.password : '••••••••••'}
-      </div>
-      {account.totp && (
-        <div className="shrink-0">
-          <TotpBadge secret={account.totp} onCopy={(c) => onCopy(c, '验证码')} />
-        </div>
-      )}
-      <div className="flex shrink-0 items-center gap-0.5">
-        <IconButton title={show ? '隐藏密码' : '显示密码'} onClick={() => setShow((s) => !s)}>
-          {show ? <EyeOff size={15} /> : <Eye size={15} />}
-        </IconButton>
-        <IconButton title="复制用户名" onClick={() => onCopy(account.username, '用户名')}>
-          <Users size={15} />
-        </IconButton>
-        <IconButton title="复制密码" onClick={() => onCopy(account.password, '密码')}>
-          <Copy size={15} />
-        </IconButton>
-        {onOpenLogin && (
-          <IconButton title="打开并登录" onClick={onOpenLogin}>
-            <LogIn size={15} />
-          </IconButton>
+        {account.totp && (
+          <div className="shrink-0">
+            <TotpBadge secret={account.totp} onCopy={(c) => onCopy(c, '验证码')} />
+          </div>
         )}
-        <IconButton title="编辑账号" onClick={onEdit}>
-          <Pencil size={15} />
-        </IconButton>
-        <IconButton title="删除账号" onClick={onDelete} danger>
-          <Trash2 size={15} />
-        </IconButton>
+        {fields.length > 0 && (
+          <CustomFieldsToggle
+            count={fields.length}
+            open={fieldsOpen}
+            onClick={() => setFieldsOpen((v) => !v)}
+          />
+        )}
+        <div className="flex shrink-0 items-center gap-0.5">
+          <IconButton title={show ? '隐藏密码' : '显示密码'} onClick={() => setShow((s) => !s)}>
+            {show ? <EyeOff size={15} /> : <Eye size={15} />}
+          </IconButton>
+          <IconButton title="复制用户名" onClick={() => onCopy(account.username, '用户名')}>
+            <Users size={15} />
+          </IconButton>
+          <IconButton title="复制密码" onClick={() => onCopy(account.password, '密码')}>
+            <Copy size={15} />
+          </IconButton>
+          {onOpenLogin && (
+            <IconButton title="打开并登录" onClick={onOpenLogin}>
+              <LogIn size={15} />
+            </IconButton>
+          )}
+          <IconButton title="编辑账号" onClick={onEdit}>
+            <Pencil size={15} />
+          </IconButton>
+          <IconButton title="删除账号" onClick={onDelete} danger>
+            <Trash2 size={15} />
+          </IconButton>
+        </div>
+      </div>
+      {fieldsOpen && <CustomFieldsPanel fields={fields} onCopy={onCopy} compact />}
+    </div>
+  );
+}
+
+function CustomFieldsToggle({
+  count,
+  open,
+  onClick,
+}: {
+  count: number;
+  open: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cx(
+        'flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold',
+        open
+          ? 'border-brand-200 bg-brand-50 text-brand-700'
+          : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100',
+      )}
+    >
+      <FileText size={12} />
+      {count} 项信息
+    </button>
+  );
+}
+
+function fieldTypeLabel(type: CustomField['type']): string {
+  const labels: Record<CustomField['type'], string> = {
+    text: '文本',
+    url: 'URL',
+    email: '电子邮件',
+    address: '地址',
+    date: '日期',
+    otp: '一次性密码',
+    password: '密码',
+    phone: '电话',
+    login: '登录方式',
+    file: '附件说明',
+  };
+  return labels[type] ?? '文本';
+}
+
+function fieldIsSensitive(field: CustomField): boolean {
+  return field.sensitive === true || field.type === 'password' || field.type === 'otp';
+}
+
+function CustomFieldsPanel({
+  fields,
+  onCopy,
+  compact,
+}: {
+  fields: CustomField[];
+  onCopy: (text: string, what: string) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={cx(
+        'mb-2 grid grid-cols-1 gap-1.5 rounded-lg border border-gray-100 bg-surface/70 p-2',
+        !compact && 'mx-[42px] md:grid-cols-2',
+        compact && 'mx-3 border-t-0 md:grid-cols-2',
+      )}
+    >
+      {fields.map((field) => (
+        <CustomFieldItem key={field.id} field={field} onCopy={onCopy} />
+      ))}
+    </div>
+  );
+}
+
+function CustomFieldItem({
+  field,
+  onCopy,
+}: {
+  field: CustomField;
+  onCopy: (text: string, what: string) => void;
+}) {
+  const [show, setShow] = useState(false);
+  const sensitive = fieldIsSensitive(field);
+  const display = sensitive && !show ? '••••••••' : field.value;
+  const canOpen = field.type === 'url' && !sensitive && /^https?:\/\//i.test(field.value);
+  return (
+    <div className="min-w-0 rounded-md bg-gray-50 px-2 py-1.5">
+      <div className="mb-0.5 flex items-center gap-1.5">
+        <span className="truncate text-[11px] font-semibold text-gray-700">{field.label || fieldTypeLabel(field.type)}</span>
+        <span className="shrink-0 rounded bg-gray-100 px-1 text-[9.5px] text-gray-400">
+          {fieldTypeLabel(field.type)}
+        </span>
+        <div className="flex-1" />
+        {sensitive && (
+          <button
+            type="button"
+            title={show ? '隐藏' : '显示'}
+            onClick={() => setShow((v) => !v)}
+            className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          >
+            {show ? <EyeOff size={12} /> : <Eye size={12} />}
+          </button>
+        )}
+        {canOpen && (
+          <button
+            type="button"
+            title="打开"
+            onClick={() => void browser.tabs.create({ url: field.value }).catch(() => {})}
+            className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-brand-600"
+          >
+            <ExternalLink size={12} />
+          </button>
+        )}
+        <button
+          type="button"
+          title="复制"
+          onClick={() => onCopy(field.value, field.label || fieldTypeLabel(field.type))}
+          className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-brand-600"
+        >
+          <Copy size={12} />
+        </button>
+      </div>
+      <div
+        title={sensitive ? undefined : field.value}
+        className="truncate font-mono text-[11px] text-gray-500"
+      >
+        {display || '—'}
       </div>
     </div>
   );

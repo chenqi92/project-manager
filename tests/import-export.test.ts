@@ -204,6 +204,58 @@ describe('导入合并', () => {
 });
 
 describe('CSV 导出', () => {
+  it('自定义字段可以随 CSV 往返导入导出', async () => {
+    const now = Date.now();
+    const data = emptyVaultData();
+    const link = newLink({
+      id: 'l-fields',
+      name: '控制台',
+      url: 'https://console.example.test',
+      customFields: [
+        { id: 'lf-1', type: 'phone', label: '维护电话', value: '400-100-200' },
+        { id: 'lf-2', type: 'url', label: '工单入口', value: 'https://ticket.example.test' },
+      ],
+    });
+    link.accounts.push(
+      newAccount({
+        id: 'a-fields',
+        label: '管理员',
+        username: 'admin',
+        password: 'pw',
+        customFields: [
+          { id: 'af-1', type: 'email', label: '备用邮箱', value: 'ops@example.test' },
+          { id: 'af-2', type: 'password', label: '恢复码', value: 'recovery-123', sensitive: true },
+        ],
+      }),
+    );
+    data.projects.push({
+      id: 'p-fields',
+      name: '字段项目',
+      environments: [
+        {
+          id: 'e-fields',
+          name: '生产',
+          kind: 'prod',
+          links: [link],
+          updatedAt: now,
+        },
+      ],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const csv = (await buildExport(data, 'csv')).content;
+    const imported = await parseImport('csv', csv);
+    const importedLink = imported.projects[0]!.environments[0]!.links[0]!;
+    const importedAccount = importedLink.accounts[0]!;
+
+    expect(csv).toContain('link_fields');
+    expect(csv).toContain('account_fields');
+    expect(importedLink.customFields?.map((f) => f.label)).toEqual(['维护电话', '工单入口']);
+    expect(importedAccount.customFields?.map((f) => f.label)).toEqual(['备用邮箱', '恢复码']);
+    expect(importedAccount.customFields?.find((f) => f.id === 'af-2')?.sensitive).toBe(true);
+  });
+
   it('转义公式前缀，避免被表格软件当作可执行公式', async () => {
     const now = Date.now();
     const data = emptyVaultData();

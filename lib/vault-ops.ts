@@ -29,6 +29,7 @@ export function newAccount(p: Partial<Account> = {}): Account {
     password: p.password ?? '',
     note: p.note,
     totp: p.totp,
+    customFields: p.customFields,
     createdAt: p.createdAt ?? t,
     updatedAt: t,
   };
@@ -42,6 +43,7 @@ export function newLink(p: Partial<PlatformLink> = {}): PlatformLink {
     urls: p.urls,
     gitRepos: p.gitRepos,
     note: p.note,
+    customFields: p.customFields,
     accounts: p.accounts ?? [],
     updatedAt: p.updatedAt ?? now(),
   };

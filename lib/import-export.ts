@@ -24,6 +24,7 @@ import {
 import { parseMigrationUri } from './otp-migration';
 import type {
   Account,
+  CustomField,
   DashboardConfig,
   DashWidget,
   EncryptedVault,
@@ -216,6 +217,8 @@ const OWN_CSV_HEADER = [
   'password',
   'totp',
   'note',
+  'link_fields',
+  'account_fields',
 ];
 
 function toCsv(data: VaultData): string {
@@ -224,7 +227,20 @@ function toCsv(data: VaultData): string {
     for (const e of p.environments) {
       for (const l of e.links) {
         if (l.accounts.length === 0) {
-          rows.push([p.name, e.name, e.kind, l.name, l.url, '', '', '', '', l.note ?? '']);
+          rows.push([
+            p.name,
+            e.name,
+            e.kind,
+            l.name,
+            l.url,
+            '',
+            '',
+            '',
+            '',
+            l.note ?? '',
+            fieldsCell(l.customFields),
+            '',
+          ]);
         }
         for (const a of l.accounts) {
           rows.push([
@@ -238,6 +254,8 @@ function toCsv(data: VaultData): string {
             a.password,
             a.totp ?? '',
             a.note ?? '',
+            fieldsCell(l.customFields),
+            fieldsCell(a.customFields),
           ]);
         }
       }
@@ -262,6 +280,8 @@ function fromOwnCsv(content: string): VaultData {
       password: row[idx('password')] ?? '',
       totp: row[idx('totp')] ?? '',
       note: row[idx('note')] ?? '',
+      linkFields: parseFieldsCell(row[idx('link_fields')] ?? ''),
+      accountFields: parseFieldsCell(row[idx('account_fields')] ?? ''),
     });
   }
   return builder.build();
@@ -383,6 +403,8 @@ interface FlatRow {
   password: string;
   totp: string;
   note: string;
+  linkFields?: CustomField[];
+  accountFields?: CustomField[];
 }
 
 /** 把摊平的行重新组装成项目/环境/链接/账号树。 */
@@ -393,6 +415,9 @@ class VaultBuilder {
     const proj = this.upsertProject(r.project);
     const env = this.upsertEnv(proj, r.environment, r.envKind);
     const link = this.upsertLink(env, r.link, r.url);
+    if (r.linkFields?.length && !link.customFields?.length) {
+      link.customFields = r.linkFields;
+    }
     if (r.username || r.password || r.label || r.totp) {
       link.accounts.push(
         newAccount({
@@ -401,6 +426,7 @@ class VaultBuilder {
           password: r.password,
           totp: r.totp || undefined,
           note: r.note || undefined,
+          customFields: r.accountFields?.length ? r.accountFields : undefined,
         }),
       );
     } else if (r.note && !link.note) {
@@ -506,6 +532,55 @@ function hostOf(url: string): string {
   } catch {
     return '';
   }
+}
+
+const FIELD_TYPES = new Set([
+  'text',
+  'url',
+  'email',
+  'address',
+  'date',
+  'otp',
+  'password',
+  'phone',
+  'login',
+  'file',
+]);
+
+function fieldsCell(fields: CustomField[] | undefined): string {
+  const clean = cleanCustomFields(fields);
+  return clean.length ? JSON.stringify(clean) : '';
+}
+
+function parseFieldsCell(text: string): CustomField[] | undefined {
+  const raw = text.trim();
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return cleanCustomFields(Array.isArray(parsed) ? parsed : undefined);
+  } catch {
+    return undefined;
+  }
+}
+
+function cleanCustomFields(fields: unknown): CustomField[] {
+  if (!Array.isArray(fields)) return [];
+  const out: CustomField[] = [];
+  for (const f of fields) {
+    const rec = f as Partial<CustomField> | undefined;
+    const label = String(rec?.label ?? '').trim();
+    const value = String(rec?.value ?? '').trim();
+    if (!label && !value) continue;
+    const type = FIELD_TYPES.has(String(rec?.type)) ? rec!.type! : 'text';
+    out.push({
+      id: String(rec?.id || uid()),
+      type,
+      label: label || '未命名字段',
+      value,
+      sensitive: rec?.sensitive === true || type === 'password' || type === 'otp' || undefined,
+    });
+  }
+  return out;
 }
 
 function normalize(data: VaultData): VaultData {

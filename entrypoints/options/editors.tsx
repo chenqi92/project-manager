@@ -2,7 +2,16 @@ import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { Eye, EyeOff, GitBranch, Plus, QrCode, RefreshCw, Trash2 } from 'lucide-react';
 import { Button, Input, Label, Modal, Select } from '@/components/ui';
 import { decodeQrImage } from '@/lib/qr';
-import type { Account, EnvKind, Environment, GitRepo, PlatformLink, Project } from '@/lib/types';
+import type {
+  Account,
+  CustomField,
+  CustomFieldType,
+  EnvKind,
+  Environment,
+  GitRepo,
+  PlatformLink,
+  Project,
+} from '@/lib/types';
 import { ENV_KIND_LABELS, newGitRepo } from '@/lib/vault-ops';
 
 function genPassword(len = 20): string {
@@ -16,6 +25,135 @@ function genPassword(len = 20): string {
 }
 
 const FOOTER = 'mt-5 flex justify-end gap-2';
+
+const FIELD_TYPES: Array<{ value: CustomFieldType; label: string; defaultSensitive?: boolean }> = [
+  { value: 'text', label: '文本' },
+  { value: 'url', label: 'URL' },
+  { value: 'email', label: '电子邮件' },
+  { value: 'address', label: '地址' },
+  { value: 'date', label: '日期' },
+  { value: 'otp', label: '一次性密码', defaultSensitive: true },
+  { value: 'password', label: '密码', defaultSensitive: true },
+  { value: 'phone', label: '电话' },
+  { value: 'login', label: '登录方式' },
+  { value: 'file', label: '附件说明' },
+];
+
+function defaultFieldLabel(type: CustomFieldType): string {
+  return FIELD_TYPES.find((t) => t.value === type)?.label ?? '文本';
+}
+
+function newCustomField(type: CustomFieldType = 'text'): CustomField {
+  return {
+    id: crypto.randomUUID(),
+    type,
+    label: defaultFieldLabel(type),
+    value: '',
+    sensitive: type === 'password' || type === 'otp' || undefined,
+  };
+}
+
+function cleanCustomFields(fields: CustomField[]): CustomField[] | undefined {
+  const out = fields
+    .map((f) => ({
+      ...f,
+      label: f.label.trim() || defaultFieldLabel(f.type),
+      value: f.value.trim(),
+      sensitive: f.sensitive === true || f.type === 'password' || f.type === 'otp' || undefined,
+    }))
+    .filter((f) => f.value);
+  return out.length ? out : undefined;
+}
+
+function CustomFieldsField({
+  fields,
+  setFields,
+  hint,
+}: {
+  fields: CustomField[];
+  setFields: Dispatch<SetStateAction<CustomField[]>>;
+  hint: string;
+}) {
+  const setField = (id: string, patch: Partial<CustomField>) =>
+    setFields((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <Label>其他信息（可选）</Label>
+        <button
+          type="button"
+          onClick={() => setFields((fs) => [...fs, newCustomField()])}
+          className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700"
+        >
+          <Plus size={13} /> 添加信息
+        </button>
+      </div>
+      {fields.length === 0 ? (
+        <p className="mt-1 text-[11px] text-gray-400">{hint}</p>
+      ) : (
+        <div className="mt-1 flex flex-col gap-1.5">
+          {fields.map((f) => (
+            <div
+              key={f.id}
+              className="grid grid-cols-1 items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 p-1.5 sm:grid-cols-[112px_minmax(0,1fr)_minmax(0,1.35fr)_auto_auto]"
+            >
+              <Select
+                value={f.type}
+                onChange={(e) => {
+                  const type = e.target.value as CustomFieldType;
+                  const next = FIELD_TYPES.find((t) => t.value === type);
+                  setField(f.id, {
+                    type,
+                    label: f.label.trim() ? f.label : defaultFieldLabel(type),
+                    sensitive: next?.defaultSensitive || undefined,
+                  });
+                }}
+                className="bg-surface px-2 py-1.5 text-xs"
+              >
+                {FIELD_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </Select>
+              <Input
+                value={f.label}
+                onChange={(e) => setField(f.id, { label: e.target.value })}
+                placeholder="标签"
+                className="bg-surface px-2 py-1.5 text-xs"
+              />
+              <Input
+                type={f.type === 'date' ? 'date' : f.sensitive ? 'password' : 'text'}
+                value={f.value}
+                onChange={(e) => setField(f.id, { value: e.target.value })}
+                placeholder={f.type === 'file' ? '文件名、网盘链接或附件说明' : '值'}
+                className="bg-surface px-2 py-1.5 text-xs"
+              />
+              <label className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-gray-500">
+                <input
+                  type="checkbox"
+                  checked={f.sensitive === true || f.type === 'password' || f.type === 'otp'}
+                  disabled={f.type === 'password' || f.type === 'otp'}
+                  onChange={(e) => setField(f.id, { sensitive: e.target.checked || undefined })}
+                />
+                敏感
+              </label>
+              <button
+                type="button"
+                title="删除"
+                onClick={() => setFields((fs) => fs.filter((x) => x.id !== f.id))}
+                className="shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** 清洗 Git 仓库列表：去空白、丢空 url；全空返回 undefined。 */
 function cleanRepos(repos: GitRepo[]): GitRepo[] | undefined {
@@ -208,6 +346,7 @@ export function LinkEditor({
     note?: string;
     urls?: string[];
     gitRepos?: GitRepo[];
+    customFields?: CustomField[];
   }, location?: { projectId: string; envId: string }) => void;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
@@ -215,6 +354,7 @@ export function LinkEditor({
   const [extraUrls, setExtraUrls] = useState((initial?.urls ?? []).join('\n'));
   const [note, setNote] = useState(initial?.note ?? '');
   const [repos, setRepos] = useState<GitRepo[]>(initial?.gitRepos ?? []);
+  const [customFields, setCustomFields] = useState<CustomField[]>(initial?.customFields ?? []);
   const [projectId, setProjectId] = useState(location?.projectId ?? '');
   const [envId, setEnvId] = useState(location?.envId ?? '');
   const selectedProject = location?.projects.find((p) => p.id === projectId);
@@ -227,7 +367,7 @@ export function LinkEditor({
   };
 
   return (
-    <Modal title={initial ? '编辑链接' : '新建链接 / 平台'} onClose={onClose}>
+    <Modal title={initial ? '编辑链接' : '新建链接 / 平台'} onClose={onClose} wide>
       <div className="flex flex-col gap-3">
         {initial && location && (
           <div className="grid grid-cols-2 gap-3">
@@ -287,6 +427,11 @@ export function LinkEditor({
           </p>
         </div>
         <GitReposField repos={repos} setRepos={setRepos} />
+        <CustomFieldsField
+          fields={customFields}
+          setFields={setCustomFields}
+          hint="保存链接/平台级补充信息，例如控制台备用地址、维护电话、工单入口、附件说明。"
+        />
         <div>
           <Label>备注（可选）</Label>
           <Input value={note} onChange={(e) => setNote(e.target.value)} />
@@ -307,6 +452,7 @@ export function LinkEditor({
               note: note.trim() || undefined,
               urls: urls.length ? urls : undefined,
               gitRepos: cleanRepos(repos),
+              customFields: cleanCustomFields(customFields),
             }, location ? { projectId, envId: selectedEnvId } : undefined);
           }}
         >
@@ -330,6 +476,7 @@ export function AccountEditor({
     password: string;
     note?: string;
     totp?: string;
+    customFields?: CustomField[];
   }) => void;
 }) {
   const [label, setLabel] = useState(initial?.label ?? '');
@@ -337,6 +484,7 @@ export function AccountEditor({
   const [password, setPassword] = useState(initial?.password ?? '');
   const [note, setNote] = useState(initial?.note ?? '');
   const [totp, setTotp] = useState(initial?.totp ?? '');
+  const [customFields, setCustomFields] = useState<CustomField[]>(initial?.customFields ?? []);
   const [show, setShow] = useState(false);
   const [qrMsg, setQrMsg] = useState<string | null>(null);
   const qrInput = useRef<HTMLInputElement>(null);
@@ -358,7 +506,7 @@ export function AccountEditor({
   };
 
   return (
-    <Modal title={initial ? '编辑账号' : '新建账号'} onClose={onClose}>
+    <Modal title={initial ? '编辑账号' : '新建账号'} onClose={onClose} wide>
       <div className="flex flex-col gap-3">
         <div>
           <Label>账号备注名（区分同一链接下的多个账号）</Label>
@@ -426,6 +574,11 @@ export function AccountEditor({
           <Label>备注（可选）</Label>
           <Input value={note} onChange={(e) => setNote(e.target.value)} />
         </div>
+        <CustomFieldsField
+          fields={customFields}
+          setFields={setCustomFields}
+          hint="保存账号级补充信息，例如备用邮箱、手机号、恢复码、第三方登录方式。"
+        />
       </div>
       <div className={FOOTER}>
         <Button variant="subtle" onClick={onClose}>取消</Button>
@@ -438,6 +591,7 @@ export function AccountEditor({
               password,
               note: note.trim() || undefined,
               totp: totp.trim() || undefined,
+              customFields: cleanCustomFields(customFields),
             })
           }
         >
