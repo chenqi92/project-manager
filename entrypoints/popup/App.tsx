@@ -158,6 +158,8 @@ export default function App() {
     return out;
   }, [data]);
   const pageOrigin = tab?.url ? getOrigin(tab.url) : null;
+  // 只有 http(s) 网页能注入内容脚本读取输入；chrome:// / chrome-extension:// / file:// 等一律不行。
+  const canCapture = !!pageOrigin;
 
   // 注入填充：site 非空时按「所有 frame + 同主域护栏」注入，使登录表单在同主域跨域 iframe
   // （如阿里云 passport.aliyun.com）里也能被填；site 为空时退回只填顶层 frame。聚合各 frame 结果。
@@ -283,6 +285,7 @@ export default function App() {
 
   async function captureCurrentInput() {
     if (!tab?.id) return flash('无法读取当前标签页');
+    if (!canCapture) return flash('当前页面不支持捕获：浏览器内置页 / 扩展页无法读取内容');
     setCapturing(true);
     try {
       const injected = (await browser.scripting.executeScript({
@@ -308,7 +311,7 @@ export default function App() {
       setPending(p);
       flash(p.kind === 'update' ? '检测到可更新的登录' : '检测到可保存的登录');
     } catch (e) {
-      flash('捕获失败：' + (e instanceof Error ? e.message : String(e)));
+      flash(captureErrorMessage(e));
     } finally {
       setCapturing(false);
     }
@@ -666,9 +669,13 @@ export default function App() {
               <Button
                 variant="subtle"
                 className="h-10 min-w-0 whitespace-nowrap px-2 text-[13px]"
-                disabled={capturing}
+                disabled={capturing || !canCapture}
                 onClick={captureCurrentInput}
-                title="手动读取当前页面已填写的用户名和密码，用于自动提示未出现时兜底"
+                title={
+                  canCapture
+                    ? '手动读取当前页面已填写的用户名和密码，用于自动提示未出现时兜底'
+                    : '当前页面（浏览器内置页 / 扩展页 / 商店页）无法读取内容，不支持捕获'
+                }
               >
                 <KeyRound size={15} /> 手动捕获
               </Button>
@@ -721,6 +728,15 @@ export default function App() {
       )}
     </div>
   );
+}
+
+/** 把 executeScript 在受限页面上抛出的英文报错翻译成中文提示；其余错误保留原文。 */
+function captureErrorMessage(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/cannot access|must request permission|extension manifest|chrome:\/\//i.test(msg)) {
+    return '当前页面不支持捕获：这类页面（商店 / 浏览器内置页 / 扩展页）不允许读取内容';
+  }
+  return '捕获失败：' + msg;
 }
 
 function hostOf(origin: string): string {
