@@ -79,12 +79,11 @@ let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let clipboardOffscreenReady = false;
 let pendingCaptures: Record<string, CapturePending> = {};
 let loginCandidates: Record<string, LoginCaptureCandidate> = {};
-let sessionMasterPassword: string | null = null;
 let foreignVaultPasswords: string[] = [];
 
 type LoginCaptureCandidate = Pick<
   CapturePending,
-  'origin' | 'url' | 'pageTitle' | 'username' | 'password' | 'totp' | 'tabId'
+  'origin' | 'url' | 'pageTitle' | 'username' | 'password' | 'authProvider' | 'totp' | 'tabId'
 > & {
   createdAt: number;
 };
@@ -290,7 +289,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
         data.settings.kdf,
       );
       await vaultBackend.save(encrypted);
-      await setUnlocked(newDek, data, msg.password);
+      await setUnlocked(newDek, data);
       return getStatus();
     }
 
@@ -303,7 +302,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       } catch {
         throw new Error('主密码错误');
       }
-      await setUnlocked(newDek, await decryptVaultData(enc, newDek), msg.password);
+      await setUnlocked(newDek, await decryptVaultData(enc, newDek));
       return getStatus();
     }
 
@@ -331,7 +330,6 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
         throw new Error('当前主密码错误');
       }
       await vaultBackend.save(await rewrapDEK(enc, dek!, msg.next));
-      sessionMasterPassword = msg.next;
       return;
     }
 
@@ -588,6 +586,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
         sender?.tab?.id,
         msg.title,
         msg.totp,
+        msg.authProvider,
       );
       return;
     }
@@ -609,6 +608,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
         {},
         msg.title,
         msg.totp,
+        msg.authProvider,
       );
     }
     case 'capture:manual': {
@@ -823,9 +823,14 @@ async function handleCaptureCandidate(
   tabId?: number,
   pageTitle?: string,
   rawTotp?: string,
+  rawAuthProvider?: string,
 ): Promise<void> {
   await ensureRestored();
-  if (!dek || !cachedData || !password) return;
+  const authProvider = cleanAuthProvider(rawAuthProvider);
+  const nextPassword = String(password ?? '');
+  const nextUsername = cleanCaptureUsername(username, authProvider);
+  const totp = normalizeCapturedTotp(rawTotp);
+  if (!dek || !cachedData || (!nextPassword && !authProvider && !totp)) return;
   if (!captureAllowedForOrigin(cachedData, origin)) return;
   await ensureLoginCandidatesRestored();
   pruneLoginCandidates();
@@ -833,9 +838,10 @@ async function handleCaptureCandidate(
     origin,
     url,
     pageTitle: cleanCaptureTitle(pageTitle),
-    username,
-    password,
-    totp: normalizeCapturedTotp(rawTotp),
+    username: nextUsername,
+    password: nextPassword,
+    authProvider,
+    totp,
     tabId,
     createdAt: Date.now(),
   };
@@ -887,6 +893,7 @@ async function handleCaptureSuccessCheck(
     {},
     candidate.pageTitle || pageTitle,
     totp,
+    candidate.authProvider,
   );
 }
 
@@ -919,6 +926,20 @@ function captureSaveTargets(data: VaultData, origin: string): CaptureSaveTarget[
 
 function captureProjectTargets(data: VaultData): NonNullable<CapturePending['projectTargets']> {
   return data.projects.map((proj) => ({ projectId: proj.id, projectName: proj.name }));
+}
+
+function cleanAuthProvider(provider?: string): string | undefined {
+  const clean = (provider ?? '').replace(/\s+/g, ' ').trim();
+  return clean ? clean.slice(0, 40) : undefined;
+}
+
+function providerAccountName(provider?: string): string {
+  return provider ? `${provider} 登录` : '第三方登录';
+}
+
+function cleanCaptureUsername(username: string, authProvider?: string): string {
+  const clean = (username ?? '').replace(/\s+/g, ' ').trim();
+  return clean ? clean.slice(0, 120) : authProvider ? providerAccountName(authProvider) : '';
 }
 
 function cleanCaptureTitle(title?: string): string | undefined {
@@ -1035,12 +1056,13 @@ async function saveLoginCandidates(): Promise<void> {
 async function handleCaptureLogin(
   origin: string,
   url: string,
-  username: string,
-  password: string,
+  rawUsername: string,
+  rawPassword: string,
   tabId?: number,
   opts: { allowUnknownOrigin?: boolean } = {},
   pageTitle?: string,
   rawTotp?: string,
+  rawAuthProvider?: string,
 ): Promise<{
   pending: true;
   id?: string;
@@ -1057,8 +1079,11 @@ async function handleCaptureLogin(
   totp?: string;
 } | null> {
   await ensureRestored();
-  if (!dek || !cachedData || !password) return null; // 锁定时忽略
+  const authProvider = cleanAuthProvider(rawAuthProvider);
+  const password = String(rawPassword ?? '');
+  const username = cleanCaptureUsername(rawUsername, authProvider);
   const totp = normalizeCapturedTotp(rawTotp);
+  if (!dek || !cachedData || (!password && !authProvider && !totp)) return null; // 锁定时忽略
 
   let matchAccountId: string | undefined;
   let linkName: string | undefined;
@@ -1084,6 +1109,15 @@ async function handleCaptureLogin(
           if (acc.username && username && acc.username.toLowerCase() === username.toLowerCase()) {
             matchAccountId = acc.id;
             if (acc.password === password && (!totp || acc.totp === totp)) exactSame = true;
+          } else if (
+            authProvider &&
+            !acc.password &&
+            [acc.label, acc.username]
+              .filter(Boolean)
+              .some((value) => value.toLowerCase().includes(authProvider.toLowerCase()))
+          ) {
+            matchAccountId = acc.id;
+            if (!totp || acc.totp === totp) exactSame = true;
           }
         }
       }
@@ -1106,10 +1140,12 @@ async function handleCaptureLogin(
       pageTitle: cleanPageTitle,
       username,
       password,
+      authProvider,
       totp,
       tabId,
       accountId: matchAccountId,
       linkName: suggestedLinkName,
+      accountLabel: authProvider ? providerAccountName(authProvider) : undefined,
       updateCandidates: updateCandidates.slice(0, 8),
       saveTargets,
       projectTargets,
@@ -1122,9 +1158,11 @@ async function handleCaptureLogin(
       pageTitle: cleanPageTitle,
       username,
       password,
+      authProvider,
       totp,
       tabId,
       linkName: suggestedLinkName,
+      accountLabel: authProvider ? providerAccountName(authProvider) : undefined,
       updateCandidates: updateCandidates.slice(0, 8),
       saveTargets,
       projectTargets,
@@ -1188,7 +1226,7 @@ async function applyCapture(
               if (nextUsername) acc.username = nextUsername;
               if (nextLabel) acc.label = nextLabel;
               if (p.totp) acc.totp = p.totp;
-              acc.password = p.password;
+              if (p.password || !p.authProvider) acc.password = p.password;
               acc.updatedAt = Date.now();
               updated = true;
             }
@@ -1454,10 +1492,9 @@ async function getStatus(): Promise<VaultStatus> {
   };
 }
 
-async function setUnlocked(d: Uint8Array, data: VaultData, masterPassword?: string): Promise<void> {
+async function setUnlocked(d: Uint8Array, data: VaultData): Promise<void> {
   dek = d;
   cachedData = data;
-  sessionMasterPassword = masterPassword || null;
   foreignVaultPasswords = [];
   cachedSettingsFingerprint = settingsFingerprint(data.settings);
   autoLockMinutes = data.settings.autoLockMinutes ?? 15;
@@ -1489,7 +1526,6 @@ async function persistData(data: VaultData): Promise<void> {
 function lock(): void {
   dek = null;
   cachedData = null;
-  sessionMasterPassword = null;
   foreignVaultPasswords = [];
   cachedSettingsFingerprint = null;
   pendingCaptures = {};
@@ -1672,14 +1708,14 @@ async function runTargetSync(
 
 function syncForeignPasswordCandidates(explicit?: string): string[] {
   const skip = explicit;
-  return [...new Set([sessionMasterPassword, ...foreignVaultPasswords])]
+  return [...new Set(foreignVaultPasswords)]
     .map((p) => p ?? '')
     .filter((p) => p && p !== skip);
 }
 
 function rememberForeignPassword(password?: string): void {
   const pw = password;
-  if (!pw || pw === sessionMasterPassword || foreignVaultPasswords.includes(pw)) return;
+  if (!pw || foreignVaultPasswords.includes(pw)) return;
   foreignVaultPasswords = [pw, ...foreignVaultPasswords].slice(0, 5);
 }
 

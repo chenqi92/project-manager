@@ -11,6 +11,16 @@ async function submitAndFlush(): Promise<void> {
   document.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
   await Promise.resolve();
   await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+async function clickAndFlush(selector: string): Promise<void> {
+  document.querySelector(selector)?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 function latestCaptureCandidate() {
@@ -36,6 +46,7 @@ beforeEach(() => {
   messages = [];
   document.body.innerHTML = '';
   sessionStorage.clear();
+  (window as any).BarcodeDetector = undefined;
   Element.prototype.getBoundingClientRect = function (this: HTMLElement) {
     const hidden =
       this.style.display === 'none' ||
@@ -77,5 +88,53 @@ describe('capture.js login credential capture', () => {
     await submitAndFlush();
 
     expect(latestCaptureCandidate()?.username).toBe('');
+  });
+
+  it('does not save a plain base32 login QR token as TOTP', async () => {
+    (window as any).BarcodeDetector = class {
+      async detect() {
+        return [{ rawValue: 'JBSWY3DPEHPK3PXP' }];
+      }
+    };
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+        <canvas></canvas>
+      </form>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.totp).toBeFalsy();
+  });
+
+  it('keeps standard otpauth QR payloads as TOTP', async () => {
+    (window as any).BarcodeDetector = class {
+      async detect() {
+        return [{ rawValue: 'otpauth://totp/Acme:admin?secret=JBSWY3DPEHPK3PXP&period=30' }];
+      }
+    };
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+        <canvas></canvas>
+      </form>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.totp).toContain('otpauth://totp/Acme:admin');
+  });
+
+  it('captures federated login clicks without a password field', async () => {
+    document.body.innerHTML = `<a href="/auth/google">Continue with Google</a>`;
+
+    await clickAndFlush('a');
+
+    expect(latestCaptureCandidate()).toMatchObject({
+      username: 'Google 登录',
+      password: '',
+      authProvider: 'Google',
+    });
   });
 });

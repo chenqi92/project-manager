@@ -101,6 +101,7 @@ export type Msg =
       title?: string;
       username: string;
       password: string;
+      authProvider?: string;
       totp?: string;
     }
   | { type: 'capture:successCheck'; origin: string; url: string; title?: string; signals: CaptureSuccessSignals }
@@ -111,6 +112,7 @@ export type Msg =
       title?: string;
       username: string;
       password: string;
+      authProvider?: string;
       totp?: string;
     }
   | {

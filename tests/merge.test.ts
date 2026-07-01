@@ -195,7 +195,15 @@ describe('mergeVaultData', () => {
     const envA = { ...env, id: 'e1', updatedAt: 1, links: [linkA] };
     const projA: Project = { ...newProject({ name: 'P' }), id: 'p1', updatedAt: 1, environments: [envA] };
 
-    const acc1b = { ...newAccount({ label: '管理员', password: 'new' }), id: 'a1', updatedAt: 200 };
+    const acc1b = {
+      ...newAccount({
+        label: '管理员',
+        password: 'new',
+        customFields: [{ id: 'cf1', type: 'email', label: '备用邮箱', value: 'ops@example.test' }],
+      }),
+      id: 'a1',
+      updatedAt: 200,
+    };
     const acc2 = { ...newAccount({ label: '测试', password: 'pw2' }), id: 'a2', updatedAt: 50 };
     const linkB = { ...link, id: 'l1', updatedAt: 1, accounts: [acc1b, acc2] };
     const envB = { ...env, id: 'e1', updatedAt: 1, links: [linkB] };
@@ -205,6 +213,7 @@ describe('mergeVaultData', () => {
     const accounts = m.projects[0]!.environments[0]!.links[0]!.accounts;
     expect(accounts).toHaveLength(2);
     expect(accounts.find((a) => a.id === 'a1')!.password).toBe('new'); // 较新
+    expect(accounts.find((a) => a.id === 'a1')!.customFields?.[0]?.value).toBe('ops@example.test');
     expect(accounts.find((a) => a.id === 'a2')!.label).toBe('测试');
   });
 

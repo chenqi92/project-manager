@@ -22,6 +22,23 @@
   const LOGIN_PAGE_RE = /(login|signin|sign-in|auth|sso|oauth|cas|signup|sign-up|register|registration|create.?account|登录|登陆|认证|注册|创建账号|创建账户)/i;
   const LOGIN_ACTION_RE = /(login|sign in|signin|sign up|signup|register|create.?account|next|continue|submit|登录|登陆|注册|创建账号|创建账户|下一步|继续|确定|提交)/i;
   const SEARCH_CONTEXT_RE = /(search|query|keyword|filter|搜索|查询|筛选|过滤|重置|列表|创建时间|用户管理|部门|状态)/i;
+  const FEDERATED_ACTION_RE = /(sign\s*in|log\s*in|login|continue|connect|authorize|auth|sso|oauth|登录|登陆|继续|授权|绑定|关联)/i;
+  const FEDERATED_PROVIDERS = [
+    ['Google', /\bgoogle\b|谷歌/i],
+    ['GitHub', /\bgithub\b/i],
+    ['Microsoft', /\bmicrosoft\b|微软|office\s*365|azure/i],
+    ['Apple', /\bapple\b|苹果/i],
+    ['GitLab', /\bgitlab\b/i],
+    ['Slack', /\bslack\b/i],
+    ['Discord', /\bdiscord\b/i],
+    ['Facebook', /\bfacebook\b|脸书/i],
+    ['Twitter', /\btwitter\b|推特/i],
+    ['WeChat', /\bwechat\b|微信/i],
+    ['DingTalk', /\bdingtalk\b|钉钉/i],
+    ['Feishu', /\bfeishu\b|\blark\b|飞书/i],
+    ['QQ', /\bqq\b/i],
+    ['Solana', /\bsolana\b/i],
+  ];
 
   const fieldText = (el) =>
     [
@@ -74,6 +91,37 @@
         /(user|username|email|account|login|phone|mobile|apple.?id|账号|账户|邮箱|邮件|手机|电话|用户名)/i.test(text)
       );
     });
+
+  const actionText = (el) =>
+    [
+      el.textContent || '',
+      el.getAttribute?.('aria-label') || '',
+      el.getAttribute?.('title') || '',
+      el.getAttribute?.('href') || '',
+      el.value || '',
+    ]
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const federatedProviderFromText = (text) => {
+    const normalized = String(text || '');
+    for (const [name, re] of FEDERATED_PROVIDERS) {
+      if (re.test(normalized)) return name;
+    }
+    return '';
+  };
+
+  const federatedLoginAction = (target) => {
+    const el = target?.closest?.('button, a, [role="button"], input[type="button"], input[type="submit"]');
+    if (!el || !visible(el)) return null;
+    const text = actionText(el);
+    const provider = federatedProviderFromText(text);
+    if (!provider || !FEDERATED_ACTION_RE.test(text)) return null;
+    return { el, provider };
+  };
+
+  const providerAccountName = (provider) => (provider ? `${provider} 登录` : '第三方登录');
 
   const readRememberedUsername = (maxAgeMs = USERNAME_TTL_MS) => {
     try {
@@ -204,31 +252,31 @@
     return out.trim();
   };
 
+  const TOTP_SETUP_CONTEXT_RE = /(totp|authenticator|two.?factor|2fa|mfa|setup.?key|secret|密钥|秘钥|验证器|两步|二次验证|手动输入|无法扫描)/i;
+  const BASE32_SECRET_RE = /(?:[A-Z2-7]{4}[\s-]+){3,}[A-Z2-7]{4}=*|(?:[A-Z2-7]{8}[\s-]+)+[A-Z2-7]{8}=*|[A-Z2-7]{16,}=*/g;
+
   const extractOtpauth = (raw) => {
     const text = cleanCandidateText(raw);
     const match = text.match(/otpauth:\/\/[^\s"'<>\\]+/i);
     return match ? match[0].replace(/[),.;]+$/, '') : '';
   };
 
-  const extractBase32Secret = (raw) => {
-    const text = cleanCandidateText(raw);
-    if (
-      !/(totp|otp|authenticator|verification|two.?factor|2fa|mfa|secret|setup.?key|security.?key|密钥|秘钥|验证器|身份验证|两步|二次验证|手动输入|无法扫描)/i.test(
-        text,
-      )
-    )
-      return '';
-    const matches = text.toUpperCase().match(/[A-Z2-7](?:[A-Z2-7\s-]{14,}[A-Z2-7=])/g) || [];
-    for (const m of matches) {
-      const clean = m.replace(/[\s-]+/g, '');
-      if (/^[A-Z2-7]+=*$/.test(clean) && clean.length >= 16 && /[2-7]/.test(clean)) return clean;
-    }
-    return '';
+  const normalizeBase32Secret = (raw) => {
+    const clean = cleanCandidateText(raw).replace(/[\s-]+/g, '').toUpperCase();
+    return /^[A-Z2-7]+=*$/.test(clean) && clean.length >= 16 && /[2-7]/.test(clean)
+      ? clean
+      : '';
   };
 
-  const extractPlainBase32Secret = (raw) => {
-    const clean = cleanCandidateText(raw).replace(/[\s-]+/g, '').toUpperCase();
-    return /^[A-Z2-7]+=*$/.test(clean) && clean.length >= 16 ? clean : '';
+  const extractBase32Secret = (raw) => {
+    const text = cleanCandidateText(raw);
+    if (!TOTP_SETUP_CONTEXT_RE.test(text)) return '';
+    const matches = text.toUpperCase().match(BASE32_SECRET_RE) || [];
+    for (const m of matches) {
+      const clean = normalizeBase32Secret(m);
+      if (clean) return clean;
+    }
+    return '';
   };
 
   const extractTotpSecret = () => {
@@ -254,9 +302,12 @@
         if (base32) return base32;
       }
     }
-    for (const el of Array.from(document.querySelectorAll('main, form, section, article, aside, body'))) {
+    for (const el of Array.from(document.querySelectorAll('label, p, span, div, code, pre, kbd, strong, li'))) {
       if (!visible(el)) continue;
-      const text = (el.textContent || '').replace(/\s+/g, ' ').slice(0, 4000);
+      const ownText = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      const parentText = (el.parentElement?.textContent || '').replace(/\s+/g, ' ').trim();
+      const text = ownText.length <= 600 ? ownText : parentText.length <= 900 ? parentText : '';
+      if (!text) continue;
       const otpauth = extractOtpauth(text);
       if (otpauth) return otpauth;
       const base32 = extractBase32Secret(text);
@@ -285,7 +336,7 @@
           const raw = code.rawValue || '';
           const otpauth = extractOtpauth(raw);
           if (otpauth) return otpauth;
-          const base32 = extractPlainBase32Secret(raw) || extractBase32Secret(raw);
+          const base32 = extractBase32Secret(raw);
           if (base32) return base32;
         }
       } catch {
@@ -364,6 +415,26 @@
     });
   };
 
+  const captureFederatedCandidate = async (provider) => {
+    const authProvider = String(provider || '').trim();
+    if (!authProvider) return;
+
+    const now = Date.now();
+    if (now - lastSent < 1500) return;
+    lastSent = now;
+
+    send({
+      type: 'capture:candidate',
+      origin: location.origin,
+      url: location.href,
+      title: document.title || '',
+      username: providerAccountName(authProvider),
+      password: '',
+      authProvider,
+      totp: await extractTotpSecretAsync(),
+    });
+  };
+
   const checkSuccess = async () => {
     send({
       type: 'capture:successCheck',
@@ -385,19 +456,25 @@
     for (const delay of CHECK_DELAYS) setTimeout(() => void checkSuccess(), delay);
   };
 
-  const loginAction = () => {
+  const loginAction = (provider) => {
     rememberVisibleUsername();
-    armSuccessChecks();
-    void captureCandidate();
+    armSuccessChecks(provider ? 120_000 : 15_000);
+    if (provider) void captureFederatedCandidate(provider);
+    else void captureCandidate();
   };
 
   document.addEventListener('input', rememberVisibleUsername, true);
   document.addEventListener('change', rememberVisibleUsername, true);
-  document.addEventListener('submit', loginAction, true);
+  document.addEventListener('submit', () => loginAction(''), true);
   document.addEventListener(
     'click',
     (e) => {
       const t = e.target;
+      const federated = federatedLoginAction(t);
+      if (federated) {
+        loginAction(federated.provider);
+        return;
+      }
       if (t && t.closest && t.closest('button, input[type="submit"], [role="button"]')) loginAction();
     },
     true,

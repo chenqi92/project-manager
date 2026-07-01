@@ -28,12 +28,23 @@ function jsonVault(): VaultData {
                 id: 'link-stable',
                 name: '管理后台',
                 url: 'https://admin.example.test',
+                customFields: [
+                  { id: 'link-field-stable', type: 'phone', label: '维护电话', value: '400-100-200' },
+                ],
                 accounts: [
                   {
                     id: 'account-stable',
                     label: '管理员',
                     username: 'admin',
                     password: 'S3cure!Password',
+                    customFields: [
+                      {
+                        id: 'account-field-stable',
+                        type: 'email',
+                        label: '备用邮箱',
+                        value: 'ops@example.test',
+                      },
+                    ],
                     createdAt: now,
                     updatedAt: now,
                   },
@@ -77,12 +88,19 @@ describe('JSON 导入', () => {
 
     expect(incoming.projects[0]!.id).toBe('project-stable');
     expect(incoming.projects[0]!.docs![0]!.id).toBe('doc-stable');
+    expect(incoming.projects[0]!.memos![0]!.id).toBe('memo-stable');
     expect(incoming.projects[0]!.environments[0]!.links[0]!.accounts[0]!.id).toBe('account-stable');
+    expect(incoming.projects[0]!.environments[0]!.links[0]!.customFields![0]!.id).toBe('link-field-stable');
+    expect(incoming.projects[0]!.environments[0]!.links[0]!.accounts[0]!.customFields![0]!.id).toBe(
+      'account-field-stable',
+    );
 
     const merged = mergeVaults(emptyVaultData(), incoming, 'replace').data;
     const widget = merged.settings.dashboard!.boards![0]!.widgets[0]!;
 
     expect(merged.projects[0]!.id).toBe('project-stable');
+    expect(merged.projects[0]!.docs![0]!.title).toBe('压测说明');
+    expect(merged.projects[0]!.memos![0]!.text).toBe('压测待办');
     expect(merged.tombstones[0]!.id).toBe('deleted-doc');
     expect(merged.settings.dashboard!.activeBoardId).toBe('board-stress');
     expect(widget.config?.projectId).toBe('project-stable');
@@ -91,6 +109,20 @@ describe('JSON 导入', () => {
 });
 
 describe('加密备份导入', () => {
+  it('加密备份会完整保留文档、待办、首页和补充字段', async () => {
+    const exp = await buildExport(jsonVault(), 'encrypted', 'backup-password');
+    const imported = await parseImport('encrypted', exp.content, 'backup-password');
+    const project = imported.projects[0]!;
+    const link = project.environments[0]!.links[0]!;
+    const account = link.accounts[0]!;
+
+    expect(project.docs![0]!.content).toBe('# OK');
+    expect(project.memos![0]!.text).toBe('压测待办');
+    expect(imported.settings.dashboard?.activeBoardId).toBe('board-stress');
+    expect(link.customFields![0]).toMatchObject({ label: '维护电话', value: '400-100-200' });
+    expect(account.customFields![0]).toMatchObject({ label: '备用邮箱', value: 'ops@example.test' });
+  });
+
   it('密码错误时返回明确提示', async () => {
     const { encrypted } = await createEncryptedVault(jsonVault(), 'right-password', KDF);
     const content = JSON.stringify({ format: 'project-env-manager.encrypted', ...encrypted });
