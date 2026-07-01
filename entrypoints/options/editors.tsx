@@ -1,6 +1,6 @@
 import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { Eye, EyeOff, GitBranch, Plus, QrCode, RefreshCw, Trash2 } from 'lucide-react';
-import { Button, Input, Label, Modal, Select } from '@/components/ui';
+import { Button, Input, Label, Modal, Select, cx } from '@/components/ui';
 import { decodeQrImage } from '@/lib/qr';
 import type {
   Account,
@@ -12,7 +12,7 @@ import type {
   PlatformLink,
   Project,
 } from '@/lib/types';
-import { ENV_KIND_LABELS, newGitRepo } from '@/lib/vault-ops';
+import { ENV_KIND_COLORS, ENV_KIND_LABELS, newGitRepo } from '@/lib/vault-ops';
 
 function genPassword(len = 20): string {
   const charset =
@@ -349,84 +349,71 @@ export function LinkEditor({
     urls?: string[];
     gitRepos?: GitRepo[];
     customFields?: CustomField[];
-  }, location?: { projectId: string; envId: string }) => void;
+  }, location?: { projectId: string }) => void;
 }) {
   const [projectId, setProjectId] = useState(location?.projectId ?? '');
-  const [envId, setEnvId] = useState(location?.envId ?? '');
-  const selectedProject = location?.projects.find((p) => p.id === projectId);
-  const envs = selectedProject?.environments ?? [];
-  const selectedEnvId = envs.some((env) => env.id === envId) ? envId : '';
+  // 环境仅用于给新链接的标签提供默认值（如果是在某个环境上下文里新建）。
   const sourceEnv = location?.projects
     .find((p) => p.id === (location.projectId ?? ''))
     ?.environments.find((env) => env.id === (location.envId ?? ''));
   const [name, setName] = useState(initial?.name ?? '');
-  const [envKind, setEnvKind] = useState<EnvKind>(initial?.envKind ?? sourceEnv?.kind ?? 'other');
-  const [envName, setEnvName] = useState(initial?.envName ?? sourceEnv?.name ?? '默认');
+  const [envKind, setEnvKind] = useState<EnvKind>(initial?.envKind ?? sourceEnv?.kind ?? 'dev');
+  const [envName, setEnvName] = useState(initial?.envName ?? sourceEnv?.name ?? '');
   const [url, setUrl] = useState(initial?.url ?? '');
   const [extraUrls, setExtraUrls] = useState((initial?.urls ?? []).join('\n'));
   const [note, setNote] = useState(initial?.note ?? '');
   const [repos, setRepos] = useState<GitRepo[]>(initial?.gitRepos ?? []);
   const [customFields, setCustomFields] = useState<CustomField[]>(initial?.customFields ?? []);
-  const changeProject = (nextProjectId: string) => {
-    setProjectId(nextProjectId);
-    const nextProject = location?.projects.find((p) => p.id === nextProjectId);
-    setEnvId(nextProject?.environments[0]?.id ?? '');
-  };
 
   return (
     <Modal title={initial ? '编辑链接' : '新建链接 / 平台'} onClose={onClose} wide>
       <div className="flex flex-col gap-3">
-        {initial && location && (
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>所属项目</Label>
-              <Select value={projectId} onChange={(e) => changeProject(e.target.value)}>
-                {location.projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div>
-              <Label>所属环境</Label>
-              <Select
-                value={selectedEnvId}
-                onChange={(e) => setEnvId(e.target.value)}
-                disabled={envs.length === 0}
-              >
-                {envs.length === 0 ? (
-                  <option value="">自动创建默认环境</option>
-                ) : (
-                  envs.map((env) => (
-                    <option key={env.id} value={env.id}>
-                      {env.name}
-                    </option>
-                  ))
-                )}
-              </Select>
-            </div>
+        {initial && location && location.projects.length > 1 && (
+          <div>
+            <Label>所属项目（改这里可把链接移动到其它项目）</Label>
+            <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              {location.projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
           </div>
         )}
         <div>
           <Label>名称</Label>
           <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：管理后台" />
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label>环境标签</Label>
-            <Select value={envKind} onChange={(e) => setEnvKind(e.target.value as EnvKind)}>
-              {(Object.keys(ENV_KIND_LABELS) as EnvKind[]).map((k) => (
-                <option key={k} value={k}>
-                  {ENV_KIND_LABELS[k]}
-                </option>
-              ))}
-            </Select>
+        <div>
+          <Label>环境标签</Label>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(Object.keys(ENV_KIND_LABELS) as EnvKind[]).map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setEnvKind(k)}
+                className={cx(
+                  'rounded-full px-3 py-1 text-[11.5px] font-bold transition',
+                  ENV_KIND_COLORS[k],
+                  envKind === k
+                    ? 'ring-2 ring-brand-400 ring-offset-1'
+                    : 'opacity-55 hover:opacity-100',
+                )}
+              >
+                {ENV_KIND_LABELS[k]}
+              </button>
+            ))}
+            <input
+              value={envName}
+              onChange={(e) => setEnvName(e.target.value)}
+              title="自定义标签名（可选）"
+              placeholder="+ 自定义名"
+              className="h-[26px] w-24 rounded-full border border-dashed border-gray-300 bg-surface px-3 text-[11.5px] text-gray-700 outline-none transition-[width] placeholder:text-gray-400 focus:w-36 focus:border-brand-500 focus:border-solid"
+            />
           </div>
-          <div>
-            <Label>标签名称</Label>
-            <Input value={envName} onChange={(e) => setEnvName(e.target.value)} placeholder="默认 / 华东 / 客户现场" />
-          </div>
+          <p className="mt-1.5 text-[11px] text-gray-400">
+            选种类（决定颜色），可再填自定义名区分同类环境（如 华东 / 客户现场），留空即用种类名；相同标签的链接归到一起，详情页顶部可按标签筛选。
+          </p>
         </div>
         <div>
           <Label>主网址</Label>
@@ -472,13 +459,13 @@ export function LinkEditor({
             onSave({
               name: name.trim(),
               envKind,
-              envName: envName.trim() || '默认',
+              envName: envName.trim() || ENV_KIND_LABELS[envKind],
               url: url.trim(),
               note: note.trim() || undefined,
               urls: urls.length ? urls : undefined,
               gitRepos: cleanRepos(repos),
               customFields: cleanCustomFields(customFields),
-            }, location ? { projectId, envId: selectedEnvId } : undefined);
+            }, location ? { projectId } : undefined);
           }}
         >
           保存

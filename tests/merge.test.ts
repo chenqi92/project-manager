@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mergeVaultData } from '../lib/merge';
-import type { Project, VaultData } from '../lib/types';
+import type { Project, VaultData, Workspace } from '../lib/types';
 import { newAccount, newDoc, newEnvironment, newLink, newMemo, newProject } from '../lib/vault-ops';
 
 function vault(projects: Project[], tombstones: VaultData['tombstones'] = []): VaultData {
@@ -36,6 +36,37 @@ describe('mergeVaultData', () => {
     const m = mergeVaultData(local, remote, NOW);
     expect(m.projects).toHaveLength(0);
     expect(m.tombstones.find((t) => t.id === 'p1')).toBeTruthy();
+  });
+
+  it('删除工作区留墓碑后，同步不会把它复活', () => {
+    const kdf = { type: 'pbkdf2' as const, iterations: 1, hash: 'SHA-256' as const };
+    const ws = (id: string, name: string): Workspace => ({
+      id,
+      name,
+      projects: [],
+      createdAt: NOW - 5000,
+      updatedAt: NOW - 5000,
+    });
+    const local: VaultData = {
+      version: 1,
+      projects: [],
+      settings: { autoLockMinutes: 15, kdf },
+      workspaces: [ws('wsB', '个人')], // wsA 已在本地删除
+      activeWorkspaceId: 'wsB',
+      tombstones: [{ id: 'wsA', deletedAt: NOW - 1000 }],
+    };
+    const remote: VaultData = {
+      version: 1,
+      projects: [],
+      settings: { autoLockMinutes: 15, kdf },
+      workspaces: [ws('wsA', '公司'), ws('wsB', '个人')], // 远端还留着 wsA
+      activeWorkspaceId: 'wsA',
+      tombstones: [],
+    };
+    const m = mergeVaultData(local, remote, NOW);
+    const wsIds = (m.workspaces ?? []).map((w) => w.id);
+    expect(wsIds).toEqual(['wsB']);
+    expect(wsIds).not.toContain('wsA');
   });
 
   it('删除后又被编辑（updatedAt 晚于删除）则保留', () => {

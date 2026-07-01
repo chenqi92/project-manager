@@ -14,6 +14,7 @@
   let selectedUpdateId = '';
   let captureDraft = null;
   let targetDropdownOpen = false;
+  let workspaceDropdownOpen = false;
   let refreshTimer = 0;
   let lastSent = 0;
   let successCheckUntil = 0;
@@ -1457,11 +1458,13 @@
           accountLabel: next.accountLabel || '',
           targetChoice: defaultCaptureTargetChoice(next),
           newProjectName: '',
+          workspaceId: next.activeWorkspaceId || next.workspaces?.[0]?.id || '',
         }
       : null;
     dismissed = false;
     expanded = false;
     targetDropdownOpen = false;
+    workspaceDropdownOpen = false;
   };
 
   const shortName = (s) => String(s || '?').trim().slice(0, 2).toLowerCase();
@@ -1482,10 +1485,11 @@
 
   const captureSaveTargetEdits = () => {
     if (!capturePrompt || captureMode !== 'new') return {};
+    const ws = captureDraft?.workspaceId ? { targetWorkspaceId: captureDraft.workspaceId } : {};
     const choice = captureDraft?.targetChoice || defaultCaptureTargetChoice();
     if (choice.startsWith('link:')) return { targetLinkId: choice.slice(5) };
-    if (choice.startsWith('project:')) return { targetProjectId: choice.slice(8) };
-    return { newProjectName: captureDraft?.newProjectName || hostOf(capturePrompt.origin) };
+    if (choice.startsWith('project:')) return { ...ws, targetProjectId: choice.slice(8) };
+    return { ...ws, newProjectName: captureDraft?.newProjectName || hostOf(capturePrompt.origin) };
   };
 
   const targetOption = (value, title, sub, selected) => `
@@ -1554,6 +1558,37 @@
                 }
                 <div class="target-section">新项目</div>
                 ${targetOption(NEW_PROJECT_CHOICE, '+ 新建项目', hostOf(capturePrompt.origin), targetChoice === NEW_PROJECT_CHOICE)}
+              </div>`
+            : ''
+        }
+      </div>
+    `;
+  };
+
+  // 工作区选择：复用「保存到」的自定义下拉样式与开合逻辑（原生 <select> 在浮层里会被
+  // 重渲染打断、样式错位，故弃用）。
+  const workspaceSelect = (workspaces, wsId) => {
+    const current = workspaces.find((w) => w.id === wsId) || workspaces[0];
+    return `
+      <div class="target-select">
+        <button type="button" class="target-trigger" data-act="toggle-workspace">
+          <span>
+            <span class="target-title">${esc(current?.name || '默认工作区')}</span>
+          </span>
+          <span class="target-caret">${workspaceDropdownOpen ? '⌃' : '⌄'}</span>
+        </button>
+        ${
+          workspaceDropdownOpen
+            ? `<div class="target-list">
+                ${workspaces
+                  .map(
+                    (w) => `
+                      <button type="button" class="target-option ${w.id === wsId ? 'selected' : ''}" data-act="choose-workspace" data-id="${esc(w.id)}">
+                        <span><span class="target-title">${esc(w.name)}</span></span>
+                        <span class="target-radio"></span>
+                      </button>`,
+                  )
+                  .join('')}
               </div>`
             : ''
         }
@@ -1636,14 +1671,26 @@
       const mode = canUpdate ? captureMode : 'new';
       const selected = candidates.find((c) => c.accountId === selectedUpdateId) || candidates[0];
       const targets = capturePrompt.saveTargets || [];
-      const projectTargets = capturePrompt.projectTargets || [];
+      const allProjectTargets = capturePrompt.projectTargets || [];
+      const workspaces = capturePrompt.workspaces || [];
       const draft = captureDraft || {
         username: capturePrompt.username || '',
         accountLabel: capturePrompt.accountLabel || '',
         targetChoice: defaultCaptureTargetChoice(),
         newProjectName: '',
+        workspaceId: capturePrompt.activeWorkspaceId || workspaces[0]?.id || '',
       };
-      const targetChoice = draft.targetChoice || defaultCaptureTargetChoice();
+      const wsId = draft.workspaceId || capturePrompt.activeWorkspaceId || workspaces[0]?.id || '';
+      // 按选中工作区筛选项目候选（旧数据无 workspaceId 时不过滤）。
+      const projectTargets = allProjectTargets.filter((p) => !p.workspaceId || p.workspaceId === wsId);
+      let targetChoice = draft.targetChoice || defaultCaptureTargetChoice();
+      // 切换工作区后原选中项目不在该工作区 → 回退到「新建项目」。
+      if (
+        targetChoice.startsWith('project:') &&
+        !projectTargets.some((p) => `project:${p.projectId}` === targetChoice)
+      ) {
+        targetChoice = NEW_PROJECT_CHOICE;
+      }
       const selectedTarget = targetChoice.startsWith('link:')
         ? targets.find((t) => t.linkId === targetChoice.slice(5))
         : null;
@@ -1688,7 +1735,15 @@
               </div>
               ${
                 mode === 'new'
-                  ? `<div class="field wide">
+                  ? `${
+                      workspaces.length > 1
+                        ? `<div class="field wide">
+                      <label>工作区</label>
+                      ${workspaceSelect(workspaces, wsId)}
+                    </div>`
+                        : ''
+                    }
+                    <div class="field wide">
                       <label>保存到</label>
                       ${captureTargetSelect(targets, projectTargets, targetChoice)}
                     </div>
@@ -1916,7 +1971,7 @@
       if (act === 'unlock-vault') {
         await send({ type: 'ui:openUnlock' });
         startUnlockPolling();
-        render('已打开解锁页面');
+        render('已弹出解锁窗口，解锁后回到本页会自动填充');
         return;
       }
       if (act === 'more') {
@@ -1948,6 +2003,7 @@
       }
       if (act === 'toggle-capture-target') {
         targetDropdownOpen = !targetDropdownOpen;
+        workspaceDropdownOpen = false;
         render();
         return;
       }
@@ -1957,6 +2013,21 @@
           targetChoice: accountId || NEW_PROJECT_CHOICE,
         };
         targetDropdownOpen = false;
+        render();
+        return;
+      }
+      if (act === 'toggle-workspace') {
+        workspaceDropdownOpen = !workspaceDropdownOpen;
+        targetDropdownOpen = false;
+        render();
+        return;
+      }
+      if (act === 'choose-workspace') {
+        captureDraft = {
+          ...(captureDraft || {}),
+          workspaceId: accountId || '',
+        };
+        workspaceDropdownOpen = false;
         render();
         return;
       }

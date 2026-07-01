@@ -44,6 +44,7 @@ export type Msg =
   | { type: 'activity' }
   | { type: 'clipboard:clearLater'; clearMs: number }
   | { type: 'ui:openUnlock' }
+  | { type: 'ui:closeSelf' }
   // 生物识别
   | { type: 'vault:bioEnrollments' }
   | { type: 'vault:unlockWithPrf'; enrollmentId: string; prfOutput: string }
@@ -134,6 +135,7 @@ export type Msg =
       targetLinkId?: string;
       targetProjectId?: string;
       newProjectName?: string;
+      targetWorkspaceId?: string;
     }
   | { type: 'capture:editSave'; id?: string }
   | { type: 'capture:dismiss'; id?: string };
@@ -183,6 +185,8 @@ export const api = {
     }),
   reset: () => send<VaultStatus>({ type: 'vault:reset' }),
   activity: () => send<void>({ type: 'activity' }),
+  /** 解锁标签页解锁成功后自请求关闭（脚本无法可靠地 window.close 非自身打开的标签）。 */
+  closeSelf: () => send<void>({ type: 'ui:closeSelf' }),
 
   // 生物识别
   bioEnrollments: () => send<BioEnrollmentPublic[]>({ type: 'vault:bioEnrollments' }),

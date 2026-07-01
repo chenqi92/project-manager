@@ -384,10 +384,32 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       await scheduleClipboardClear(msg.clearMs);
       return;
 
-    case 'ui:openUnlock':
-      await browser.tabs
-        .create({ url: browser.runtime.getURL('/options.html?unlock=1') })
-        .catch(() => browser.runtime.openOptionsPage());
+    case 'ui:openUnlock': {
+      // 主密码只能在扩展自身安全上下文里输入（绝不能在网页注入的浮层里，页面可键盘记录/读取）。
+      const encForBio = await vaultBackend.load();
+      const hasBio = (encForBio?.bioEnrollments?.length ?? 0) > 0;
+      if (hasBio) {
+        // 已启用生物识别：WebAuthn 必须在持久页面里跑（popup 会因系统指纹弹窗失焦而关闭）。
+        // 打开解锁标签页——LockScreen 挂载即自动触发 Touch ID，解锁成功后本页自请求关闭、回到原网页。
+        await browser.tabs
+          .create({ url: browser.runtime.getURL('/options.html?unlock=1') })
+          .catch(() => browser.runtime.openOptionsPage());
+      } else {
+        // 无生物识别：弹出工具栏「小弹窗」输主密码——不整页跳转、网页读不到；不可用时回退开标签页。
+        try {
+          if (!browser.action.openPopup) throw new Error('no openPopup');
+          await browser.action.openPopup();
+        } catch {
+          await browser.tabs
+            .create({ url: browser.runtime.getURL('/options.html?unlock=1') })
+            .catch(() => browser.runtime.openOptionsPage());
+        }
+      }
+      return;
+    }
+
+    case 'ui:closeSelf':
+      if (sender?.tab?.id != null) await browser.tabs.remove(sender.tab.id).catch(() => {});
       return;
 
     // ---------------- 生物识别 ----------------
@@ -660,6 +682,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
         targetLinkId: msg.targetLinkId,
         targetProjectId: msg.targetProjectId,
         newProjectName: msg.newProjectName,
+        targetWorkspaceId: msg.targetWorkspaceId,
       });
       return;
     case 'capture:editSave':
@@ -945,6 +968,14 @@ function captureSaveTargets(data: VaultData, origin: string): CaptureSaveTarget[
 }
 
 function captureProjectTargets(data: VaultData): NonNullable<CapturePending['projectTargets']> {
+  // 列出所有工作区的项目（带 workspaceId），让捕获浮层能先选工作区再选项目。
+  const out: NonNullable<CapturePending['projectTargets']> = [];
+  for (const ws of data.workspaces ?? []) {
+    for (const proj of ws.projects) {
+      out.push({ projectId: proj.id, projectName: proj.name, workspaceId: ws.id, workspaceName: ws.name });
+    }
+  }
+  if (out.length) return out;
   return workspaceScopedData(data).projects.map((proj) => ({ projectId: proj.id, projectName: proj.name }));
 }
 
@@ -1094,6 +1125,8 @@ async function handleCaptureLogin(
   updateCandidates?: CaptureUpdateCandidate[];
   saveTargets?: CaptureSaveTarget[];
   projectTargets?: NonNullable<CapturePending['projectTargets']>;
+  workspaces?: CapturePending['workspaces'];
+  activeWorkspaceId?: string;
   accountLabel?: string;
   targetLinkId?: string;
   totp?: string;
@@ -1112,6 +1145,8 @@ async function handleCaptureLogin(
   const updateCandidates: CaptureUpdateCandidate[] = [];
   const saveTargets = captureSaveTargets(cachedData, origin);
   const projectTargets = captureProjectTargets(cachedData);
+  const captureWorkspaces = (cachedData.workspaces ?? []).map((w) => ({ id: w.id, name: w.name }));
+  const activeWorkspaceId = cachedData.activeWorkspaceId;
   const cleanPageTitle = cleanCaptureTitle(pageTitle);
   const activeData = workspaceScopedData(cachedData);
   for (const proj of activeData.projects) {
@@ -1187,6 +1222,8 @@ async function handleCaptureLogin(
       updateCandidates: updateCandidates.slice(0, 8),
       saveTargets,
       projectTargets,
+      workspaces: captureWorkspaces,
+      activeWorkspaceId,
       targetLinkId: saveTargets[0]?.linkId,
     };
   }
@@ -1202,6 +1239,8 @@ async function handleCaptureLogin(
     updateCandidates: saved.updateCandidates,
     saveTargets: saved.saveTargets,
     projectTargets: saved.projectTargets,
+    workspaces: saved.workspaces,
+    activeWorkspaceId: saved.activeWorkspaceId,
     accountLabel: saved.accountLabel,
     targetLinkId: saved.targetLinkId,
     totp: saved.totp,
@@ -1219,6 +1258,7 @@ async function applyCapture(
     targetLinkId?: string;
     targetProjectId?: string;
     newProjectName?: string;
+    targetWorkspaceId?: string;
   } = {},
 ): Promise<void> {
   await requireUnlocked();
@@ -1278,12 +1318,17 @@ async function applyCapture(
           }
 
     if (!target && (edits.targetProjectId || edits.newProjectName !== undefined)) {
+      // 保存到用户选中的工作区：非当前激活工作区则指向该工作区的 projects 数组。
+      const targetProjects =
+        edits.targetWorkspaceId && edits.targetWorkspaceId !== data.activeWorkspaceId
+          ? (data.workspaces?.find((w) => w.id === edits.targetWorkspaceId)?.projects ?? data.projects)
+          : data.projects;
       if (edits.targetProjectId) {
-        targetProject = data.projects.find((proj) => proj.id === edits.targetProjectId) ?? null;
+        targetProject = targetProjects.find((proj) => proj.id === edits.targetProjectId) ?? null;
         if (!targetProject) throw new Error('找不到要保存到的项目');
       } else {
         targetProject = newProject({ name: edits.newProjectName?.trim() || captureHostName(p) });
-        data.projects.push(targetProject);
+        targetProjects.push(targetProject);
       }
 
       targetEnv =

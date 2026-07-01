@@ -68,6 +68,7 @@ import {
 import {
   commitWorkspaceDraft,
   createWorkspace,
+  deleteWorkspace,
   prepareWorkspaceDraft,
   renameWorkspace,
   switchActiveWorkspace,
@@ -205,6 +206,15 @@ export default function App() {
     const p = new URLSearchParams(location.search);
     return p.get('capturePending') || null;
   });
+  // 从网页浮层「解锁」打开的标签页（?unlock=1）：解锁成功后自动关闭、回到原网页。
+  const [openedForUnlock] = useState(
+    () => new URLSearchParams(location.search).get('unlock') === '1',
+  );
+  useEffect(() => {
+    if (openedForUnlock && status && status.initialized && !status.locked) {
+      api.closeSelf().catch(() => {});
+    }
+  }, [openedForUnlock, status]);
   const [loginHandoff, setLoginHandoff] = useState(() => {
     const p = new URLSearchParams(location.search);
     return p.get('openlogin') === '1'
@@ -470,13 +480,19 @@ export default function App() {
     setPage(null);
   };
 
+  // 工作区变更用 structuredClone 而非 immer produce：金库把 data.projects 别名到当前
+  // 工作区的 projects 数组，这种「共享引用」immer 不支持（重排工作区数组时会把新建的
+  // 工作区丢掉），所以这里走纯克隆 + 直接修改。
+  const saveWorkspaceMutation = async (mutate: (d: VaultData) => void) => {
+    if (!data) return;
+    const draft = structuredClone(data);
+    mutate(draft);
+    await vault.save(draft);
+  };
+
   const changeWorkspace = async (workspaceId: string) => {
     if (!data || workspaceId === activeWorkspace?.id) return;
-    await vault.save(
-      produce(data, (draft) => {
-        switchActiveWorkspace(draft, workspaceId);
-      }),
-    );
+    await saveWorkspaceMutation((d) => void switchActiveWorkspace(d, workspaceId));
     resetWorkspaceView();
   };
 
@@ -488,10 +504,8 @@ export default function App() {
       placeholder: '例如：个人 / 公司',
     });
     if (name == null) return;
-    await vault.save(
-      produce(data, (draft) => {
-        createWorkspace(draft, name.trim() || `工作区 ${(draft.workspaces?.length ?? 0) + 1}`);
-      }),
+    await saveWorkspaceMutation((d) =>
+      void createWorkspace(d, name.trim() || `工作区 ${(d.workspaces?.length ?? 0) + 1}`),
     );
     resetWorkspaceView();
     flash('工作区已创建');
@@ -504,12 +518,35 @@ export default function App() {
       defaultValue: activeWorkspace.name,
     });
     if (name == null) return;
-    await vault.save(
-      produce(data, (draft) => {
-        renameWorkspace(draft, activeWorkspace.id, name);
-      }),
-    );
+    await saveWorkspaceMutation((d) => void renameWorkspace(d, activeWorkspace.id, name));
     flash('工作区已重命名');
+  };
+
+  const deleteCurrentWorkspace = async () => {
+    if (!data || !activeWorkspace) return;
+    if (workspaces.length <= 1) {
+      flash('至少保留一个工作区');
+      return;
+    }
+    const targetId = activeWorkspace.id;
+    const ok = await confirm({
+      title: '删除工作区',
+      message: `删除工作区「${activeWorkspace.name}」及其下的全部项目？此操作不可恢复。`,
+      danger: true,
+      confirmText: '删除工作区',
+    });
+    if (!ok) return;
+    await saveWorkspaceMutation((d) => {
+      // 留墓碑：否则下次同步会把已删工作区从远端合并回来（复活）。
+      const ws = (d.workspaces ?? []).find((w) => w.id === targetId);
+      if (ws) {
+        addDeleteTombstone(d, ws.id, ws.updatedAt);
+        for (const p of ws.projects) tombstoneProjectTree(d, p);
+      }
+      deleteWorkspace(d, targetId);
+    });
+    resetWorkspaceView();
+    flash('工作区已删除');
   };
 
   const deleteSelectedProject = async () => {
@@ -541,65 +578,66 @@ export default function App() {
     },
     target?: {
       projectId: string;
-      envId: string;
     },
   ) => {
     let nextProjectId: string | null = null;
     await update((d) => {
       const now = Date.now();
       const sourceProject = d.projects.find((p) => p.id === sourceProjectId);
-      const sourceEnv = sourceProject?.environments.find((env) => env.id === sourceEnvId);
-      if (!sourceProject || !sourceEnv) throw new Error('找不到当前环境');
-      const linkValue = {
-        ...value,
-        envKind: value.envKind ?? sourceEnv.kind,
-        envName: value.envName?.trim() || sourceEnv.name,
+      if (!sourceProject) throw new Error('找不到当前项目');
+
+      // 环境 = 链接上的标签(kind + name)：容器只是按标签归类的实现细节，找不到就建。
+      const kind = value.envKind ?? 'other';
+      const tagName = value.envName?.trim() || ENV_KIND_LABELS[kind];
+      const linkValue = { ...value, envKind: kind, envName: tagName };
+      const findOrCreateEnv = (proj: Project): Environment => {
+        let env = proj.environments.find((e) => e.kind === kind && e.name === tagName);
+        if (!env) {
+          env = newEnvironment({ kind, name: tagName });
+          proj.environments.push(env);
+        }
+        return env;
       };
 
+      // 新建链接：直接按标签归入对应容器（0 环境也能加）。
       if (!existing) {
-        sourceEnv.links.push(newLink(linkValue));
-        sourceEnv.updatedAt = now;
+        const env = findOrCreateEnv(sourceProject);
+        env.links.push(newLink(linkValue));
+        env.updatedAt = now;
         sourceProject.updatedAt = now;
         return;
       }
 
+      // 编辑：定位原容器与索引。
+      const sourceEnv = sourceProject.environments.find((env) => env.id === sourceEnvId);
+      if (!sourceEnv) throw new Error('找不到当前环境');
       const sourceIndex = sourceEnv.links.findIndex((link) => link.id === existing.id);
       if (sourceIndex < 0) throw new Error('找不到要编辑的链接');
 
-      const targetProjectId = target?.projectId || sourceProjectId;
-      const targetEnvId = target?.envId || sourceEnvId;
-      const sameLocation = targetProjectId === sourceProjectId && targetEnvId === sourceEnvId;
-      if (sameLocation) {
+      const targetProject = d.projects.find((p) => p.id === (target?.projectId || sourceProjectId));
+      if (!targetProject) throw new Error('找不到目标项目');
+      const targetEnv = findOrCreateEnv(targetProject);
+
+      // 标签未变且同项目 → 原地更新。
+      if (targetProject.id === sourceProject.id && targetEnv.id === sourceEnv.id) {
         Object.assign(sourceEnv.links[sourceIndex]!, linkValue, { updatedAt: now });
         sourceEnv.updatedAt = now;
         sourceProject.updatedAt = now;
         return;
       }
 
+      // 改了标签或换了项目 → 从原容器移出、并入目标容器（跨项目用墓碑防同步重现）。
       const [moved] = sourceEnv.links.splice(sourceIndex, 1);
       if (!moved) throw new Error('找不到要移动的链接');
-      const movedAt = now;
-      const updatedAt = movedAt + 1;
-      addMoveTombstone(d, moved.id, movedAt);
+      const updatedAt = now + 1;
+      addMoveTombstone(d, moved.id, now);
       Object.assign(moved, linkValue, { updatedAt });
       sourceEnv.updatedAt = updatedAt;
       sourceProject.updatedAt = updatedAt;
-
-      const targetProject = d.projects.find((project) => project.id === targetProjectId);
-      if (!targetProject) throw new Error('找不到目标项目');
-      let targetEnv = targetProject.environments.find((env) => env.id === targetEnvId);
-      if (!targetEnv) {
-        targetEnv = targetProject.environments[0];
-      }
-      if (!targetEnv) {
-        targetEnv = newEnvironment({ name: '默认', kind: 'other' });
-        targetProject.environments.push(targetEnv);
-      }
-
       targetEnv.links.push(moved);
       targetEnv.updatedAt = updatedAt;
       targetProject.updatedAt = updatedAt;
-      nextProjectId = targetProject.id;
+      if (targetProject.id !== sourceProject.id) nextProjectId = targetProject.id;
     });
     if (nextProjectId) {
       setSelectedId(nextProjectId);
@@ -607,6 +645,42 @@ export default function App() {
       flash('已移动链接');
     }
   };
+
+  // 顶栏在所有视图共用一个实例（含常驻搜索框），标题/返回/右操作按当前视图计算。
+  const viewTitle =
+    page && !searchResults
+      ? PAGE_TITLES[page]
+      : searchResults
+        ? `搜索结果（${searchResults.length}）`
+        : showHome
+          ? '首页看板'
+          : selected
+            ? selected.name
+            : '项目';
+  const viewBack =
+    page && !searchResults
+      ? () => setPage(null)
+      : !searchResults && !showHome && selected
+        ? () => {
+            setSelectedId(null);
+            setShowHome(true);
+          }
+        : undefined;
+  const newProjectBtn = (
+    <Button onClick={() => setEditing({ kind: 'project' })}>
+      <Plus size={16} /> 新建项目
+    </Button>
+  );
+  const viewRight =
+    page || searchResults ? undefined : showHome ? (
+      newProjectBtn
+    ) : selected ? (
+      <IconButton title="大屏只读展示" onClick={() => setBigScreenId(selected.id)}>
+        <Monitor size={16} />
+      </IconButton>
+    ) : (
+      newProjectBtn
+    );
 
   return (
     <div className="flex h-screen bg-gray-50 text-gray-900">
@@ -627,15 +701,15 @@ export default function App() {
           style={{ width: navW }}
           className="relative flex shrink-0 flex-col border-r border-gray-200 bg-surface px-3 py-4"
         >
-        <div className="flex items-center gap-2.5 px-2 pb-3.5 pt-1.5">
+        <div className="flex items-center gap-2.5 px-2 pb-2.5 pt-1">
           <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-brand-600 text-white shadow-[0_4px_10px_-2px_rgba(13,148,136,.4)]">
             <Layers size={17} />
           </span>
-          <div className="min-w-0 flex-1 leading-tight">
-            <div className="truncate text-[13.5px] font-bold">项目环境管家</div>
-            <div className="truncate font-mono text-[10.5px] text-gray-400">
-              env vault · v{appVersion}
-            </div>
+          <div
+            className="min-w-0 flex-1 truncate text-[13.5px] font-bold leading-tight"
+            title={`env vault · v${appVersion}`}
+          >
+            项目环境管家
           </div>
           <button
             onClick={toggleNav}
@@ -646,32 +720,12 @@ export default function App() {
           </button>
         </div>
 
-        <div className="mb-2.5 rounded-[10px] border border-gray-200 bg-gray-50 p-2">
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-[10.5px] font-bold text-gray-400">工作区</span>
-            <div className="flex items-center gap-0.5">
-              <button
-                type="button"
-                title="重命名工作区"
-                onClick={renameCurrentWorkspace}
-                className="flex h-6 w-6 items-center justify-center rounded-md text-gray-400 hover:bg-white hover:text-gray-700"
-              >
-                <Pencil size={12} />
-              </button>
-              <button
-                type="button"
-                title="新建工作区"
-                onClick={addWorkspace}
-                className="flex h-6 w-6 items-center justify-center rounded-md text-gray-400 hover:bg-white hover:text-brand-600"
-              >
-                <Plus size={13} />
-              </button>
-            </div>
-          </div>
+        <div className="mb-2 flex items-center gap-1">
           <Select
             value={activeWorkspace?.id ?? ''}
             onChange={(e) => void changeWorkspace(e.target.value)}
-            className="h-8 rounded-md border-gray-200 bg-surface px-2 py-1 text-xs font-semibold"
+            title="切换工作区"
+            className="h-8 flex-1 rounded-md border-gray-200 bg-gray-50 px-2 py-1 text-xs font-semibold"
           >
             {workspaces.map((ws) => (
               <option key={ws.id} value={ws.id}>
@@ -679,22 +733,32 @@ export default function App() {
               </option>
             ))}
           </Select>
-        </div>
-
-        <div className="relative mb-2.5 mt-0.5">
-          <Search
-            size={14}
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
-          />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="全局搜索"
-            className="h-9 w-full rounded-[9px] border border-gray-200 bg-gray-50 pl-8 pr-12 text-xs text-gray-700 outline-none placeholder:text-gray-400 focus:border-brand-500"
-          />
-          <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-gray-200 px-1 font-mono text-[9.5px] text-gray-400">
-            ⌘K
-          </span>
+          <button
+            type="button"
+            title="重命名工作区"
+            onClick={renameCurrentWorkspace}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+          >
+            <Pencil size={13} />
+          </button>
+          <button
+            type="button"
+            title="新建工作区"
+            onClick={addWorkspace}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-brand-600"
+          >
+            <Plus size={14} />
+          </button>
+          {workspaces.length > 1 && (
+            <button
+              type="button"
+              title="删除当前工作区"
+              onClick={deleteCurrentWorkspace}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
         </div>
 
         <button
@@ -821,16 +885,17 @@ export default function App() {
 
       {/* main */}
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <TopBar
+          title={viewTitle}
+          onBack={viewBack}
+          right={viewRight}
+          search={<TopSearch query={query} setQuery={setQuery} />}
+          themeVal={themeVal}
+          onSetTheme={setTheme}
+          onLock={() => vault.lock()}
+        />
         {page && !searchResults ? (
-          <>
-            <TopBar
-              title={PAGE_TITLES[page]}
-              onBack={() => setPage(null)}
-              themeVal={themeVal}
-              onSetTheme={setTheme}
-              onLock={() => vault.lock()}
-            />
-            <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col">
               {page === 'settings' && (
                 <Settings
                   data={data}
@@ -902,33 +967,12 @@ export default function App() {
               )}
               {page === 'cnb' && <CnbPage data={data} onSave={vault.save} onCopy={copy} />}
             </div>
-          </>
         ) : searchResults ? (
-          <>
-            <TopBar
-              title={`搜索结果（${searchResults.length}）`}
-              themeVal={themeVal}
-              onSetTheme={setTheme}
-              onLock={() => vault.lock()}
-            />
-            <div className="flex min-h-0 flex-1 flex-col">
-              <SearchView results={searchResults} onCopy={copy} onOpenLogin={openLogin} />
-            </div>
-          </>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <SearchView results={searchResults} onCopy={copy} onOpenLogin={openLogin} />
+          </div>
         ) : showHome ? (
-          <>
-            <TopBar
-              title="首页看板"
-              themeVal={themeVal}
-              onSetTheme={setTheme}
-              onLock={() => vault.lock()}
-              right={
-                <Button onClick={() => setEditing({ kind: 'project' })}>
-                  <Plus size={16} /> 新建项目
-                </Button>
-              }
-            />
-            <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col">
               <Home
                 data={activeData ?? data}
                 onUpdate={update}
@@ -940,25 +984,8 @@ export default function App() {
                 onOpenLogin={openLogin}
               />
             </div>
-          </>
         ) : selected ? (
-          <>
-            <TopBar
-              title={selected.name}
-              onBack={() => {
-                setSelectedId(null);
-                setShowHome(true);
-              }}
-              themeVal={themeVal}
-              onSetTheme={setTheme}
-              onLock={() => vault.lock()}
-              right={
-                <IconButton title="大屏只读展示" onClick={() => setBigScreenId(selected.id)}>
-                  <Monitor size={16} />
-                </IconButton>
-              }
-            />
-            <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col">
               <ProjectView
                 project={selected}
                 onBack={() => {
@@ -983,7 +1010,7 @@ export default function App() {
                 addDeleteTombstone(d, env.id, env.updatedAt);
               });
             }}
-            onAddLink={(envId) => setEditing({ kind: 'link', projectId: selected.id, envId })}
+            onAddLink={() => setEditing({ kind: 'link', projectId: selected.id, envId: '' })}
             onEditLink={(envId, link) =>
               setEditing({ kind: 'link', projectId: selected.id, envId, link })
             }
@@ -1024,22 +1051,8 @@ export default function App() {
                 onDeleteMemo={(id) => deleteMemo(selected.id, id)}
               />
             </div>
-          </>
         ) : (
-          <>
-            <TopBar
-              title="项目"
-              themeVal={themeVal}
-              onSetTheme={setTheme}
-              onLock={() => vault.lock()}
-              right={
-                <Button onClick={() => setEditing({ kind: 'project' })}>
-                  <Plus size={16} /> 新建项目
-                </Button>
-              }
-            />
-            <EmptyState onCreate={() => setEditing({ kind: 'project' })} />
-          </>
+          <EmptyState onCreate={() => setEditing({ kind: 'project' })} />
         )}
       </main>
 
@@ -1232,6 +1245,7 @@ function TopBar({
   title,
   onBack,
   right,
+  search,
   themeVal,
   onSetTheme,
   onLock,
@@ -1239,6 +1253,7 @@ function TopBar({
   title: string;
   onBack?: () => void;
   right?: React.ReactNode;
+  search?: React.ReactNode;
   themeVal: 'light' | 'dark';
   onSetTheme: (t: 'light' | 'dark') => void;
   onLock: () => void;
@@ -1255,7 +1270,7 @@ function TopBar({
         </button>
       )}
       <h1 className="shrink-0 truncate text-base font-bold">{title}</h1>
-      <div className="min-w-0 flex-1" />
+      <div className="flex min-w-0 flex-1 items-center justify-end">{search}</div>
       <button
         onClick={onLock}
         title="锁定保险箱"
@@ -1273,6 +1288,27 @@ function TopBar({
       />
       {right && <div className="flex shrink-0 items-center gap-1.5">{right}</div>}
     </header>
+  );
+}
+
+/** 顶栏右侧的全局搜索框（单实例、常驻，输入不切视图不丢焦点）。 */
+function TopSearch({ query, setQuery }: { query: string; setQuery: (v: string) => void }) {
+  return (
+    <div className="relative w-full max-w-[300px]">
+      <Search
+        size={14}
+        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+      />
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="全局搜索项目 / 环境 / 链接 / 账号"
+        className="h-9 w-full rounded-[9px] border border-gray-200 bg-gray-50 pl-8 pr-12 text-xs text-gray-700 outline-none placeholder:text-gray-400 focus:border-brand-500 focus:bg-surface"
+      />
+      <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-gray-200 px-1 font-mono text-[9.5px] text-gray-400">
+        ⌘K
+      </span>
+    </div>
   );
 }
 
@@ -1323,7 +1359,7 @@ interface ProjectViewProps {
   onAddEnv: () => void;
   onEditEnv: (env: Environment) => void;
   onDeleteEnv: (env: Environment) => void;
-  onAddLink: (envId: string) => void;
+  onAddLink: () => void;
   onEditLink: (envId: string, link: PlatformLink) => void;
   onDeleteLink: (envId: string, link: PlatformLink) => void;
   onAddAccount: (envId: string, linkId: string) => void;
@@ -1340,7 +1376,6 @@ interface ProjectViewProps {
 
 function ProjectView(props: ProjectViewProps) {
   const { project } = props;
-  const envCount = project.environments.length;
   const linkCount = project.environments.reduce((m, e) => m + e.links.length, 0);
   const acctCount = project.environments.reduce(
     (n, e) => n + e.links.reduce((m, l) => m + l.accounts.length, 0),
@@ -1349,7 +1384,30 @@ function ProjectView(props: ProjectViewProps) {
   const linkRows = project.environments.flatMap((env) =>
     env.links.map((link) => ({ env, link })),
   );
-  const firstEnv = project.environments[0];
+  // 环境 = 链接上的彩色标签(kind+name)：从链接聚合出去重标签，供顶部筛选。
+  const TAGSEP = ' ';
+  const tagKeyOf = (env: Environment, link: PlatformLink) =>
+    (link.envKind ?? env.kind) + TAGSEP + (link.envName ?? env.name);
+  const tags = (() => {
+    const seen = new Map<
+      string,
+      { key: string; kind: Environment['kind']; name: string; count: number }
+    >();
+    for (const { env, link } of linkRows) {
+      const kind = link.envKind ?? env.kind;
+      const name = link.envName ?? env.name;
+      const key = kind + TAGSEP + name;
+      const cur = seen.get(key);
+      if (cur) cur.count++;
+      else seen.set(key, { key, kind, name, count: 1 });
+    }
+    return [...seen.values()];
+  })();
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const activeFilter = tagFilter && tags.some((t) => t.key === tagFilter) ? tagFilter : null;
+  const shownRows = activeFilter
+    ? linkRows.filter(({ env, link }) => tagKeyOf(env, link) === activeFilter)
+    : linkRows;
   return (
     <div className="flex min-h-0 flex-1">
       {/* 主区：环境 / 链接 / 账号（独立滚动，宽度随右栏拖拽而变） */}
@@ -1381,7 +1439,7 @@ function ProjectView(props: ProjectViewProps) {
               </button>
             </div>
             <div className="mt-0.5 text-xs text-gray-400">
-              {envCount} 环境 · {linkCount} 链接 · {acctCount} 账号
+              {tags.length} 标签 · {linkCount} 链接 · {acctCount} 账号
             </div>
           </div>
           {(project.tags ?? []).map((t) => (
@@ -1410,73 +1468,63 @@ function ProjectView(props: ProjectViewProps) {
         <div className="mb-3 flex items-center">
           <div className="text-[13px] font-bold">链接与账号</div>
           <div className="flex-1" />
-          {firstEnv ? (
-            <Button variant="outline" onClick={() => props.onAddLink(firstEnv.id)}>
-              <Plus size={14} /> 添加链接
-            </Button>
-          ) : (
-            <Button variant="outline" onClick={props.onAddEnv}>
-              <Plus size={14} /> 添加环境标签
-            </Button>
-          )}
-        </div>
-        <div className="overflow-hidden rounded-[14px] border border-gray-200 bg-surface">
-          {linkRows.length === 0 && (
-            <p className="py-10 text-center text-sm text-gray-400">
-              还没有链接，先添加一个环境标签再保存链接
-            </p>
-          )}
-          {linkRows.map(({ env, link }) => (
-            <LinkBlock key={link.id} env={env} link={link} {...props} />
-          ))}
-          {firstEnv && (
-            <div className="border-t border-gray-100 p-3">
-              <button
-                onClick={() => props.onAddLink(firstEnv.id)}
-                className="flex h-[30px] items-center gap-1.5 rounded-lg border border-dashed border-gray-300 px-3 text-[11.5px] font-semibold text-gray-500 hover:border-brand-400 hover:text-brand-600"
-              >
-                <Plus size={12} /> 添加链接 / 平台
-              </button>
-            </div>
-          )}
+          <Button variant="outline" onClick={() => props.onAddLink()}>
+            <Plus size={14} /> 添加链接
+          </Button>
         </div>
 
-        <div className="mt-5">
-          <div className="mb-2 flex items-center">
-            <div className="text-[13px] font-bold">环境标签</div>
-            <div className="flex-1" />
-            <Button variant="outline" onClick={props.onAddEnv}>
-              <Plus size={14} /> 添加标签
-            </Button>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {project.environments.map((env) => (
-              <div
-                key={env.id}
-                className="flex items-center gap-2 rounded-lg border border-gray-200 bg-surface px-2.5 py-1.5"
+        {/* 按环境标签筛选 */}
+        {tags.length > 0 && (
+          <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setTagFilter(null)}
+              className={cx(
+                'rounded-full px-3 py-1 text-[11px] font-bold',
+                !activeFilter
+                  ? 'bg-gray-800 text-white'
+                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200',
+              )}
+            >
+              全部 {linkRows.length}
+            </button>
+            {tags.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setTagFilter(activeFilter === t.key ? null : t.key)}
+                className={cx(
+                  'rounded-full px-3 py-1 text-[11px] font-bold',
+                  ENV_KIND_COLORS[t.kind],
+                  activeFilter === t.key
+                    ? 'ring-2 ring-brand-400 ring-offset-1'
+                    : 'opacity-70 hover:opacity-100',
+                )}
               >
-                <span
-                  className={cx(
-                    'rounded-full px-2 py-0.5 text-[10.5px] font-bold',
-                    ENV_KIND_COLORS[env.kind],
-                  )}
-                >
-                  {ENV_KIND_LABELS[env.kind]}
-                </span>
-                <span className="max-w-[160px] truncate text-xs font-semibold text-gray-700">
-                  {env.name}
-                </span>
-                <span className="text-[10.5px] text-gray-400">
-                  {env.links.length} 链接
-                </span>
-                <IconButton title="编辑标签" onClick={() => props.onEditEnv(env)}>
-                  <Pencil size={13} />
-                </IconButton>
-                <IconButton title="删除标签" onClick={() => props.onDeleteEnv(env)} danger>
-                  <Trash2 size={13} />
-                </IconButton>
-              </div>
+                {t.name} {t.count}
+              </button>
             ))}
+          </div>
+        )}
+
+        <div className="overflow-hidden rounded-[14px] border border-gray-200 bg-surface">
+          {shownRows.length === 0 && (
+            <p className="py-10 text-center text-sm text-gray-400">
+              {linkRows.length === 0
+                ? '还没有链接，点「添加链接 / 平台」新增，保存时选一个环境标签即可'
+                : '该标签下暂无链接'}
+            </p>
+          )}
+          {shownRows.map(({ env, link }) => (
+            <LinkBlock key={link.id} env={env} link={link} {...props} />
+          ))}
+          <div className="border-t border-gray-100 p-3">
+            <button
+              onClick={() => props.onAddLink()}
+              className="flex h-[30px] items-center gap-1.5 rounded-lg border border-dashed border-gray-300 px-3 text-[11.5px] font-semibold text-gray-500 hover:border-brand-400 hover:text-brand-600"
+            >
+              <Plus size={12} /> 添加链接 / 平台
+            </button>
           </div>
         </div>
       </div>
@@ -1510,7 +1558,7 @@ function LinkBlock({
     props.onOpenLogin(link.url, acc0.username, acc0.password);
   };
   return (
-    <div className="border-t border-gray-100 py-3.5">
+    <div className="border-t border-gray-100 px-4 py-3.5">
       <div className="mb-3 flex items-center gap-2.5">
         <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-500">
           <LinkIcon size={15} />

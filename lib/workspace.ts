@@ -101,7 +101,9 @@ export function ensureVaultWorkspaces(data: VaultData, timestamp = Date.now()): 
     }
   }
 
-  if (!activeWorkspaceUnsafe(data)) {
+  // activeWorkspaceId 必须精确指向某个现存工作区；悬空则归位到第一个（activeWorkspaceUnsafe
+  // 的 fallback 只在读取时兜底，不会修正悬空 id，会掩盖问题）。
+  if (!data.workspaces.some((w) => w.id === data.activeWorkspaceId)) {
     data.activeWorkspaceId = data.workspaces[0]!.id;
     changed = true;
   }
@@ -119,17 +121,22 @@ export function prepareWorkspaceDraft(data: VaultData, timestamp = Date.now()): 
 export function commitWorkspaceDraft(data: VaultData, timestamp = Date.now()): boolean {
   const rootProjects = data.projects;
   const rootDashboard = data.settings.dashboard;
+  // 关键安全点：只把根 projects/dashboard 写回「activeWorkspaceId 精确对应」的工作区。
+  // 若 active 指向一个不在列表里的工作区（竞态 / 中间态），绝不能用 activeWorkspaceUnsafe 的
+  // fallback（workspaces[0]）来接收根字段——那会用别的工作区的（往往是空的）根覆盖并清空它的
+  // 项目（就是"新建工作区切走后默认工作区项目全没了"这个数据丢失 bug 的根因）。此时跳过提交，
+  // 交给 ensureVaultWorkspaces 把 active 归位、再镜像出正确的根。
+  const target = (data.workspaces ?? []).find((w) => w.id === data.activeWorkspaceId);
   let changed = ensureVaultWorkspaces(data, timestamp);
-  const ws = activeWorkspaceUnsafe(data);
-  if (!ws) return changed;
-  if (ws.projects !== rootProjects) {
-    ws.projects = rootProjects;
-    ws.updatedAt = Math.max(ws.updatedAt ?? 0, timestamp);
+  if (!target) return mirrorActiveToLegacy(data) || changed;
+  if (target.projects !== rootProjects) {
+    target.projects = rootProjects;
+    target.updatedAt = Math.max(target.updatedAt ?? 0, timestamp);
     changed = true;
   }
-  if (ws.dashboard !== rootDashboard) {
-    ws.dashboard = rootDashboard;
-    ws.updatedAt = Math.max(ws.updatedAt ?? 0, timestamp);
+  if (target.dashboard !== rootDashboard) {
+    target.dashboard = rootDashboard;
+    target.updatedAt = Math.max(target.updatedAt ?? 0, timestamp);
     changed = true;
   }
   return mirrorActiveToLegacy(data) || changed;
@@ -161,7 +168,9 @@ export function workspaceScopedData(data: VaultData): VaultData {
 }
 
 export function switchActiveWorkspace(data: VaultData, workspaceId: string, timestamp = Date.now()): boolean {
-  let changed = commitWorkspaceDraft(data, timestamp);
+  // 不用 commitWorkspaceDraft：切换工作区不涉及对 root 的编辑；若把（可能是中间态/别的工作区的）
+  // root 写回当前工作区，会清空它的项目（数据丢失 bug 根因）。只需确保结构存在即可。
+  let changed = ensureVaultWorkspaces(data, timestamp);
   const ws = (data.workspaces ?? []).find((w) => w.id === workspaceId);
   if (!ws) return changed;
   if (data.activeWorkspaceId !== ws.id) {
@@ -172,12 +181,28 @@ export function switchActiveWorkspace(data: VaultData, workspaceId: string, time
 }
 
 export function createWorkspace(data: VaultData, name: string, timestamp = Date.now()): Workspace {
-  commitWorkspaceDraft(data, timestamp);
+  // 同上：不 commit（会用中间态 root 覆盖当前工作区、清空其项目），只确保结构存在。
+  ensureVaultWorkspaces(data, timestamp);
   const ws = makeWorkspace(name, [], undefined, timestamp);
   data.workspaces = [...(data.workspaces ?? []), ws];
   data.activeWorkspaceId = ws.id;
   mirrorActiveToLegacy(data);
   return ws;
+}
+
+/** 删除一个工作区（及其下所有项目）。至少保留一个；删掉当前工作区则切到第一个。 */
+export function deleteWorkspace(data: VaultData, workspaceId: string, timestamp = Date.now()): boolean {
+  const workspaces = data.workspaces ?? [];
+  if (workspaces.length <= 1) return false;
+  const idx = workspaces.findIndex((w) => w.id === workspaceId);
+  if (idx < 0) return false;
+  workspaces.splice(idx, 1);
+  data.workspaces = workspaces;
+  if (data.activeWorkspaceId === workspaceId) {
+    data.activeWorkspaceId = workspaces[0]!.id;
+  }
+  mirrorActiveToLegacy(data);
+  return ensureVaultWorkspaces(data, timestamp) || true;
 }
 
 export function renameWorkspace(data: VaultData, workspaceId: string, name: string, timestamp = Date.now()): boolean {

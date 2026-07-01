@@ -535,6 +535,9 @@ export interface CaptureSaveTarget {
 export interface CaptureProjectTarget {
   projectId: string;
   projectName: string;
+  /** 该项目所属工作区（用于捕获浮层按工作区筛选项目） */
+  workspaceId?: string;
+  workspaceName?: string;
 }
 
 export interface CapturePending {
@@ -559,8 +562,11 @@ export interface CapturePending {
   updateCandidates?: CaptureUpdateCandidate[];
   /** 可直接保存到的已有链接候选 */
   saveTargets?: CaptureSaveTarget[];
-  /** 可选择保存并自动新建网站链接的项目候选 */
+  /** 可选择保存并自动新建网站链接的项目候选（含所有工作区，按 workspaceId 区分） */
   projectTargets?: CaptureProjectTarget[];
+  /** 供捕获浮层选择"保存到哪个工作区"；默认当前激活工作区 */
+  workspaces?: { id: string; name: string }[];
+  activeWorkspaceId?: string;
   /** UI 草稿：账号显示名 */
   accountLabel?: string;
   /** UI 草稿：保存到已有链接 */
