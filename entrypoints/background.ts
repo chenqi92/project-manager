@@ -50,6 +50,7 @@ import {
   newProject,
   normalizeVaultData,
 } from '@/lib/vault-ops';
+import { commitWorkspaceDraft, workspaceScopedData } from '@/lib/workspace';
 import {
   createEncryptedVault,
   decryptVaultData,
@@ -137,7 +138,8 @@ export default defineBackground(() => {
       suggest([{ content: '__locked__', description: '🔒 先解锁保险箱后再搜索' }]);
       return;
     }
-    const hits = search(cachedData, text).slice(0, 8);
+    const activeData = workspaceScopedData(cachedData);
+    const hits = search(activeData, text).slice(0, 8);
     suggest(
       hits.map((h) => ({
         content: `acc:${h.accountId}`,
@@ -153,9 +155,10 @@ export default defineBackground(() => {
       browser.action.openPopup?.().catch(() => {});
       return;
     }
+    const activeData = workspaceScopedData(cachedData);
     const entry = text.startsWith('acc:')
-      ? flatten(cachedData).find((e) => e.accountId === text.slice(4))
-      : search(cachedData, text)[0];
+      ? flatten(activeData).find((e) => e.accountId === text.slice(4))
+      : search(activeData, text)[0];
     if (!entry?.url) return;
     await openAndFill(
       entry.url,
@@ -230,7 +233,7 @@ async function fillActiveTab(): Promise<void> {
   }
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !tab.url) return;
-  const matches = matchForUrl(cachedData, tab.url);
+  const matches = matchForUrl(workspaceScopedData(cachedData), tab.url);
   if (matches.length === 1) {
     const m = matches[0]!;
     await injectCredentialFill(
@@ -336,9 +339,23 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
     case 'vault:export': {
       const data = await requireData();
       // 可选导出范围：只导出选中的项目（projectIds 为空/缺省时导出全部）。
+      const activeData = workspaceScopedData(data);
+      const activeWorkspace = (data.workspaces ?? []).find((w) => w.id === data.activeWorkspaceId);
       const scoped =
         msg.projectIds && msg.projectIds.length
-          ? { ...data, projects: data.projects.filter((p) => msg.projectIds!.includes(p.id)) }
+          ? {
+              ...data,
+              projects: activeData.projects.filter((p) => msg.projectIds!.includes(p.id)),
+              settings: { ...data.settings, dashboard: activeWorkspace?.dashboard },
+              workspaces: activeWorkspace
+                ? [
+                    {
+                      ...activeWorkspace,
+                      projects: activeData.projects.filter((p) => msg.projectIds!.includes(p.id)),
+                    },
+                  ]
+                : undefined,
+            }
           : data;
       return buildExport(scoped, msg.mode, msg.password);
     }
@@ -691,7 +708,7 @@ async function assistMatches(sender?: MsgSender): Promise<AssistSnapshot> {
     return { locked: true, enabled: false, origin, autoSubmit: false, theme: 'system', matches: [] };
   }
   const pageUrl = senderPageUrl(sender);
-  const matches = enabled && pageUrl ? matchForUrl(cachedData, pageUrl).map(toAssistEntry) : [];
+  const matches = enabled && pageUrl ? matchForUrl(workspaceScopedData(cachedData), pageUrl).map(toAssistEntry) : [];
   return {
     locked: false,
     enabled,
@@ -708,7 +725,7 @@ async function findAssistEntry(sender: MsgSender | undefined, accountId: string)
   const data = await requireData();
   const pageUrl = senderPageUrl(sender);
   if (!pageUrl) throw new Error('无法确认当前网页来源');
-  const entry = matchForUrl(data, pageUrl).find((e) => e.accountId === accountId);
+  const entry = matchForUrl(workspaceScopedData(data), pageUrl).find((e) => e.accountId === accountId);
   if (!entry) throw new Error('该账号与当前网页来源不匹配，已阻止填充');
   const tabId = sender?.tab?.id;
   if (tabId === undefined) throw new Error('无法定位当前标签页');
@@ -768,10 +785,11 @@ async function refreshCaptureRegistration(): Promise<void> {
 async function registerCaptureForData(data: VaultData | null): Promise<void> {
   try {
     if (!data) return;
+    const activeData = workspaceScopedData(data);
     await unregisterAssistScripts();
     const perms = await browser.permissions.getAll();
     const granted = perms.origins ?? [];
-    const knownOrigins = captureMatchPatterns(data).filter((pattern) =>
+    const knownOrigins = captureMatchPatterns(activeData).filter((pattern) =>
       hasOriginPermission(pattern, granted),
     );
     const assistEnabled =
@@ -899,7 +917,8 @@ async function handleCaptureSuccessCheck(
 
 function captureAllowedForOrigin(data: VaultData, origin: string): boolean {
   if (data.settings.webAssistAllSites === true) return true;
-  for (const proj of data.projects)
+  const activeData = workspaceScopedData(data);
+  for (const proj of activeData.projects)
     for (const env of proj.environments)
       for (const link of env.links)
         if (linkUrls(link).some((u) => getOrigin(u) === origin)) return true;
@@ -908,7 +927,8 @@ function captureAllowedForOrigin(data: VaultData, origin: string): boolean {
 
 function captureSaveTargets(data: VaultData, origin: string): CaptureSaveTarget[] {
   const out: CaptureSaveTarget[] = [];
-  for (const proj of data.projects)
+  const activeData = workspaceScopedData(data);
+  for (const proj of activeData.projects)
     for (const env of proj.environments)
       for (const link of env.links)
         if (linkUrls(link).some((u) => getOrigin(u) === origin)) {
@@ -925,7 +945,7 @@ function captureSaveTargets(data: VaultData, origin: string): CaptureSaveTarget[
 }
 
 function captureProjectTargets(data: VaultData): NonNullable<CapturePending['projectTargets']> {
-  return data.projects.map((proj) => ({ projectId: proj.id, projectName: proj.name }));
+  return workspaceScopedData(data).projects.map((proj) => ({ projectId: proj.id, projectName: proj.name }));
 }
 
 function cleanAuthProvider(provider?: string): string | undefined {
@@ -1093,7 +1113,8 @@ async function handleCaptureLogin(
   const saveTargets = captureSaveTargets(cachedData, origin);
   const projectTargets = captureProjectTargets(cachedData);
   const cleanPageTitle = cleanCaptureTitle(pageTitle);
-  for (const proj of cachedData.projects) {
+  const activeData = workspaceScopedData(cachedData);
+  for (const proj of activeData.projects) {
     for (const env of proj.environments) {
       for (const link of env.links) {
         if (!linkUrls(link).some((u) => getOrigin(u) === origin)) continue;
@@ -1274,7 +1295,12 @@ async function applyCapture(
         targetProject.environments.push(targetEnv);
       }
 
-      target = newLink({ name: captureLinkName(p), url: p.url || p.origin });
+      target = newLink({
+        name: captureLinkName(p),
+        envKind: targetEnv.kind,
+        envName: targetEnv.name,
+        url: p.url || p.origin,
+      });
       targetEnv.links.push(target);
     }
 
@@ -1512,6 +1538,7 @@ async function setUnlocked(d: Uint8Array, data: VaultData): Promise<void> {
 async function persistData(data: VaultData): Promise<void> {
   const enc = await vaultBackend.load();
   if (!enc) throw new Error('保险箱不存在');
+  commitWorkspaceDraft(data);
   normalizeVaultData(data);
   stampSettingsIfChanged(data);
   await vaultBackend.save(await reencryptData(enc, data, dek!));

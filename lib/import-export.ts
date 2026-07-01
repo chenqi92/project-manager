@@ -21,6 +21,7 @@ import {
   newProject,
   uid,
 } from './vault-ops';
+import { ensureVaultWorkspaces } from './workspace';
 import { parseMigrationUri } from './otp-migration';
 import type {
   Account,
@@ -35,6 +36,7 @@ import type {
   PlatformLink,
   Project,
   VaultData,
+  Workspace,
 } from './types';
 
 const BACKUP_TAG = 'project-env-manager';
@@ -112,8 +114,12 @@ export async function parseImport(
     case 'json': {
       const obj = JSON.parse(content) as { data?: VaultData } | VaultData;
       const data = (obj as { data?: VaultData }).data ?? (obj as VaultData);
-      if (!data || !Array.isArray((data as VaultData).projects)) {
-        throw new Error('JSON 格式不正确：缺少 projects 字段');
+      if (
+        !data ||
+        (!Array.isArray((data as VaultData).projects) &&
+          !Array.isArray((data as VaultData).workspaces))
+      ) {
+        throw new Error('JSON 格式不正确：缺少 projects 或 workspaces 字段');
       }
       return normalize(data as VaultData);
     }
@@ -148,59 +154,34 @@ export function mergeVaults(
       settings: incoming.settings ?? base.settings,
       tombstones: incoming.tombstones ?? [],
     };
+    ensureVaultWorkspaces(data);
     return { data, imported: countAccounts(incoming) };
   }
 
   const data = structuredClone(base);
-  const ids: ImportIdMap = { projects: new Map(), docs: new Map() };
+  const incomingData = structuredClone(incoming);
+  ensureVaultWorkspaces(data);
+  ensureVaultWorkspaces(incomingData);
   let imported = 0;
-  const lc = (s: string) => s.trim().toLowerCase();
+  const dataWorkspaces = data.workspaces ?? [];
 
-  for (const inProj of incoming.projects) {
-    let proj = data.projects.find((p) => lc(p.name) === lc(inProj.name));
-    if (!proj) {
-      proj = reidProject(inProj, ids);
-      data.projects.push(proj);
-      imported += countAccountsInProject(inProj);
+  for (const inWs of incomingData.workspaces ?? []) {
+    const ids: ImportIdMap = { projects: new Map(), docs: new Map() };
+    let ws = dataWorkspaces.find((w) => w.id === inWs.id) ?? dataWorkspaces.find((w) => sameName(w.name, inWs.name));
+    if (!ws) {
+      ws = reidWorkspace(inWs, ids);
+      dataWorkspaces.push(ws);
+      imported += countAccountsInProjects(inWs.projects);
       continue;
     }
-    ids.projects.set(inProj.id, proj.id);
-    mergeProjectExtras(proj, inProj, ids);
-    for (const inEnv of inProj.environments) {
-      let env = proj.environments.find(
-        (e) => e.kind === inEnv.kind && lc(e.name) === lc(inEnv.name),
-      );
-      if (!env) {
-        env = reidEnv(inEnv);
-        proj.environments.push(env);
-        imported += inEnv.links.reduce((n, l) => n + l.accounts.length, 0);
-        continue;
-      }
-      for (const inLink of inEnv.links) {
-        let link = env.links.find(
-          (l) => lc(l.name) === lc(inLink.name) && lc(l.url) === lc(inLink.url),
-        );
-        if (!link) {
-          link = reidLink(inLink);
-          env.links.push(link);
-          imported += inLink.accounts.length;
-          continue;
-        }
-        for (const inAcc of inLink.accounts) {
-          const dup = link.accounts.some(
-            (a) =>
-              lc(a.username) === lc(inAcc.username) &&
-              lc(a.label) === lc(inAcc.label),
-          );
-          if (!dup) {
-            link.accounts.push({ ...inAcc, id: uid() });
-            imported += 1;
-          }
-        }
-      }
-    }
+    imported += mergeProjectsInto(ws.projects, inWs.projects, ids);
+    if (inWs.dashboard) ws.dashboard = remapDashboard(inWs.dashboard, ids);
+    ws.updatedAt = Math.max(ws.updatedAt ?? 0, inWs.updatedAt ?? Date.now());
   }
-  mergeDashboardSettings(data, incoming, ids);
+
+  data.workspaces = dataWorkspaces;
+  mergeDashboardRelatedSettings(data, incomingData);
+  ensureVaultWorkspaces(data);
   return { data, imported };
 }
 
@@ -435,6 +416,7 @@ class VaultBuilder {
   }
 
   build(): VaultData {
+    ensureVaultWorkspaces(this.data);
     return this.data;
   }
 
@@ -465,7 +447,12 @@ class VaultBuilder {
   private upsertLink(env: Environment, name: string, url: string): PlatformLink {
     let l = env.links.find((x) => x.name === name && x.url === url);
     if (!l) {
-      l = newLink({ name: name.trim() || '链接', url });
+      l = newLink({
+        name: name.trim() || '链接',
+        envKind: env.kind,
+        envName: env.name,
+        url,
+      });
       env.links.push(l);
     }
     return l;
@@ -589,7 +576,22 @@ function normalize(data: VaultData): VaultData {
   out.settings = data.settings ?? out.settings;
   out.tombstones = data.tombstones ?? out.tombstones;
   out.projects = (data.projects ?? []).map(normalizeProject);
+  out.workspaces = (data.workspaces ?? []).map(normalizeWorkspace);
+  out.activeWorkspaceId = data.activeWorkspaceId;
+  ensureVaultWorkspaces(out);
   return out;
+}
+
+function normalizeWorkspace(ws: Workspace): Workspace {
+  const t = Date.now();
+  return {
+    id: ws.id || uid(),
+    name: ws.name ?? '默认工作区',
+    projects: (ws.projects ?? []).map(normalizeProject),
+    dashboard: ws.dashboard,
+    createdAt: ws.createdAt ?? t,
+    updatedAt: ws.updatedAt ?? t,
+  };
 }
 
 function normalizeProject(p: Project): Project {
@@ -654,6 +656,59 @@ interface ImportIdMap {
   docs: Map<string, string>;
 }
 
+function sameName(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+function mergeProjectsInto(targetProjects: Project[], incomingProjects: Project[], ids: ImportIdMap): number {
+  let imported = 0;
+
+  for (const inProj of incomingProjects) {
+    let proj = targetProjects.find((p) => sameName(p.name, inProj.name));
+    if (!proj) {
+      proj = reidProject(inProj, ids);
+      targetProjects.push(proj);
+      imported += countAccountsInProject(inProj);
+      continue;
+    }
+    ids.projects.set(inProj.id, proj.id);
+    mergeProjectExtras(proj, inProj, ids);
+    for (const inEnv of inProj.environments) {
+      let env = proj.environments.find(
+        (e) => e.kind === inEnv.kind && sameName(e.name, inEnv.name),
+      );
+      if (!env) {
+        env = reidEnv(inEnv);
+        proj.environments.push(env);
+        imported += inEnv.links.reduce((n, l) => n + l.accounts.length, 0);
+        continue;
+      }
+      for (const inLink of inEnv.links) {
+        let link = env.links.find(
+          (l) => sameName(l.name, inLink.name) && sameName(l.url, inLink.url),
+        );
+        if (!link) {
+          link = reidLink(inLink);
+          env.links.push(link);
+          imported += inLink.accounts.length;
+          continue;
+        }
+        for (const inAcc of inLink.accounts) {
+          const dup = link.accounts.some(
+            (a) => sameName(a.username, inAcc.username) && sameName(a.label, inAcc.label),
+          );
+          if (!dup) {
+            link.accounts.push({ ...inAcc, id: uid() });
+            imported += 1;
+          }
+        }
+      }
+    }
+  }
+
+  return imported;
+}
+
 function mergeProjectExtras(target: Project, source: Project, ids: ImportIdMap): void {
   if (source.docs?.length) {
     const docs = target.docs ?? (target.docs = []);
@@ -682,20 +737,21 @@ function mergeProjectExtras(target: Project, source: Project, ids: ImportIdMap):
   }
 }
 
-function mergeDashboardSettings(data: VaultData, incoming: VaultData, ids: ImportIdMap): void {
-  const dashboard = incoming.settings?.dashboard;
-  if (!dashboard) return;
-
-  const nextDashboard = remapDashboard(dashboard, ids);
-  data.settings = {
-    ...data.settings,
-    dashboard: nextDashboard,
-  };
-
-  if (dashboardHasWidget(nextDashboard, 'weather') && 'weatherEnabled' in incoming.settings) {
+function mergeDashboardRelatedSettings(data: VaultData, incoming: VaultData): void {
+  const dashboards = (incoming.workspaces ?? [])
+    .map((ws) => ws.dashboard)
+    .filter((dashboard): dashboard is DashboardConfig => Boolean(dashboard));
+  if (incoming.settings?.dashboard) dashboards.push(incoming.settings.dashboard);
+  if (
+    dashboards.some((dashboard) => dashboardHasWidget(dashboard, 'weather')) &&
+    'weatherEnabled' in incoming.settings
+  ) {
     data.settings.weatherEnabled = incoming.settings.weatherEnabled;
   }
-  if (dashboardHasWidget(nextDashboard, 'cnb') && incoming.settings.cnb !== undefined) {
+  if (
+    dashboards.some((dashboard) => dashboardHasWidget(dashboard, 'cnb')) &&
+    incoming.settings.cnb !== undefined
+  ) {
     data.settings.cnb = structuredClone(incoming.settings.cnb);
   }
 }
@@ -740,6 +796,16 @@ function reidProject(p: Project, ids: ImportIdMap): Project {
   for (const doc of next.docs ?? []) ids.docs.set(doc.id, doc.id);
   return next;
 }
+function reidWorkspace(ws: Workspace, ids: ImportIdMap): Workspace {
+  return {
+    ...ws,
+    id: uid(),
+    projects: ws.projects.map((p) => reidProject(p, ids)),
+    dashboard: ws.dashboard ? remapDashboard(ws.dashboard, ids) : undefined,
+    createdAt: ws.createdAt ?? Date.now(),
+    updatedAt: ws.updatedAt ?? Date.now(),
+  };
+}
 function reidEnv(e: Environment): Environment {
   return { ...e, id: uid(), links: e.links.map(reidLink) };
 }
@@ -748,7 +814,13 @@ function reidLink(l: PlatformLink): PlatformLink {
 }
 
 function countAccounts(d: VaultData): number {
-  return d.projects.reduce((n, p) => n + countAccountsInProject(p), 0);
+  if (d.workspaces?.length) {
+    return d.workspaces.reduce((n, ws) => n + countAccountsInProjects(ws.projects), 0);
+  }
+  return countAccountsInProjects(d.projects);
+}
+function countAccountsInProjects(projects: Project[]): number {
+  return projects.reduce((n, p) => n + countAccountsInProject(p), 0);
 }
 function countAccountsInProject(p: Project): number {
   return p.environments.reduce(

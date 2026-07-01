@@ -11,6 +11,7 @@ import type {
   ProjectDoc,
   VaultData,
 } from './types';
+import { ensureVaultWorkspaces } from './workspace';
 
 export function uid(): string {
   return crypto.randomUUID();
@@ -39,6 +40,8 @@ export function newLink(p: Partial<PlatformLink> = {}): PlatformLink {
   return {
     id: uid(),
     name: p.name ?? '',
+    envKind: p.envKind,
+    envName: p.envName,
     url: p.url ?? '',
     urls: p.urls,
     gitRepos: p.gitRepos,
@@ -224,8 +227,26 @@ function upsertTombstone(data: VaultData, id: string, deletedAt: number): void {
  */
 export function normalizeVaultData(data: VaultData, timestamp: number = now()): boolean {
   let changed = false;
+  changed = ensureVaultWorkspaces(data, timestamp) || changed;
 
-  for (const project of data.projects) {
+  const seenProjectArrays = new Set<Project[]>();
+  for (const ws of data.workspaces ?? []) {
+    if (seenProjectArrays.has(ws.projects)) continue;
+    seenProjectArrays.add(ws.projects);
+    changed = normalizeProjects(ws.projects, data, timestamp) || changed;
+  }
+  if (!seenProjectArrays.has(data.projects)) {
+    changed = normalizeProjects(data.projects, data, timestamp) || changed;
+  }
+  changed = ensureVaultWorkspaces(data, timestamp) || changed;
+
+  return changed;
+}
+
+function normalizeProjects(projects: Project[], data: VaultData, timestamp: number): boolean {
+  let changed = false;
+
+  for (const project of projects) {
     const kept: Environment[] = [];
     const byKey = new Map<string, Environment>();
 
@@ -235,6 +256,17 @@ export function normalizeVaultData(data: VaultData, timestamp: number = now()): 
         env.name = name;
         env.updatedAt = Math.max(env.updatedAt, timestamp);
         changed = true;
+      }
+
+      for (const link of env.links) {
+        const linkEnvName = normalizeEnvName(link.envName || env.name);
+        const linkEnvKind = link.envKind || env.kind;
+        if (link.envName !== linkEnvName || link.envKind !== linkEnvKind) {
+          link.envName = linkEnvName;
+          link.envKind = linkEnvKind;
+          link.updatedAt = Math.max(link.updatedAt, timestamp);
+          changed = true;
+        }
       }
 
       const key = envKey(env);

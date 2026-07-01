@@ -342,6 +342,8 @@ export function LinkEditor({
   onClose: () => void;
   onSave: (v: {
     name: string;
+    envKind?: EnvKind;
+    envName?: string;
     url: string;
     note?: string;
     urls?: string[];
@@ -349,17 +351,22 @@ export function LinkEditor({
     customFields?: CustomField[];
   }, location?: { projectId: string; envId: string }) => void;
 }) {
-  const [name, setName] = useState(initial?.name ?? '');
-  const [url, setUrl] = useState(initial?.url ?? '');
-  const [extraUrls, setExtraUrls] = useState((initial?.urls ?? []).join('\n'));
-  const [note, setNote] = useState(initial?.note ?? '');
-  const [repos, setRepos] = useState<GitRepo[]>(initial?.gitRepos ?? []);
-  const [customFields, setCustomFields] = useState<CustomField[]>(initial?.customFields ?? []);
   const [projectId, setProjectId] = useState(location?.projectId ?? '');
   const [envId, setEnvId] = useState(location?.envId ?? '');
   const selectedProject = location?.projects.find((p) => p.id === projectId);
   const envs = selectedProject?.environments ?? [];
   const selectedEnvId = envs.some((env) => env.id === envId) ? envId : '';
+  const sourceEnv = location?.projects
+    .find((p) => p.id === (location.projectId ?? ''))
+    ?.environments.find((env) => env.id === (location.envId ?? ''));
+  const [name, setName] = useState(initial?.name ?? '');
+  const [envKind, setEnvKind] = useState<EnvKind>(initial?.envKind ?? sourceEnv?.kind ?? 'other');
+  const [envName, setEnvName] = useState(initial?.envName ?? sourceEnv?.name ?? '默认');
+  const [url, setUrl] = useState(initial?.url ?? '');
+  const [extraUrls, setExtraUrls] = useState((initial?.urls ?? []).join('\n'));
+  const [note, setNote] = useState(initial?.note ?? '');
+  const [repos, setRepos] = useState<GitRepo[]>(initial?.gitRepos ?? []);
+  const [customFields, setCustomFields] = useState<CustomField[]>(initial?.customFields ?? []);
   const changeProject = (nextProjectId: string) => {
     setProjectId(nextProjectId);
     const nextProject = location?.projects.find((p) => p.id === nextProjectId);
@@ -405,6 +412,22 @@ export function LinkEditor({
           <Label>名称</Label>
           <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：管理后台" />
         </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>环境标签</Label>
+            <Select value={envKind} onChange={(e) => setEnvKind(e.target.value as EnvKind)}>
+              {(Object.keys(ENV_KIND_LABELS) as EnvKind[]).map((k) => (
+                <option key={k} value={k}>
+                  {ENV_KIND_LABELS[k]}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label>标签名称</Label>
+            <Input value={envName} onChange={(e) => setEnvName(e.target.value)} placeholder="默认 / 华东 / 客户现场" />
+          </div>
+        </div>
         <div>
           <Label>主网址</Label>
           <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://admin.example.com" />
@@ -448,6 +471,8 @@ export function LinkEditor({
               .filter(Boolean);
             onSave({
               name: name.trim(),
+              envKind,
+              envName: envName.trim() || '默认',
               url: url.trim(),
               note: note.trim() || undefined,
               urls: urls.length ? urls : undefined,

@@ -4,6 +4,7 @@ import { api } from '@/lib/messaging';
 import { VAULT_KEY } from '@/lib/storage';
 import { VAULT_LOCKED_MSG, type VaultData, type VaultStatus } from '@/lib/types';
 import { normalizeVaultData } from '@/lib/vault-ops';
+import { commitWorkspaceDraft } from '@/lib/workspace';
 
 export interface VaultController {
   status: VaultStatus | null;
@@ -97,6 +98,7 @@ export function useVault(): VaultController {
 
   const save = useCallback(async (next: VaultData) => {
     const prepared = structuredClone(next);
+    commitWorkspaceDraft(prepared);
     normalizeVaultData(prepared);
     const op = saveChain.current.catch(() => {}).then(() => api.save(prepared));
     saveChain.current = op.catch(() => {});

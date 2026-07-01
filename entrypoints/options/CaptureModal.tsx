@@ -86,7 +86,12 @@ export function CaptureModal({
           env = newEnvironment({ name: newEnvName.trim() || '默认', kind: envKind });
           proj.environments.push(env);
         }
-        const link = newLink({ name: linkName.trim() || defaultLinkName('', url), url: url.trim() });
+        const link = newLink({
+          name: linkName.trim() || defaultLinkName('', url),
+          envKind: env.kind,
+          envName: env.name,
+          url: url.trim(),
+        });
         if (withAccount && (username.trim() || label.trim() || password || totp.trim())) {
           link.accounts.push(
             newAccount({ label: label.trim(), username: username.trim(), password, totp: totp.trim() || undefined }),

@@ -80,7 +80,8 @@ describe('normalizeVaultData', () => {
     ];
     data.projects.push(project);
 
-    expect(normalizeVaultData(data, 500)).toBe(false);
+    expect(normalizeVaultData(data, 500)).toBe(true);
     expect(data.projects[0]!.environments.map((e) => e.kind)).toEqual(['dev', 'prod']);
+    expect(data.workspaces?.[0]?.name).toBe('默认工作区');
   });
 });

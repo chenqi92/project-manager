@@ -50,10 +50,15 @@ export interface GitRepo {
   label?: string;
 }
 
+export type EnvKind = 'dev' | 'test' | 'staging' | 'prod' | 'other';
+
 /** 环境下的一个平台 / 入口链接（如「管理后台」「API 控制台」） */
 export interface PlatformLink {
   id: string;
   name: string;
+  /** 新版语义：环境作为链接标签保存；旧版环境容器仍保留用于兼容与移动。 */
+  envKind?: EnvKind;
+  envName?: string;
   /** 主网址 */
   url: string;
   /** 额外网址（同一平台的多区域/多域名）；匹配填充时主+额外都会比对 */
@@ -66,8 +71,6 @@ export interface PlatformLink {
   accounts: Account[];
   updatedAt: number;
 }
-
-export type EnvKind = 'dev' | 'test' | 'staging' | 'prod' | 'other';
 
 export interface Environment {
   id: string;
@@ -355,6 +358,16 @@ export interface DashboardConfig {
   activeBoardId?: string;
 }
 
+/** 顶层工作区：个人 / 公司等大范围隔离；每个工作区有独立项目与首页看板。 */
+export interface Workspace {
+  id: string;
+  name: string;
+  projects: Project[];
+  dashboard?: DashboardConfig;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** CNB（cnb.cool）代码仓库集成配置（随保险箱一起加密存储并在设备间同步） */
 export interface CnbConfig {
   /** 访问令牌（Bearer），加密存储 */
@@ -410,8 +423,13 @@ export interface VaultSettings {
 /** 解密后的保险箱明文数据（仅存在于内存中） */
 export interface VaultData {
   version: number;
+  /** @deprecated 旧版根项目树；新版读写当前工作区的 projects，并保持该字段镜像以兼容旧数据。 */
   projects: Project[];
   settings: VaultSettings;
+  /** 工作区列表；旧数据加载时会自动迁移到“默认工作区”。 */
+  workspaces?: Workspace[];
+  /** 当前 UI / 捕获默认写入的工作区。 */
+  activeWorkspaceId?: string;
   /** 删除墓碑，用于同步合并 */
   tombstones: Tombstone[];
 }

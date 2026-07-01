@@ -35,7 +35,7 @@ import {
 } from 'lucide-react';
 import { LockScreen } from '@/components/LockScreen';
 import { TotpBadge } from '@/components/TotpBadge';
-import { Avatar, Button, Segmented, cx } from '@/components/ui';
+import { Avatar, Button, Segmented, Select, cx } from '@/components/ui';
 import { useVault } from '@/hooks/useVault';
 import { getOrigin } from '@/lib/autofill';
 import { biometricUnlock } from '@/lib/bio-unlock';
@@ -65,6 +65,14 @@ import {
   newProject,
   produce,
 } from '@/lib/vault-ops';
+import {
+  commitWorkspaceDraft,
+  createWorkspace,
+  prepareWorkspaceDraft,
+  renameWorkspace,
+  switchActiveWorkspace,
+  workspaceScopedData,
+} from '@/lib/workspace';
 import { useDialog } from '@/components/Dialog';
 import { AuditModal } from './AuditModal';
 import { BigScreen } from './BigScreen';
@@ -150,7 +158,7 @@ type CaptureDraft = {
 export default function App() {
   const vault = useVault();
   const { status, data, loading } = vault;
-  const { confirm } = useDialog();
+  const { confirm, prompt } = useDialog();
   const appVersion = browser.runtime.getManifest().version;
   const [firstRunWelcome] = useState(() => new URLSearchParams(location.search).get('welcome') === '1');
 
@@ -254,7 +262,13 @@ export default function App() {
   const update = async (recipe: (d: VaultData) => void) => {
     if (!data) return;
     try {
-      await vault.save(produce(data, recipe));
+      await vault.save(
+        produce(data, (draft) => {
+          prepareWorkspaceDraft(draft);
+          recipe(draft);
+          commitWorkspaceDraft(draft);
+        }),
+      );
     } catch (e) {
       // 后台已锁定（如空闲自动锁定）：不弹「保存失败」，直接切到锁屏让用户重新输入主密码。
       if (e instanceof Error && e.message === VAULT_LOCKED_MSG) {
@@ -324,7 +338,11 @@ export default function App() {
     }
   };
 
-  const projects = data?.projects ?? [];
+  const activeData = data ? workspaceScopedData(data) : null;
+  const workspaces = data?.workspaces ?? [];
+  const activeWorkspace =
+    workspaces.find((ws) => ws.id === data?.activeWorkspaceId) ?? workspaces[0] ?? null;
+  const projects = activeData?.projects ?? [];
   // 显示顺序 = 数组顺序（可拖拽调整）；收藏星标只作标记，不再自动置顶。
   const selected = projects.find((p) => p.id === selectedId) ?? projects[0] ?? null;
   const docsProject = projects.find((p) => p.id === docsProjectId) ?? null;
@@ -373,7 +391,7 @@ export default function App() {
       }
     });
   const searchResults = useMemo(
-    () => (data && query.trim() ? search(data, query) : null),
+    () => (data && query.trim() ? search(workspaceScopedData(data), query) : null),
     [data, query],
   );
 
@@ -443,6 +461,57 @@ export default function App() {
   const showFeatureOnboarding =
     !data.settings.onboardedFeatureSwitches && !capture && !loginHandoff;
 
+  const resetWorkspaceView = () => {
+    setSelectedId(null);
+    setDocsProjectId(null);
+    setBigScreenId(null);
+    setShowHome(true);
+    setQuery('');
+    setPage(null);
+  };
+
+  const changeWorkspace = async (workspaceId: string) => {
+    if (!data || workspaceId === activeWorkspace?.id) return;
+    await vault.save(
+      produce(data, (draft) => {
+        switchActiveWorkspace(draft, workspaceId);
+      }),
+    );
+    resetWorkspaceView();
+  };
+
+  const addWorkspace = async () => {
+    if (!data) return;
+    const name = await prompt({
+      title: '新建工作区',
+      message: '工作区用于区分个人、公司等完全不同的首页和项目。',
+      placeholder: '例如：个人 / 公司',
+    });
+    if (name == null) return;
+    await vault.save(
+      produce(data, (draft) => {
+        createWorkspace(draft, name.trim() || `工作区 ${(draft.workspaces?.length ?? 0) + 1}`);
+      }),
+    );
+    resetWorkspaceView();
+    flash('工作区已创建');
+  };
+
+  const renameCurrentWorkspace = async () => {
+    if (!data || !activeWorkspace) return;
+    const name = await prompt({
+      title: '重命名工作区',
+      defaultValue: activeWorkspace.name,
+    });
+    if (name == null) return;
+    await vault.save(
+      produce(data, (draft) => {
+        renameWorkspace(draft, activeWorkspace.id, name);
+      }),
+    );
+    flash('工作区已重命名');
+  };
+
   const deleteSelectedProject = async () => {
     if (!selected) return;
     if (!(await confirm({ message: `删除项目「${selected.name}」及其全部内容？`, danger: true })))
@@ -462,6 +531,8 @@ export default function App() {
     existing: PlatformLink | undefined,
     value: {
       name: string;
+      envKind?: Environment['kind'];
+      envName?: string;
       url: string;
       note?: string;
       urls?: string[];
@@ -479,9 +550,14 @@ export default function App() {
       const sourceProject = d.projects.find((p) => p.id === sourceProjectId);
       const sourceEnv = sourceProject?.environments.find((env) => env.id === sourceEnvId);
       if (!sourceProject || !sourceEnv) throw new Error('找不到当前环境');
+      const linkValue = {
+        ...value,
+        envKind: value.envKind ?? sourceEnv.kind,
+        envName: value.envName?.trim() || sourceEnv.name,
+      };
 
       if (!existing) {
-        sourceEnv.links.push(newLink(value));
+        sourceEnv.links.push(newLink(linkValue));
         sourceEnv.updatedAt = now;
         sourceProject.updatedAt = now;
         return;
@@ -494,7 +570,7 @@ export default function App() {
       const targetEnvId = target?.envId || sourceEnvId;
       const sameLocation = targetProjectId === sourceProjectId && targetEnvId === sourceEnvId;
       if (sameLocation) {
-        Object.assign(sourceEnv.links[sourceIndex]!, value, { updatedAt: now });
+        Object.assign(sourceEnv.links[sourceIndex]!, linkValue, { updatedAt: now });
         sourceEnv.updatedAt = now;
         sourceProject.updatedAt = now;
         return;
@@ -505,7 +581,7 @@ export default function App() {
       const movedAt = now;
       const updatedAt = movedAt + 1;
       addMoveTombstone(d, moved.id, movedAt);
-      Object.assign(moved, value, { updatedAt });
+      Object.assign(moved, linkValue, { updatedAt });
       sourceEnv.updatedAt = updatedAt;
       sourceProject.updatedAt = updatedAt;
 
@@ -568,6 +644,41 @@ export default function App() {
           >
             <ChevronLeft size={16} />
           </button>
+        </div>
+
+        <div className="mb-2.5 rounded-[10px] border border-gray-200 bg-gray-50 p-2">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-[10.5px] font-bold text-gray-400">工作区</span>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                title="重命名工作区"
+                onClick={renameCurrentWorkspace}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-gray-400 hover:bg-white hover:text-gray-700"
+              >
+                <Pencil size={12} />
+              </button>
+              <button
+                type="button"
+                title="新建工作区"
+                onClick={addWorkspace}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-gray-400 hover:bg-white hover:text-brand-600"
+              >
+                <Plus size={13} />
+              </button>
+            </div>
+          </div>
+          <Select
+            value={activeWorkspace?.id ?? ''}
+            onChange={(e) => void changeWorkspace(e.target.value)}
+            className="h-8 rounded-md border-gray-200 bg-surface px-2 py-1 text-xs font-semibold"
+          >
+            {workspaces.map((ws) => (
+              <option key={ws.id} value={ws.id}>
+                {ws.name}
+              </option>
+            ))}
+          </Select>
         </div>
 
         <div className="relative mb-2.5 mt-0.5">
@@ -749,11 +860,11 @@ export default function App() {
               )}
               {page === 'audit' && (
                 <AuditModal
-                  data={data}
+                  data={activeData ?? data}
                   onClose={() => setPage(null)}
                   embedded
                   onFix={(e) => {
-                    const acct = data.projects
+                    const acct = (activeData ?? data).projects
                       .find((p) => p.id === e.projectId)
                       ?.environments.find((x) => x.id === e.envId)
                       ?.links.find((x) => x.id === e.linkId)
@@ -773,7 +884,7 @@ export default function App() {
               )}
               {page === 'io' && (
                 <ImportExport
-                  data={data}
+                  data={activeData ?? data}
                   onClose={() => setPage(null)}
                   onImported={vault.reload}
                   onBackedUp={recordBackup}
@@ -819,7 +930,7 @@ export default function App() {
             />
             <div className="flex min-h-0 flex-1 flex-col">
               <Home
-                data={data}
+                data={activeData ?? data}
                 onUpdate={update}
                 syncEnabled={status?.syncEnabled === true}
                 onOpenExport={() => openPage('io')}
@@ -962,7 +1073,18 @@ export default function App() {
               if (!p) return;
               if (editing.env) {
                 const t = p.environments.find((e) => e.id === editing.env!.id);
-                if (t) Object.assign(t, v, { updatedAt: Date.now() });
+                if (t) {
+                  const oldKind = t.kind;
+                  const oldName = t.name;
+                  Object.assign(t, v, { updatedAt: Date.now() });
+                  for (const link of t.links) {
+                    if ((link.envKind ?? oldKind) === oldKind && (link.envName ?? oldName) === oldName) {
+                      link.envKind = v.kind;
+                      link.envName = v.name;
+                      link.updatedAt = Date.now();
+                    }
+                  }
+                }
               } else {
                 p.environments.push(newEnvironment(v));
               }
@@ -975,9 +1097,7 @@ export default function App() {
         <LinkEditor
           initial={editing.link}
           location={
-            editing.link
-              ? { projects: data.projects, projectId: editing.projectId, envId: editing.envId }
-              : undefined
+            { projects, projectId: editing.projectId, envId: editing.envId }
           }
           onClose={() => setEditing(null)}
           onSave={async (v, target) => {
@@ -1033,7 +1153,7 @@ export default function App() {
       )}
       {capture && (
         <CaptureModal
-          data={data}
+          data={activeData ?? data}
           initialUrl={capture.url}
           initialTitle={capture.title}
           initialUsername={capture.username}
@@ -1057,7 +1177,7 @@ export default function App() {
       )}
       {loginHandoff && (
         <OpenLoginModal
-          data={data}
+          data={activeData ?? data}
           accountId={loginHandoff.accountId}
           url={loginHandoff.url}
           autoSubmit={data.settings.autoSubmit === true}
@@ -1093,7 +1213,7 @@ export default function App() {
         />
       )}
 
-      <MemoWidget data={data} selectedProjectId={selected?.id ?? null} onUpdate={update} />
+      <MemoWidget data={activeData ?? data} selectedProjectId={selected?.id ?? null} onUpdate={update} />
 
       {toast && (
         <div className="pem-toast fixed bottom-6 left-1/2 z-[90] flex -translate-x-1/2 items-center gap-2.5 rounded-[11px] bg-[#1a1d23] px-4 py-2.5 text-white shadow-[0_14px_34px_-8px_rgba(0,0,0,.4)]">
@@ -1226,6 +1346,10 @@ function ProjectView(props: ProjectViewProps) {
     (n, e) => n + e.links.reduce((m, l) => m + l.accounts.length, 0),
     0,
   );
+  const linkRows = project.environments.flatMap((env) =>
+    env.links.map((link) => ({ env, link })),
+  );
+  const firstEnv = project.environments[0];
   return (
     <div className="flex min-h-0 flex-1">
       {/* 主区：环境 / 链接 / 账号（独立滚动，宽度随右栏拖拽而变） */}
@@ -1284,21 +1408,76 @@ function ProjectView(props: ProjectViewProps) {
 
         {project.note && <p className="mb-4 text-sm text-gray-500">{project.note}</p>}
         <div className="mb-3 flex items-center">
-          <div className="text-[13px] font-bold">环境与账号</div>
+          <div className="text-[13px] font-bold">链接与账号</div>
           <div className="flex-1" />
-          <Button variant="outline" onClick={props.onAddEnv}>
-            <Plus size={14} /> 添加环境
-          </Button>
+          {firstEnv ? (
+            <Button variant="outline" onClick={() => props.onAddLink(firstEnv.id)}>
+              <Plus size={14} /> 添加链接
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={props.onAddEnv}>
+              <Plus size={14} /> 添加环境标签
+            </Button>
+          )}
         </div>
-        <div className="space-y-3">
-          {project.environments.length === 0 && (
-            <p className="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
-              还没有环境，点上方「添加环境」
+        <div className="overflow-hidden rounded-[14px] border border-gray-200 bg-surface">
+          {linkRows.length === 0 && (
+            <p className="py-10 text-center text-sm text-gray-400">
+              还没有链接，先添加一个环境标签再保存链接
             </p>
           )}
-          {project.environments.map((env) => (
-            <EnvBlock key={env.id} env={env} {...props} />
+          {linkRows.map(({ env, link }) => (
+            <LinkBlock key={link.id} env={env} link={link} {...props} />
           ))}
+          {firstEnv && (
+            <div className="border-t border-gray-100 p-3">
+              <button
+                onClick={() => props.onAddLink(firstEnv.id)}
+                className="flex h-[30px] items-center gap-1.5 rounded-lg border border-dashed border-gray-300 px-3 text-[11.5px] font-semibold text-gray-500 hover:border-brand-400 hover:text-brand-600"
+              >
+                <Plus size={12} /> 添加链接 / 平台
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-5">
+          <div className="mb-2 flex items-center">
+            <div className="text-[13px] font-bold">环境标签</div>
+            <div className="flex-1" />
+            <Button variant="outline" onClick={props.onAddEnv}>
+              <Plus size={14} /> 添加标签
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {project.environments.map((env) => (
+              <div
+                key={env.id}
+                className="flex items-center gap-2 rounded-lg border border-gray-200 bg-surface px-2.5 py-1.5"
+              >
+                <span
+                  className={cx(
+                    'rounded-full px-2 py-0.5 text-[10.5px] font-bold',
+                    ENV_KIND_COLORS[env.kind],
+                  )}
+                >
+                  {ENV_KIND_LABELS[env.kind]}
+                </span>
+                <span className="max-w-[160px] truncate text-xs font-semibold text-gray-700">
+                  {env.name}
+                </span>
+                <span className="text-[10.5px] text-gray-400">
+                  {env.links.length} 链接
+                </span>
+                <IconButton title="编辑标签" onClick={() => props.onEditEnv(env)}>
+                  <Pencil size={13} />
+                </IconButton>
+                <IconButton title="删除标签" onClick={() => props.onDeleteEnv(env)} danger>
+                  <Trash2 size={13} />
+                </IconButton>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -1315,73 +1494,6 @@ function ProjectView(props: ProjectViewProps) {
   );
 }
 
-function EnvBlock({ env, ...props }: { env: Environment } & ProjectViewProps) {
-  const [open, setOpen] = useState(true);
-  const linkCount = env.links.length;
-  const acctCount = env.links.reduce((m, l) => m + l.accounts.length, 0);
-  return (
-    <section className="overflow-hidden rounded-[14px] border border-gray-200 bg-surface">
-      <div
-        onClick={() => setOpen((o) => !o)}
-        className="flex cursor-pointer items-center gap-3 px-4 py-3.5"
-      >
-        <ChevronRight
-          size={15}
-          className="shrink-0 text-gray-400 transition-transform"
-          style={{ transform: open ? 'rotate(90deg)' : 'none' }}
-        />
-        <span
-          className={cx(
-            'shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold',
-            ENV_KIND_COLORS[env.kind],
-          )}
-        >
-          {ENV_KIND_LABELS[env.kind]}
-        </span>
-        <span className="text-sm font-semibold">{env.name}</span>
-        <span className="min-w-0 truncate text-[11.5px] text-gray-400">
-          {linkCount} 链接 · {acctCount} 账号{env.note ? ` · ${env.note}` : ''}
-        </span>
-        <div className="flex-1" />
-        <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          <IconButton title="编辑环境" onClick={() => props.onEditEnv(env)}>
-            <Pencil size={14} />
-          </IconButton>
-          <IconButton title="删除环境" onClick={() => props.onDeleteEnv(env)} danger>
-            <Trash2 size={14} />
-          </IconButton>
-        </div>
-      </div>
-
-      {open && (
-        <div className="px-4 pb-1.5">
-          {env.gitRepos && env.gitRepos.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 py-3">
-              <span className="flex items-center gap-1.5 text-[11px] font-bold text-gray-400">
-                <GitBranch size={13} /> Git 仓库汇总
-              </span>
-              {env.gitRepos.map((r) => (
-                <GitRepoChip key={r.id} repo={r} onCopy={props.onCopy} />
-              ))}
-            </div>
-          )}
-          {env.links.map((link) => (
-            <LinkBlock key={link.id} env={env} link={link} {...props} />
-          ))}
-          <div className="border-t border-gray-100 py-3">
-            <button
-              onClick={() => props.onAddLink(env.id)}
-              className="flex h-[30px] items-center gap-1.5 rounded-lg border border-dashed border-gray-300 px-3 text-[11.5px] font-semibold text-gray-500 hover:border-brand-400 hover:text-brand-600"
-            >
-              <Plus size={12} /> 添加链接 / 平台
-            </button>
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
 function LinkBlock({
   env,
   link,
@@ -1391,6 +1503,8 @@ function LinkBlock({
   const fields = link.customFields ?? [];
   const [fieldsOpen, setFieldsOpen] = useState(false);
   const canOpenDefaultLogin = Boolean(link.url && acc0);
+  const linkEnvKind = link.envKind ?? env.kind;
+  const linkEnvName = link.envName ?? env.name;
   const openDefaultLogin = () => {
     if (!link.url || !acc0) return;
     props.onOpenLogin(link.url, acc0.username, acc0.password);
@@ -1424,6 +1538,16 @@ function LinkBlock({
             </div>
           )}
         </div>
+        <span
+          title={`环境标签：${linkEnvName}`}
+          className={cx(
+            'shrink-0 rounded-full px-2.5 py-1 text-[10.5px] font-bold',
+            ENV_KIND_COLORS[linkEnvKind],
+          )}
+        >
+          {ENV_KIND_LABELS[linkEnvKind]}
+          {linkEnvName && linkEnvName !== ENV_KIND_LABELS[linkEnvKind] ? ` · ${linkEnvName}` : ''}
+        </span>
         {link.urls && link.urls.length > 0 && (
           <span
             title={link.urls.join('\n')}
