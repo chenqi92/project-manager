@@ -102,7 +102,7 @@ export function FeatureOnboardingModal({
     <Modal title="快速打开常用功能" onClose={() => !busy && onDone()}>
       <div className="flex flex-col gap-4 text-sm text-gray-700">
         <Banner tone="info">
-          先把常用开关放在这里。登录保存、更新提示可直接用；全站捕获需要浏览器授权，联网磁贴只在你开启后请求第三方数据。
+          这几个是最常用的开关：「网页内账号提示」可直接开启；「新网站登录捕获」需要授权浏览器全站访问；「联网磁贴」开启后才会访问外部数据源。
         </Banner>
         <div className="flex flex-col gap-2.5">
           <FeatureSwitchRow
