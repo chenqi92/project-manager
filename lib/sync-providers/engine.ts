@@ -32,6 +32,8 @@ export interface SyncOutcome {
 export interface SyncOpts {
   /** 远端是「另一个保险箱」时，用于解密它的主密码 */
   foreignPassword?: string;
+  /** 远端异库时可静默尝试的候选密码；全部失败时仍按 foreign_vault 处理。 */
+  foreignPasswords?: string[];
   /** 新目标首次同步保护：远端为空且未确认时，不自动推送，改抛 empty_remote 让 UI 确认。 */
   guardEmptyPush?: boolean;
   /** 用户已确认「远端为空 → 以本地内容建立首次副本」。 */
@@ -40,7 +42,7 @@ export interface SyncOpts {
 
 /**
  * 双向合并同步：拉取远端，与本地三路合并（含墓碑），重加密后并发推送；冲突自动重拉重试。
- * 远端是异库且未提供 foreignPassword 时抛 foreign_vault，由调用方提示输入密码。
+ * 远端是异库且静默候选密码都无法解开时抛 foreign_vault，由调用方提示输入密码。
  */
 export async function syncWithProvider(
   provider: SyncProvider,
@@ -90,7 +92,7 @@ async function mergeLoop(
   throw new SyncEngineError('合并重试次数耗尽', 'retry_exhausted');
 }
 
-/** 解密远端密文：同库用本地 DEK，异库用 foreignPassword 解出远端 DEK。 */
+/** 解密远端密文：同库用本地 DEK，异库用远端主密码解出远端 DEK。 */
 async function decryptRemote(
   remote: EncryptedVault,
   localEnc: EncryptedVault,
@@ -100,13 +102,28 @@ async function decryptRemote(
   if (remote.vaultId === localEnc.vaultId) {
     return decryptVaultData(remote, dek);
   }
-  if (!opts.foreignPassword) {
+  const remoteDek = await unwrapForeignDEK(remote, opts);
+  if (!remoteDek) {
     throw new SyncEngineError('远端是另一个保险箱', 'foreign_vault', remote);
   }
-  const remoteDek = await unwrapDEK(remote, opts.foreignPassword).catch(() => {
-    throw new SyncEngineError('远端保险箱主密码不正确', 'bad_password', remote);
-  });
   return decryptVaultData(remote, remoteDek);
+}
+
+async function unwrapForeignDEK(remote: EncryptedVault, opts: SyncOpts): Promise<Uint8Array | null> {
+  const explicit = opts.foreignPassword;
+  const candidates = [...(explicit ? [explicit] : []), ...(opts.foreignPasswords ?? [])].filter(
+    (p) => p !== '',
+  );
+  const unique = [...new Set(candidates)];
+  for (const password of unique) {
+    try {
+      return await unwrapDEK(remote, password);
+    } catch {
+      // Try the next candidate; only an explicit password failing all candidates is a hard error.
+    }
+  }
+  if (explicit) throw new SyncEngineError('远端保险箱主密码不正确', 'bad_password', remote);
+  return null;
 }
 
 /** 强制推送：用本地整体覆盖远端（不合并），仅处理并发 tag。 */
@@ -130,7 +147,7 @@ export type ForcePullResult =
 
 /**
  * 强制拉取：用远端整体覆盖本地内容（保留本地主密码 / DEK，仅替换数据）。
- * 远端为异库且未给 foreignPassword 时返回 {kind:'foreign'} 供 UI 索要密码。
+ * 远端为异库且静默候选密码都无法解开时返回 {kind:'foreign'} 供 UI 索要密码。
  */
 export async function forcePullFromProvider(
   provider: SyncProvider,
@@ -145,10 +162,8 @@ export async function forcePullFromProvider(
   if (rv.vaultId === localEnc.vaultId) {
     data = await decryptVaultData(rv, dek);
   } else {
-    if (!opts.foreignPassword) return { kind: 'foreign', remote: rv };
-    const rdek = await unwrapDEK(rv, opts.foreignPassword).catch(() => {
-      throw new SyncEngineError('远端保险箱主密码不正确', 'bad_password', rv);
-    });
+    const rdek = await unwrapForeignDEK(rv, opts);
+    if (!rdek) return { kind: 'foreign', remote: rv };
     data = await decryptVaultData(rv, rdek);
   }
   const localEncrypted = await reencryptData(localEnc, data, dek);

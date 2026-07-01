@@ -24,6 +24,8 @@ import {
 import { parseMigrationUri } from './otp-migration';
 import type {
   Account,
+  DashboardConfig,
+  DashWidget,
   EncryptedVault,
   Environment,
   ExportMode,
@@ -149,17 +151,20 @@ export function mergeVaults(
   }
 
   const data = structuredClone(base);
+  const ids: ImportIdMap = { projects: new Map(), docs: new Map() };
   let imported = 0;
   const lc = (s: string) => s.trim().toLowerCase();
 
   for (const inProj of incoming.projects) {
     let proj = data.projects.find((p) => lc(p.name) === lc(inProj.name));
     if (!proj) {
-      proj = reidProject(inProj);
+      proj = reidProject(inProj, ids);
       data.projects.push(proj);
       imported += countAccountsInProject(inProj);
       continue;
     }
+    ids.projects.set(inProj.id, proj.id);
+    mergeProjectExtras(proj, inProj, ids);
     for (const inEnv of inProj.environments) {
       let env = proj.environments.find(
         (e) => e.kind === inEnv.kind && lc(e.name) === lc(inEnv.name),
@@ -194,6 +199,7 @@ export function mergeVaults(
       }
     }
   }
+  mergeDashboardSettings(data, incoming, ids);
   return { data, imported };
 }
 
@@ -568,8 +574,96 @@ function normalizeAccount(a: Account): Account {
   };
 }
 
-function reidProject(p: Project): Project {
-  return { ...p, id: uid(), environments: p.environments.map(reidEnv) };
+interface ImportIdMap {
+  projects: Map<string, string>;
+  docs: Map<string, string>;
+}
+
+function mergeProjectExtras(target: Project, source: Project, ids: ImportIdMap): void {
+  if (source.docs?.length) {
+    const docs = target.docs ?? (target.docs = []);
+    for (const doc of source.docs) {
+      const existing = docs.find((d) => d.id === doc.id);
+      if (existing) {
+        ids.docs.set(doc.id, existing.id);
+        if (doc.updatedAt > existing.updatedAt) Object.assign(existing, doc);
+      } else {
+        docs.push(structuredClone(doc));
+        ids.docs.set(doc.id, doc.id);
+      }
+    }
+  }
+
+  if (source.memos?.length) {
+    const memos = target.memos ?? (target.memos = []);
+    for (const memo of source.memos) {
+      const existing = memos.find((m) => m.id === memo.id);
+      if (existing) {
+        if (memo.updatedAt > existing.updatedAt) Object.assign(existing, memo);
+      } else {
+        memos.push(structuredClone(memo));
+      }
+    }
+  }
+}
+
+function mergeDashboardSettings(data: VaultData, incoming: VaultData, ids: ImportIdMap): void {
+  const dashboard = incoming.settings?.dashboard;
+  if (!dashboard) return;
+
+  const nextDashboard = remapDashboard(dashboard, ids);
+  data.settings = {
+    ...data.settings,
+    dashboard: nextDashboard,
+  };
+
+  if (dashboardHasWidget(nextDashboard, 'weather') && 'weatherEnabled' in incoming.settings) {
+    data.settings.weatherEnabled = incoming.settings.weatherEnabled;
+  }
+  if (dashboardHasWidget(nextDashboard, 'cnb') && incoming.settings.cnb !== undefined) {
+    data.settings.cnb = structuredClone(incoming.settings.cnb);
+  }
+}
+
+function remapDashboard(dashboard: DashboardConfig, ids: ImportIdMap): DashboardConfig {
+  const mapWidgets = (widgets: DashWidget[] | undefined): DashWidget[] | undefined =>
+    widgets?.map((widget) => remapWidget(widget, ids));
+
+  return {
+    ...structuredClone(dashboard),
+    widgets: mapWidgets(dashboard.widgets),
+    boards: dashboard.boards?.map((board) => ({
+      ...structuredClone(board),
+      widgets: mapWidgets(board.widgets) ?? [],
+    })),
+  };
+}
+
+function remapWidget(widget: DashWidget, ids: ImportIdMap): DashWidget {
+  if (!widget.config) return structuredClone(widget);
+  const config = { ...widget.config };
+  if (config.projectId) config.projectId = ids.projects.get(config.projectId) ?? config.projectId;
+  if (config.docId) config.docId = ids.docs.get(config.docId) ?? config.docId;
+  return { ...structuredClone(widget), config };
+}
+
+function dashboardHasWidget(dashboard: DashboardConfig, type: DashWidget['type']): boolean {
+  const legacy = dashboard.widgets ?? [];
+  const boards = dashboard.boards ?? [];
+  return legacy.some((w) => w.type === type) || boards.some((b) => b.widgets.some((w) => w.type === type));
+}
+
+function reidProject(p: Project, ids: ImportIdMap): Project {
+  const next = {
+    ...p,
+    id: uid(),
+    docs: p.docs?.map((d) => structuredClone(d)),
+    memos: p.memos?.map((m) => structuredClone(m)),
+    environments: p.environments.map(reidEnv),
+  };
+  ids.projects.set(p.id, next.id);
+  for (const doc of next.docs ?? []) ids.docs.set(doc.id, doc.id);
+  return next;
 }
 function reidEnv(e: Environment): Environment {
   return { ...e, id: uid(), links: e.links.map(reidLink) };

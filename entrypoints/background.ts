@@ -79,6 +79,8 @@ let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let clipboardOffscreenReady = false;
 let pendingCaptures: Record<string, CapturePending> = {};
 let loginCandidates: Record<string, LoginCaptureCandidate> = {};
+let sessionMasterPassword: string | null = null;
+let foreignVaultPasswords: string[] = [];
 
 type LoginCaptureCandidate = Pick<
   CapturePending,
@@ -288,7 +290,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
         data.settings.kdf,
       );
       await vaultBackend.save(encrypted);
-      await setUnlocked(newDek, data);
+      await setUnlocked(newDek, data, msg.password);
       return getStatus();
     }
 
@@ -301,7 +303,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       } catch {
         throw new Error('主密码错误');
       }
-      await setUnlocked(newDek, await decryptVaultData(enc, newDek));
+      await setUnlocked(newDek, await decryptVaultData(enc, newDek), msg.password);
       return getStatus();
     }
 
@@ -329,6 +331,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
         throw new Error('当前主密码错误');
       }
       await vaultBackend.save(await rewrapDEK(enc, dek!, msg.next));
+      sessionMasterPassword = msg.next;
       return;
     }
 
@@ -492,8 +495,10 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       try {
         const res = await forcePullFromProvider(providerFor(target), enc, dek!, {
           foreignPassword: msg.foreignPassword,
+          foreignPasswords: syncForeignPasswordCandidates(msg.foreignPassword),
         });
         if (res.kind === 'foreign') return { foreign: true };
+        rememberForeignPassword(msg.foreignPassword);
         if (res.kind === 'replaced') {
           await adoptSyncedVault(res.localEncrypted);
           await setTargetState(target.id, { lastSyncAt: Date.now(), remoteTag: res.tag, lastError: undefined });
@@ -1449,9 +1454,11 @@ async function getStatus(): Promise<VaultStatus> {
   };
 }
 
-async function setUnlocked(d: Uint8Array, data: VaultData): Promise<void> {
+async function setUnlocked(d: Uint8Array, data: VaultData, masterPassword?: string): Promise<void> {
   dek = d;
   cachedData = data;
+  sessionMasterPassword = masterPassword || null;
+  foreignVaultPasswords = [];
   cachedSettingsFingerprint = settingsFingerprint(data.settings);
   autoLockMinutes = data.settings.autoLockMinutes ?? 15;
   await browser.storage.session.set({ [SESSION_DEK]: toB64(d) });
@@ -1482,6 +1489,8 @@ async function persistData(data: VaultData): Promise<void> {
 function lock(): void {
   dek = null;
   cachedData = null;
+  sessionMasterPassword = null;
+  foreignVaultPasswords = [];
   cachedSettingsFingerprint = null;
   pendingCaptures = {};
   loginCandidates = {};
@@ -1639,9 +1648,11 @@ async function runTargetSync(
   try {
     const out = await syncWithProvider(providerFor(target), enc, dek!, {
       foreignPassword: opts.foreignPassword,
+      foreignPasswords: syncForeignPasswordCandidates(opts.foreignPassword),
       guardEmptyPush: !established,
       confirmEmptyPush: opts.confirmFirstPush,
     });
+    rememberForeignPassword(opts.foreignPassword);
     if (out.mergedEncrypted) {
       await adoptSyncedVault(out.mergedEncrypted);
     }
@@ -1657,6 +1668,19 @@ async function runTargetSync(
     await setTargetState(target.id, { lastError: errMsg(e) });
     throw e;
   }
+}
+
+function syncForeignPasswordCandidates(explicit?: string): string[] {
+  const skip = explicit;
+  return [...new Set([sessionMasterPassword, ...foreignVaultPasswords])]
+    .map((p) => p ?? '')
+    .filter((p) => p && p !== skip);
+}
+
+function rememberForeignPassword(password?: string): void {
+  const pw = password;
+  if (!pw || pw === sessionMasterPassword || foreignVaultPasswords.includes(pw)) return;
+  foreignVaultPasswords = [pw, ...foreignVaultPasswords].slice(0, 5);
 }
 
 /** 同步所有启用的目标；任一目标失败则抛出（汇总错误信息）。异库目标在此跳过并计入错误。 */

@@ -766,13 +766,15 @@ function collectLoginInputInPage(): CaptureInputResult {
     const s = getComputedStyle(el as HTMLElement);
     return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
   };
-  const readRememberedUsername = (): string => {
+  const readRememberedUsername = (maxAgeMs = 90_000): string => {
     try {
       const raw = sessionStorage.getItem('pemLastLoginUsername');
       if (!raw) return '';
       const saved = JSON.parse(raw) as { origin?: string; value?: string; ts?: number };
-      if (saved.origin !== location.origin || Date.now() - Number(saved.ts ?? 0) > 10 * 60_000)
+      const age = Date.now() - Number(saved.ts ?? 0);
+      if (saved.origin !== location.origin || age > 10 * 60_000)
         return '';
+      if (age > maxAgeMs) return '';
       return typeof saved.value === 'string' ? saved.value : '';
     } catch {
       return '';
@@ -786,7 +788,7 @@ function collectLoginInputInPage(): CaptureInputResult {
   const scope = pw.form ?? document;
   const candidates = Array.from(
     scope.querySelectorAll<HTMLInputElement>(
-      'input[type="text"], input[type="email"], input[type="tel"], input:not([type])',
+      'input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[inputmode="numeric"], input:not([type])',
     ),
   ).filter((el) => el.type !== 'password' && el.value && visible(el));
 

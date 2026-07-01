@@ -1386,6 +1386,11 @@ function LinkBlock({
   ...props
 }: { env: Environment; link: PlatformLink } & ProjectViewProps) {
   const acc0 = link.accounts[0];
+  const canOpenDefaultLogin = Boolean(link.url && acc0);
+  const openDefaultLogin = () => {
+    if (!link.url || !acc0) return;
+    props.onOpenLogin(link.url, acc0.username, acc0.password);
+  };
   return (
     <div className="border-t border-gray-100 py-3.5">
       <div className="mb-3 flex items-center gap-2.5">
@@ -1393,7 +1398,18 @@ function LinkBlock({
           <LinkIcon size={15} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-semibold">{link.name}</div>
+          {canOpenDefaultLogin ? (
+            <button
+              type="button"
+              title="打开并登录"
+              onClick={openDefaultLogin}
+              className="block max-w-full truncate rounded text-left text-[13px] font-semibold hover:text-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-200"
+            >
+              {link.name}
+            </button>
+          ) : (
+            <div className="truncate text-[13px] font-semibold">{link.name}</div>
+          )}
           {link.url && (
             <div
               onClick={() => props.onCopy(link.url, '链接')}
@@ -1415,9 +1431,9 @@ function LinkBlock({
         {link.gitRepos?.map((r) => (
           <GitRepoChip key={r.id} repo={r} onCopy={props.onCopy} />
         ))}
-        {link.url && acc0 && (
+        {canOpenDefaultLogin && (
           <button
-            onClick={() => props.onOpenLogin(link.url, acc0.username, acc0.password)}
+            onClick={openDefaultLogin}
             className="shrink-0 rounded-lg border border-gray-200 bg-surface px-3 py-1.5 text-[11.5px] font-semibold text-brand-600 hover:bg-gray-50"
           >
             打开并登录

@@ -66,7 +66,7 @@ export function SyncPage({
     if (!r.foreign) return;
     const pw = await prompt({
       title: '检测到另一个保险箱',
-      message: '远端是用不同主密码加密的保险箱。输入它的主密码以解密并合并：',
+      message: '远端是另一个保险箱。会优先尝试当前解锁会话可用的主密码；仍无法解密时，请输入远端保险箱的主密码继续：',
       placeholder: '远端主密码',
     });
     if (!pw) return;
@@ -143,7 +143,7 @@ export function SyncPage({
         if (r.foreign) {
           const pw = await prompt({
             title: '检测到另一个保险箱',
-            message: '远端是用不同主密码加密的保险箱。输入它的主密码以解密并合并：',
+            message: '远端是另一个保险箱。会优先尝试当前解锁会话可用的主密码；仍无法解密时，请输入远端保险箱的主密码继续：',
             placeholder: '远端主密码',
           });
           if (pw) await call(pw, true);

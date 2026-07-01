@@ -102,6 +102,87 @@ describe('加密备份导入', () => {
 });
 
 describe('导入合并', () => {
+  it('合并模式会导入首页看板、磁贴排版、大小和配置', () => {
+    const base = emptyVaultData();
+    const incoming = jsonVault();
+    incoming.settings.weatherEnabled = true;
+    incoming.settings.cnb = { token: 'cnb-token', orgs: ['njly2013'] };
+    incoming.settings.dashboard = {
+      activeBoardId: 'board-stress',
+      boards: [
+        {
+          id: 'board-stress',
+          name: '全类型压力',
+          appearance: { bg: 'gradient', gradient: 'forest', tileOpacity: 82, tileBlur: 10 },
+          widgets: [
+            {
+              id: 'widget-doc',
+              type: 'doc',
+              x: 1,
+              y: 2,
+              w: 2,
+              h: 3,
+              config: {
+                label: '压测说明',
+                projectId: 'project-stable',
+                docId: 'doc-stable',
+                privacyMode: 'soft',
+              },
+            },
+            {
+              id: 'widget-weather',
+              type: 'weather',
+              x: 0,
+              y: 0,
+              w: 1,
+              h: 1,
+              config: { city: '杭州', unit: 'c' },
+            },
+            {
+              id: 'widget-cnb',
+              type: 'cnb',
+              x: 3,
+              y: 0,
+              w: 1,
+              h: 2,
+            },
+          ],
+        },
+      ],
+    };
+
+    const { data } = mergeVaults(base, incoming, 'merge');
+    const board = data.settings.dashboard!.boards![0]!;
+    const widget = board.widgets.find((w) => w.id === 'widget-doc')!;
+
+    expect(data.settings.dashboard!.activeBoardId).toBe('board-stress');
+    expect(board.appearance).toMatchObject({ gradient: 'forest', tileOpacity: 82, tileBlur: 10 });
+    expect(widget).toMatchObject({ x: 1, y: 2, w: 2, h: 3 });
+    expect(widget.config?.label).toBe('压测说明');
+    expect(widget.config?.privacyMode).toBe('soft');
+    expect(widget.config?.projectId).toBe(data.projects[0]!.id);
+    expect(widget.config?.docId).toBe('doc-stable');
+    expect(data.projects[0]!.docs![0]!.id).toBe('doc-stable');
+    expect(data.settings.weatherEnabled).toBe(true);
+    expect(data.settings.cnb?.orgs).toEqual(['njly2013']);
+  });
+
+  it('没有 dashboard 的导入不会覆盖本地首页看板', () => {
+    const base = emptyVaultData();
+    base.settings.dashboard = {
+      activeBoardId: 'local-board',
+      boards: [{ id: 'local-board', name: '本地', widgets: [{ id: 'local-widget', type: 'stats' }] }],
+    };
+    const incoming = emptyVaultData();
+    const project = newProject({ name: '导入项目' });
+    incoming.projects.push(project);
+
+    const { data } = mergeVaults(base, incoming, 'merge');
+
+    expect(data.settings.dashboard?.activeBoardId).toBe('local-board');
+    expect(data.settings.dashboard?.boards?.[0]?.widgets[0]?.id).toBe('local-widget');
+  });
+
   it('环境名称相同但类型不同不会被合并到同一个环境', () => {
     const base = emptyVaultData();
     const existing = newProject({ name: '同名项目' });

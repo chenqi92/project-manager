@@ -140,6 +140,28 @@ describe('syncWithProvider', () => {
     expect(out.mergedEncrypted!.vaultId).toBe(local.encrypted.vaultId);
   });
 
+  it('异库 + 静默候选密码正确：不要求显式 foreignPassword', async () => {
+    const local = await makeVault([project('p1', 'A', 1000)], 'same-pw');
+    const foreign = await makeVault([project('q1', 'X', 1000)], 'same-pw');
+    const provider = new FakeProvider(foreign.encrypted);
+
+    const out = await syncWithProvider(provider, local.encrypted, local.dek, {
+      foreignPasswords: ['same-pw'],
+    });
+    const merged = await decryptVaultData(out.mergedEncrypted!, local.dek);
+    expect(ids(merged)).toEqual(['p1', 'q1']);
+  });
+
+  it('异库 + 静默候选密码错误：仍返回 foreign_vault 而不是 bad_password', async () => {
+    const local = await makeVault([project('p1', 'A', 1000)], 'pw-local');
+    const foreign = await makeVault([project('q1', 'X', 1000)], 'pw-foreign');
+    const provider = new FakeProvider(foreign.encrypted);
+
+    await expect(
+      syncWithProvider(provider, local.encrypted, local.dek, { foreignPasswords: ['pw-local'] }),
+    ).rejects.toMatchObject({ code: 'foreign_vault' });
+  });
+
   it('异库 + 错误密码：抛 bad_password', async () => {
     const local = await makeVault([project('p1', 'A', 1000)], 'pw-local');
     const foreign = await makeVault([project('q1', 'X', 1000)], 'pw-foreign');
@@ -191,5 +213,17 @@ describe('forcePush / forcePull', () => {
       const data = await decryptVaultData(second.localEncrypted, local.dek);
       expect(ids(data)).toEqual(['q1', 'q2']); // 本地被远端整体替换
     }
+  });
+
+  it('forcePull 异库可用静默候选密码直接拉取', async () => {
+    const local = await makeVault([project('p1', 'A', 1000)], 'same-pw');
+    const foreign = await makeVault([project('q1', 'X', 1000)], 'same-pw');
+    const provider = new FakeProvider(foreign.encrypted);
+
+    const result = await forcePullFromProvider(provider, local.encrypted, local.dek, {
+      foreignPasswords: ['same-pw'],
+    });
+
+    expect(result.kind).toBe('replaced');
   });
 });

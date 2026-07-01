@@ -7,6 +7,7 @@
 
   const CHECK_DELAYS = [650, 1600, 3200, 6000];
   const USERNAME_TTL_MS = 10 * 60_000;
+  const USERNAME_CAPTURE_CACHE_MS = 90_000;
   const USERNAME_CACHE_KEY = 'pemLastLoginUsername';
 
   const visible = (el) => {
@@ -58,7 +59,7 @@
   const usernameFields = () =>
     Array.from(
       document.querySelectorAll(
-        'input[type="text"], input[type="email"], input[type="tel"], input[type="search"], input:not([type])',
+        'input[type="text"], input[type="email"], input[type="tel"], input[type="search"], input[type="number"], input[inputmode="numeric"], input:not([type])',
       ),
     ).filter((el) => {
       if (el.type === 'password' || !visible(el)) return false;
@@ -74,15 +75,17 @@
       );
     });
 
-  const readRememberedUsername = () => {
+  const readRememberedUsername = (maxAgeMs = USERNAME_TTL_MS) => {
     try {
       const raw = sessionStorage.getItem(USERNAME_CACHE_KEY);
       if (!raw) return '';
       const saved = JSON.parse(raw);
-      if (saved?.origin !== location.origin || Date.now() - Number(saved.ts || 0) > USERNAME_TTL_MS) {
+      const age = Date.now() - Number(saved.ts || 0);
+      if (saved?.origin !== location.origin || age > USERNAME_TTL_MS) {
         sessionStorage.removeItem(USERNAME_CACHE_KEY);
         return '';
       }
+      if (age > maxAgeMs) return '';
       return typeof saved.value === 'string' ? saved.value : '';
     } catch {
       return '';
@@ -107,6 +110,38 @@
     const active = fields.find((el) => el === document.activeElement);
     const picked = active || fields[0];
     if (picked) rememberUsername(picked.value);
+  };
+
+  const captureUsernameFields = (scope) =>
+    Array.from(
+      scope.querySelectorAll(
+        'input[type="text"], input[type="email"], input[type="tel"], input[type="search"], input[type="number"], input[inputmode="numeric"], input:not([type])',
+      ),
+    ).filter((el) => {
+      if (el.type === 'password' || !el.value || !visible(el)) return false;
+      const text = fieldText(el);
+      if (/(search|query|keyword|验证码|验证|code|otp|totp)/i.test(text)) return false;
+      if (looksLikeSearchFilter(el)) return false;
+      return true;
+    });
+
+  const usernameForPassword = (pw) => {
+    const scope = pw.form || document;
+    const fields = captureUsernameFields(scope);
+    const active = fields.find((el) => el === document.activeElement);
+    if (active) return active.value;
+
+    const likely = new Set(usernameFields());
+    let username = '';
+    let likelyUsername = '';
+    for (const el of fields) {
+      if (el.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING) {
+        username = el.value;
+        if (likely.has(el)) likelyUsername = el.value;
+      }
+    }
+    if (!username && fields[0]) username = fields[0].value;
+    return likelyUsername || username || readRememberedUsername(USERNAME_CAPTURE_CACHE_MS);
   };
 
   const otpFields = () =>
@@ -304,17 +339,7 @@
     const pw = pickPasswordField();
     if (!pw || !pw.value) return null;
 
-    const scope = pw.form || document;
-    const cands = usernameFields().filter(
-      (el) => (scope === document || scope.contains(el)) && el.value && visible(el),
-    );
-
-    let username = '';
-    for (const el of cands) {
-      if (el.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING) username = el.value;
-    }
-    if (!username && cands[0]) username = cands[0].value;
-    if (!username) username = readRememberedUsername();
+    const username = usernameForPassword(pw);
     if (username) rememberUsername(username);
 
     return { username, password: pw.value, totp: await extractTotpSecretAsync() };
