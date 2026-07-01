@@ -381,7 +381,7 @@ export default function App() {
   }
 
   return (
-    <div className="relative flex h-[600px] max-h-[calc(100vh-24px)] w-[380px] flex-col overflow-hidden bg-gray-50">
+    <div className="relative flex w-[380px] flex-col bg-gray-50">
       {/* header */}
       <div className="flex items-center gap-2.5 border-b border-gray-200 bg-surface px-4 py-2.5">
         <span className="flex h-6 w-6 items-center justify-center rounded-[7px] bg-brand-600 text-white">
@@ -521,7 +521,7 @@ export default function App() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 [scrollbar-gutter:stable]">
+      <div className="max-h-[320px] overflow-y-auto overscroll-contain p-3 [scrollbar-gutter:stable]">
         {query.trim() ? (
           <Section
             title={`搜索结果（${rawResults.length}${hiddenResultCount ? `，显示前 ${POPUP_RESULT_LIMIT}` : ''}）`}

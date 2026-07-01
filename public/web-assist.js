@@ -812,24 +812,20 @@
       scrollbar-width: thin;
       scrollbar-color: var(--pem-scroll-thumb) transparent;
     }
-    .modal-body::-webkit-scrollbar,
-    .target-list::-webkit-scrollbar {
+    .modal-body::-webkit-scrollbar {
       width: 8px;
       height: 8px;
     }
-    .modal-body::-webkit-scrollbar-track,
-    .target-list::-webkit-scrollbar-track {
+    .modal-body::-webkit-scrollbar-track {
       background: transparent;
     }
-    .modal-body::-webkit-scrollbar-thumb,
-    .target-list::-webkit-scrollbar-thumb {
+    .modal-body::-webkit-scrollbar-thumb {
       border: 2px solid transparent;
       border-radius: 999px;
       background: var(--pem-scroll-thumb);
       background-clip: content-box;
     }
-    .modal-body::-webkit-scrollbar-thumb:hover,
-    .target-list::-webkit-scrollbar-thumb:hover {
+    .modal-body::-webkit-scrollbar-thumb:hover {
       background: var(--pem-scroll-thumb-hover);
       background-clip: content-box;
     }
@@ -872,6 +868,11 @@
       color: #99f6e4;
       padding: 5px 10px;
       font-weight: 700;
+    }
+    .modal.theme-light .pill {
+      border: 1px solid rgba(13, 148, 136, .18);
+      background: rgba(13, 148, 136, .1);
+      color: #0f766e;
     }
     .capture-list {
       display: flex;
@@ -1014,24 +1015,16 @@
       text-align: center;
     }
     .target-list {
-      position: absolute;
-      left: 0;
-      right: 0;
-      top: calc(100% + 6px);
-      z-index: 4;
       display: flex;
       flex-direction: column;
       gap: 7px;
-      max-height: min(232px, calc(100vh - 320px));
-      overflow: auto;
-      overscroll-behavior: contain;
-      scrollbar-width: thin;
-      scrollbar-color: var(--pem-scroll-thumb) transparent;
+      margin-top: 6px;
+      overflow: visible;
       border: 1px solid var(--pem-modal-border);
       border-radius: 12px;
       background: var(--pem-modal-bg);
-      padding: 6px 4px 6px 6px;
-      box-shadow: 0 16px 38px var(--pem-modal-shadow), 0 0 0 1px var(--pem-modal-inset) inset;
+      padding: 6px;
+      box-shadow: 0 0 0 1px var(--pem-modal-inset) inset;
     }
     .target-section {
       padding: 4px 6px 1px;
