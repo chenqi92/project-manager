@@ -143,4 +143,25 @@ describe('Gitee provider', () => {
     expect(sentBody.sha).toBe('oldgsha');
     expect(sentBody.branch).toBe('main');
   });
+
+  it('push 成功但 Gitee 返回空响应时，回拉一次取得 sha', async () => {
+    const b64 = Buffer.from(JSON.stringify(vault), 'utf8').toString('base64');
+    let call = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        call++;
+        if (call === 1) {
+          expect(init?.method).toBe('PUT');
+          return new Response('', { status: 200 });
+        }
+        return json({ content: b64, sha: 'fallback-sha' });
+      }),
+    );
+
+    const res = await createGitProvider(giteeTarget).push(vault, 'oldgsha');
+
+    expect(res).toEqual({ ok: true, tag: 'fallback-sha' });
+    expect(call).toBe(2);
+  });
 });

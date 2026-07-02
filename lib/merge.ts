@@ -122,11 +122,8 @@ function mergeDashboard(a: Workspace, b: Workspace): Workspace['dashboard'] {
 
 function pickActiveWorkspace(local: VaultData, remote: VaultData, workspaces: Workspace[]): string | undefined {
   const ids = new Set(workspaces.map((w) => w.id));
-  const localAt = local.settings.updatedAt ?? 0;
-  const remoteAt = remote.settings.updatedAt ?? 0;
-  const preferred =
-    remoteAt > localAt ? remote.activeWorkspaceId : local.activeWorkspaceId;
-  if (preferred && ids.has(preferred)) return preferred;
+  // activeWorkspaceId 是当前设备的 UI 状态，不参与多端内容冲突裁决。
+  // 同步拉回远端内容时必须优先保留本机当前工作区，避免页面在自动同步后跳到另一台设备的工作区。
   if (local.activeWorkspaceId && ids.has(local.activeWorkspaceId)) return local.activeWorkspaceId;
   if (remote.activeWorkspaceId && ids.has(remote.activeWorkspaceId)) return remote.activeWorkspaceId;
   return workspaces[0]?.id;

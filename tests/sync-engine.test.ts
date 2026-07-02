@@ -7,7 +7,7 @@ import {
   syncWithProvider,
 } from '../lib/sync-providers/engine';
 import type { PushResult, RemoteSnapshot, SyncProvider } from '../lib/sync-providers/types';
-import type { EncryptedVault, KdfConfig, Project, VaultData } from '../lib/types';
+import type { EncryptedVault, KdfConfig, Project, VaultData, Workspace } from '../lib/types';
 import { createEncryptedVault, decryptVaultData, emptyVaultData } from '../lib/vault-core';
 
 // 测试用快 KDF（不影响逻辑，只为不跑 19MiB Argon2）。
@@ -19,6 +19,34 @@ function project(id: string, name: string, updatedAt: number): Project {
 
 function vaultData(projects: Project[]): VaultData {
   return { ...emptyVaultData(), projects };
+}
+
+function workspace(
+  id: string,
+  name: string,
+  projects: Project[],
+  updatedAt: number,
+): Workspace {
+  return {
+    id,
+    name,
+    projects,
+    createdAt: updatedAt,
+    updatedAt,
+  };
+}
+
+function vaultDataWithWorkspaces(
+  workspaces: Workspace[],
+  activeWorkspaceId: string,
+  settingsUpdatedAt: number,
+): VaultData {
+  const data = emptyVaultData();
+  data.workspaces = workspaces;
+  data.activeWorkspaceId = activeWorkspaceId;
+  data.projects = workspaces.find((w) => w.id === activeWorkspaceId)?.projects ?? [];
+  data.settings.updatedAt = settingsUpdatedAt;
+  return data;
 }
 
 async function makeVault(projects: Project[], password: string) {
@@ -115,6 +143,29 @@ describe('syncWithProvider', () => {
     // 远端被推送为合并结果
     const remoteData = await decryptVaultData(provider.remote!, dek);
     expect(ids(remoteData)).toEqual(['p1', 'p2']);
+  });
+
+  it('同库：合并远端新增工作区并保留本机当前工作区镜像', async () => {
+    const company = workspace('ws-company', '公司', [project('p1', 'A', 1000)], 1000);
+    const personal = workspace('ws-personal', '个人', [project('p2', 'B', 2000)], 2000);
+    const localData = vaultDataWithWorkspaces([company], company.id, 1000);
+    const remoteData = vaultDataWithWorkspaces([company, personal], personal.id, 2000);
+    const { encrypted, dek } = await createEncryptedVault(localData, 'pw', FAST_KDF);
+    const { reencryptData } = await import('../lib/vault-core');
+    const remote = await reencryptData(encrypted, remoteData, dek);
+    const provider = new FakeProvider(remote);
+
+    const out = await syncWithProvider(provider, encrypted, dek);
+    const merged = await decryptVaultData(out.mergedEncrypted!, dek);
+
+    expect(merged.workspaces?.map((w) => w.name).sort()).toEqual(['个人', '公司']);
+    expect(merged.activeWorkspaceId).toBe(company.id);
+    expect(merged.projects.map((p) => p.id)).toEqual(['p1']);
+    const syncedRemote = await decryptVaultData(provider.remote!, dek);
+    expect(syncedRemote.workspaces?.map((w) => w.id).sort()).toEqual([
+      'ws-company',
+      'ws-personal',
+    ]);
   });
 
   it('异库且未提供密码：抛 foreign_vault', async () => {

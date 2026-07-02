@@ -14,6 +14,16 @@ function decodeVault(b64: string): EncryptedVault {
   return JSON.parse(decodeUtf8(fromB64(b64.replace(/\s/g, '')))) as EncryptedVault;
 }
 
+async function readJsonOrNull<T>(response: Response): Promise<T | null> {
+  const text = await response.text();
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 export function createGitProvider(target: GitTarget): SyncProvider {
   if (target.type === 'gitlab') return new GitLabProvider(target);
   if (target.type === 'gitee') return new GiteeProvider(target);
@@ -233,8 +243,8 @@ class GiteeProvider implements SyncProvider {
       return { ok: false, current: await this.pull() };
     }
     if (!r.ok) throw new SyncProviderError(`Gitee 写入失败 ${r.status}`, 'http');
-    const j = (await r.json()) as { content?: { sha?: string } };
-    return { ok: true, tag: j.content?.sha ?? (await this.pull())?.tag ?? '' };
+    const j = await readJsonOrNull<{ content?: { sha?: string } }>(r);
+    return { ok: true, tag: j?.content?.sha ?? (await this.pull())?.tag ?? '' };
   }
 
   async remove(): Promise<void> {

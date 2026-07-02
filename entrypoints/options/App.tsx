@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import {
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -35,7 +36,7 @@ import {
 } from 'lucide-react';
 import { LockScreen } from '@/components/LockScreen';
 import { TotpBadge } from '@/components/TotpBadge';
-import { Avatar, Button, Segmented, Select, cx } from '@/components/ui';
+import { Avatar, Button, Segmented, cx } from '@/components/ui';
 import { useVault } from '@/hooks/useVault';
 import { getOrigin } from '@/lib/autofill';
 import { biometricUnlock } from '@/lib/bio-unlock';
@@ -95,7 +96,7 @@ import { FeatureOnboardingModal } from './BackupGuard';
 type Editing =
   | { kind: 'project'; project?: Project }
   | { kind: 'env'; projectId: string; env?: Environment }
-  | { kind: 'link'; projectId: string; envId: string; link?: PlatformLink }
+  | { kind: 'link'; workspaceId: string; projectId: string; envId: string; link?: PlatformLink }
   | {
       kind: 'account';
       projectId: string;
@@ -179,6 +180,8 @@ export default function App() {
   const [navW, setNavW] = useState(232);
   const [navCollapsed, setNavCollapsed] = useState(false);
   const navWRef = useRef(232);
+  const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   navWRef.current = navW;
   useEffect(() => {
     browser.storage.local
@@ -192,6 +195,22 @@ export default function App() {
       })
       .catch(() => {});
   }, []);
+  useEffect(() => {
+    if (!workspaceMenuOpen) return;
+    const closeOnPointerDown = (e: PointerEvent) => {
+      const root = workspaceMenuRef.current;
+      if (root && !root.contains(e.target as Node)) setWorkspaceMenuOpen(false);
+    };
+    const closeOnEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setWorkspaceMenuOpen(false);
+    };
+    window.addEventListener('pointerdown', closeOnPointerDown);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('pointerdown', closeOnPointerDown);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [workspaceMenuOpen]);
   const [docsProjectId, setDocsProjectId] = useState<string | null>(null);
   const [bigScreenId, setBigScreenId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -564,6 +583,7 @@ export default function App() {
   };
 
   const saveLinkDraft = async (
+    sourceWorkspaceId: string,
     sourceProjectId: string,
     sourceEnvId: string,
     existing: PlatformLink | undefined,
@@ -585,8 +605,8 @@ export default function App() {
   ) => {
     if (!data) return;
     let nextProjectId: string | null = null;
-    let nextWorkspaceId: string | null = null;
     let movedLocation = false;
+    let movedAcrossWorkspace = false;
     try {
       const draft = structuredClone(data);
       prepareWorkspaceDraft(draft);
@@ -594,7 +614,7 @@ export default function App() {
       const now = Date.now();
       const workspaceList = draft.workspaces ?? [];
       const sourceWorkspace =
-        workspaceList.find((ws) => ws.id === activeWorkspace?.id) ?? workspaceList[0];
+        workspaceList.find((ws) => ws.id === sourceWorkspaceId) ?? workspaceList[0];
       if (!sourceWorkspace) throw new Error('找不到当前工作区');
       const sourceProject = sourceWorkspace.projects.find((p) => p.id === sourceProjectId);
       if (!sourceProject) throw new Error('找不到当前项目');
@@ -663,12 +683,9 @@ export default function App() {
       }
 
       movedLocation = targetWorkspace.id !== sourceWorkspace.id || targetProject.id !== sourceProject.id;
-      if (movedLocation) {
+      movedAcrossWorkspace = targetWorkspace.id !== sourceWorkspace.id;
+      if (movedLocation && !movedAcrossWorkspace) {
         nextProjectId = targetProject.id;
-        nextWorkspaceId = targetWorkspace.id;
-      }
-      if (nextWorkspaceId && nextWorkspaceId !== activeWorkspace?.id) {
-        switchActiveWorkspace(draft, nextWorkspaceId);
       }
       await vault.save(draft);
     } catch (e) {
@@ -683,7 +700,9 @@ export default function App() {
       setSelectedId(nextProjectId);
       setShowHome(false);
       setPage(null);
-      flash(nextWorkspaceId && nextWorkspaceId !== activeWorkspace?.id ? '已移动到目标工作区' : '已移动链接');
+      flash('已移动链接');
+    } else if (movedAcrossWorkspace) {
+      flash('已移动到目标工作区');
     }
   };
 
@@ -761,44 +780,93 @@ export default function App() {
           </button>
         </div>
 
-        <div className="mb-2 flex items-center gap-1">
-          <Select
-            value={activeWorkspace?.id ?? ''}
-            onChange={(e) => void changeWorkspace(e.target.value)}
+        <div ref={workspaceMenuRef} className="relative mb-2">
+          <button
+            type="button"
             title="切换工作区"
-            className="h-8 flex-1 rounded-md border-gray-200 bg-gray-50 px-2 py-1 text-xs font-semibold"
+            aria-haspopup="menu"
+            aria-expanded={workspaceMenuOpen}
+            onClick={() => setWorkspaceMenuOpen((v) => !v)}
+            className="flex h-9 w-full items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2.5 text-left text-xs font-semibold text-gray-900 transition hover:border-brand-200 hover:bg-pribg focus:border-brand-500 focus:bg-surface focus:outline-none focus:ring-2 focus:ring-brand-100"
           >
-            {workspaces.map((ws) => (
-              <option key={ws.id} value={ws.id}>
-                {ws.name}
-              </option>
-            ))}
-          </Select>
-          <button
-            type="button"
-            title="重命名工作区"
-            onClick={renameCurrentWorkspace}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-          >
-            <Pencil size={13} />
+            <span className="min-w-0 flex-1 truncate">{activeWorkspace?.name ?? '工作区'}</span>
+            <ChevronDown
+              size={14}
+              className={cx('shrink-0 text-gray-400 transition-transform', workspaceMenuOpen && 'rotate-180')}
+            />
           </button>
-          <button
-            type="button"
-            title="新建工作区"
-            onClick={addWorkspace}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-brand-600"
-          >
-            <Plus size={14} />
-          </button>
-          {workspaces.length > 1 && (
-            <button
-              type="button"
-              title="删除当前工作区"
-              onClick={deleteCurrentWorkspace}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+
+          {workspaceMenuOpen && (
+            <div
+              role="menu"
+              className="absolute left-0 right-0 top-full z-40 mt-1 overflow-hidden rounded-lg border border-gray-200 bg-surface shadow-xl shadow-gray-200/60"
             >
-              <Trash2 size={13} />
-            </button>
+              <div className="max-h-56 overflow-auto p-1">
+                {workspaces.map((ws) => {
+                  const active = ws.id === activeWorkspace?.id;
+                  return (
+                    <button
+                      key={ws.id}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setWorkspaceMenuOpen(false);
+                        void changeWorkspace(ws.id);
+                      }}
+                      className={cx(
+                        'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition',
+                        active
+                          ? 'bg-pribg font-semibold text-prid'
+                          : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900',
+                      )}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{ws.name}</span>
+                      {active && <Check size={13} className="shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="border-t border-gray-100 p-1">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setWorkspaceMenuOpen(false);
+                    void renameCurrentWorkspace();
+                  }}
+                  className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                >
+                  <Pencil size={13} className="shrink-0 text-gray-400" />
+                  <span className="min-w-0 flex-1 truncate">重命名当前工作区</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setWorkspaceMenuOpen(false);
+                    void addWorkspace();
+                  }}
+                  className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-gray-600 hover:bg-gray-50 hover:text-brand-700"
+                >
+                  <Plus size={14} className="shrink-0 text-gray-400" />
+                  <span className="min-w-0 flex-1 truncate">新建工作区</span>
+                </button>
+                {workspaces.length > 1 && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setWorkspaceMenuOpen(false);
+                      void deleteCurrentWorkspace();
+                    }}
+                    className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-gray-600 hover:bg-rose-50 hover:text-rose-700"
+                  >
+                    <Trash2 size={13} className="shrink-0 text-gray-400" />
+                    <span className="min-w-0 flex-1 truncate">删除当前工作区</span>
+                  </button>
+                )}
+              </div>
+            </div>
           )}
         </div>
 
@@ -1051,9 +1119,22 @@ export default function App() {
                 addDeleteTombstone(d, env.id, env.updatedAt);
               });
             }}
-            onAddLink={() => setEditing({ kind: 'link', projectId: selected.id, envId: '' })}
+            onAddLink={() =>
+              setEditing({
+                kind: 'link',
+                workspaceId: activeWorkspace?.id ?? '',
+                projectId: selected.id,
+                envId: '',
+              })
+            }
             onEditLink={(envId, link) =>
-              setEditing({ kind: 'link', projectId: selected.id, envId, link })
+              setEditing({
+                kind: 'link',
+                workspaceId: activeWorkspace?.id ?? '',
+                projectId: selected.id,
+                envId,
+                link,
+              })
             }
             onDeleteLink={async (envId, link) => {
               if (!(await confirm({ message: `删除链接「${link.name}」？`, danger: true }))) return;
@@ -1154,14 +1235,14 @@ export default function App() {
             {
               projects,
               workspaces,
-              workspaceId: activeWorkspace?.id ?? '',
+              workspaceId: editing.workspaceId,
               projectId: editing.projectId,
               envId: editing.envId,
             }
           }
           onClose={() => setEditing(null)}
           onSave={async (v, target) => {
-            await saveLinkDraft(editing.projectId, editing.envId, editing.link, v, target);
+            await saveLinkDraft(editing.workspaceId, editing.projectId, editing.envId, editing.link, v, target);
             setEditing(null);
           }}
         />

@@ -5,7 +5,7 @@ import {
   createWorkspace,
   switchActiveWorkspace,
 } from '../lib/workspace';
-import type { VaultData, Workspace } from '../lib/types';
+import type { Project, VaultData, Workspace } from '../lib/types';
 import { newProject } from '../lib/vault-ops';
 
 const kdf = { type: 'pbkdf2' as const, iterations: 1, hash: 'SHA-256' as const };
@@ -20,7 +20,7 @@ function ws(id: string, name: string, projectNames: string[] = []): Workspace {
   };
 }
 
-function vault(workspaces: Workspace[], activeWorkspaceId: string, projects = []): VaultData {
+function vault(workspaces: Workspace[], activeWorkspaceId: string, projects: Project[] = []): VaultData {
   return {
     version: 1,
     projects,
@@ -51,5 +51,23 @@ describe('工作区数据安全', () => {
     expect(data.activeWorkspaceId).toBe('wsDefault');
     expect(data.projects.map((p) => p.name)).toEqual(['A', 'B']); // 默认项目仍在
     expect((data.workspaces ?? []).find((w) => w.name === '个人')).toBeTruthy(); // 个人未丢
+  });
+
+  it('新建工作区经过前后台两次 commit 后仍保留并激活', () => {
+    const def = ws('wsDefault', '默认工作区', ['A', 'B']);
+    const data = vault([def], 'wsDefault', structuredClone(def.projects));
+
+    createWorkspace(data, '个人', 100);
+    commitWorkspaceDraft(data, 101); // useVault.save 发送前
+    const messageData = structuredClone(data);
+    commitWorkspaceDraft(messageData, 102); // background.persistData 保存前
+
+    expect((messageData.workspaces ?? []).map((w) => w.name)).toEqual(['默认工作区', '个人']);
+    expect(messageData.activeWorkspaceId).toBe(
+      (messageData.workspaces ?? []).find((w) => w.name === '个人')?.id,
+    );
+    expect(messageData.projects).toHaveLength(0);
+    switchActiveWorkspace(messageData, 'wsDefault', 103);
+    expect(messageData.projects.map((p) => p.name)).toEqual(['A', 'B']);
   });
 });

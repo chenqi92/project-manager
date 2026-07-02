@@ -89,7 +89,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
             onChange={(e) => setInput(e.target.value)}
             placeholder={state.opts.placeholder}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') settle(input);
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) settle(input);
             }}
           />
           <div className="mt-5 flex justify-end gap-2">

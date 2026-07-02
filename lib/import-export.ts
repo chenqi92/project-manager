@@ -22,7 +22,7 @@ import {
   newProject,
   uid,
 } from './vault-ops';
-import { ensureVaultWorkspaces } from './workspace';
+import { DEFAULT_WORKSPACE_NAME, ensureVaultWorkspaces, workspaceListForRead } from './workspace';
 import { parseMigrationUri } from './otp-migration';
 import type {
   Account,
@@ -190,6 +190,7 @@ export function mergeVaults(
 // --------------------------- CSV ---------------------------
 
 const OWN_CSV_HEADER = [
+  'workspace',
   'project',
   'environment',
   'env_kind',
@@ -207,42 +208,46 @@ const OWN_CSV_HEADER = [
 
 function toCsv(data: VaultData): string {
   const rows: string[][] = [OWN_CSV_HEADER];
-  for (const p of data.projects) {
-    for (const e of p.environments) {
-      for (const l of e.links) {
-        if (l.accounts.length === 0) {
-          rows.push([
-            p.name,
-            e.name,
-            e.kind,
-            l.name,
-            l.url,
-            l.matchMode ?? 'origin',
-            '',
-            '',
-            '',
-            '',
-            l.note ?? '',
-            fieldsCell(l.customFields),
-            '',
-          ]);
-        }
-        for (const a of l.accounts) {
-          rows.push([
-            p.name,
-            e.name,
-            e.kind,
-            l.name,
-            l.url,
-            l.matchMode ?? 'origin',
-            a.label,
-            a.username,
-            a.password,
-            a.totp ?? '',
-            a.note ?? '',
-            fieldsCell(l.customFields),
-            fieldsCell(a.customFields),
-          ]);
+  for (const ws of workspaceListForRead(data)) {
+    for (const p of ws.projects) {
+      for (const e of p.environments) {
+        for (const l of e.links) {
+          if (l.accounts.length === 0) {
+            rows.push([
+              ws.name,
+              p.name,
+              e.name,
+              e.kind,
+              l.name,
+              l.url,
+              l.matchMode ?? 'origin',
+              '',
+              '',
+              '',
+              '',
+              l.note ?? '',
+              fieldsCell(l.customFields),
+              '',
+            ]);
+          }
+          for (const a of l.accounts) {
+            rows.push([
+              ws.name,
+              p.name,
+              e.name,
+              e.kind,
+              l.name,
+              l.url,
+              l.matchMode ?? 'origin',
+              a.label,
+              a.username,
+              a.password,
+              a.totp ?? '',
+              a.note ?? '',
+              fieldsCell(l.customFields),
+              fieldsCell(a.customFields),
+            ]);
+          }
         }
       }
     }
@@ -256,6 +261,7 @@ function fromOwnCsv(content: string): VaultData {
   const builder = new VaultBuilder();
   for (const row of rows) {
     builder.add({
+      workspace: row[idx('workspace')] ?? '',
       project: row[idx('project')] ?? '导入',
       environment: row[idx('environment')] ?? '',
       envKind: (row[idx('env_kind')] as Environment['kind']) || 'other',
@@ -380,6 +386,7 @@ function fromGoogleAuthenticator(content: string): VaultData {
 // --------------------------- 内部工具 ---------------------------
 
 interface FlatRow {
+  workspace?: string;
   project: string;
   environment: string;
   envKind: Environment['kind'];
@@ -400,7 +407,8 @@ class VaultBuilder {
   private data: VaultData = emptyVaultData();
 
   add(r: FlatRow): void {
-    const proj = this.upsertProject(r.project);
+    const workspace = this.upsertWorkspace(r.workspace);
+    const proj = this.upsertProject(workspace, r.project);
     const env = this.upsertEnv(proj, r.environment, r.envKind);
     const link = this.upsertLink(env, r.link, r.url, r.matchMode);
     if (r.linkFields?.length && !link.customFields?.length) {
@@ -427,12 +435,32 @@ class VaultBuilder {
     return this.data;
   }
 
-  private upsertProject(name: string): Project {
+  private upsertWorkspace(name: string | undefined): Workspace {
+    const key = (name ?? '').replace(/\s+/g, ' ').trim() || DEFAULT_WORKSPACE_NAME;
+    const workspaces = this.data.workspaces ?? (this.data.workspaces = []);
+    let ws = workspaces.find((x) => x.name === key);
+    if (!ws) {
+      const t = Date.now();
+      ws = {
+        id: uid(),
+        name: key,
+        projects: [],
+        createdAt: t,
+        updatedAt: t,
+      };
+      workspaces.push(ws);
+    }
+    if (!this.data.activeWorkspaceId) this.data.activeWorkspaceId = ws.id;
+    return ws;
+  }
+
+  private upsertProject(workspace: Workspace, name: string): Project {
     const key = name.trim() || '导入';
-    let p = this.data.projects.find((x) => x.name === key);
+    let p = workspace.projects.find((x) => x.name === key);
     if (!p) {
       p = newProject({ name: key });
-      this.data.projects.push(p);
+      workspace.projects.push(p);
+      workspace.updatedAt = Math.max(workspace.updatedAt ?? 0, p.updatedAt);
     }
     return p;
   }

@@ -14,6 +14,50 @@ function vault(projects: Project[], tombstones: VaultData['tombstones'] = []): V
 
 const NOW = 1_000_000_000_000;
 
+function projectWithId(id: string, name: string, updatedAt: number): Project {
+  return {
+    ...newProject({ name }),
+    id,
+    environments: [],
+    createdAt: updatedAt,
+    updatedAt,
+  };
+}
+
+function workspaceWithProjects(
+  id: string,
+  name: string,
+  projects: Project[],
+  updatedAt: number,
+): Workspace {
+  return {
+    id,
+    name,
+    projects,
+    createdAt: updatedAt,
+    updatedAt,
+  };
+}
+
+function workspaceVault(
+  workspaces: Workspace[],
+  activeWorkspaceId: string,
+  settingsUpdatedAt: number,
+): VaultData {
+  return {
+    version: 1,
+    projects: workspaces.find((w) => w.id === activeWorkspaceId)?.projects ?? [],
+    settings: {
+      autoLockMinutes: 15,
+      kdf: { type: 'pbkdf2', iterations: 1, hash: 'SHA-256' },
+      updatedAt: settingsUpdatedAt,
+    },
+    workspaces,
+    activeWorkspaceId,
+    tombstones: [],
+  };
+}
+
 describe('mergeVaultData', () => {
   it('一边新增的项目会被保留', () => {
     const p = newProject({ name: 'A' });
@@ -67,6 +111,32 @@ describe('mergeVaultData', () => {
     const wsIds = (m.workspaces ?? []).map((w) => w.id);
     expect(wsIds).toEqual(['wsB']);
     expect(wsIds).not.toContain('wsA');
+  });
+
+  it('同步合并会保留双方新增的工作区，并保留本机当前工作区镜像', () => {
+    const company = workspaceWithProjects(
+      'ws-company',
+      '公司',
+      [projectWithId('p-company', '公司项目', 100)],
+      100,
+    );
+    const personal = workspaceWithProjects(
+      'ws-personal',
+      '个人',
+      [projectWithId('p-personal', '个人项目', 200)],
+      200,
+    );
+    const local = workspaceVault([company], company.id, 100);
+    const remote = workspaceVault([personal], personal.id, 200);
+
+    const m = mergeVaultData(local, remote, NOW);
+
+    expect((m.workspaces ?? []).map((w) => w.name).sort()).toEqual(['个人', '公司']);
+    expect(m.activeWorkspaceId).toBe(company.id);
+    expect(m.projects.map((p) => p.id)).toEqual(['p-company']);
+    expect(m.workspaces?.find((w) => w.id === company.id)?.projects.map((p) => p.id)).toEqual([
+      'p-company',
+    ]);
   });
 
   it('删除后又被编辑（updatedAt 晚于删除）则保留', () => {

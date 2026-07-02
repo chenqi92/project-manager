@@ -63,7 +63,7 @@ function ExportCard({ data, onBackedUp }: { data: VaultData; onBackedUp?: () => 
   const [selected, setSelected] = useState<Set<string>>(() => new Set(allIds));
 
   const scopeIds = selected.size === allIds.length ? undefined : [...selected];
-  const scopeNote = scopeIds ? `（${selected.size} 个当前工作区项目）` : '（整库；CSV 为当前工作区全部项目）';
+  const scopeNote = scopeIds ? `（${selected.size} 个当前工作区项目）` : '（整库）';
   const toggle = (id: string) =>
     setSelected((s) => {
       const n = new Set(s);
@@ -120,7 +120,7 @@ function ExportCard({ data, onBackedUp }: { data: VaultData; onBackedUp?: () => 
         onClick={() => setScopeOpen((s) => !s)}
         className="mt-3 text-[11.5px] font-semibold text-brand-600 hover:underline"
       >
-        导出范围：{scopeIds ? `${selected.size} 个当前工作区项目` : '当前工作区全部项目'} {scopeOpen ? '▾' : '▸'}
+        导出范围：{scopeIds ? `${selected.size} 个当前工作区项目` : '整库（全部工作区）'} {scopeOpen ? '▾' : '▸'}
       </button>
       {scopeOpen && (
         <div className="mt-2 rounded-[11px] border border-gray-200 p-2.5">

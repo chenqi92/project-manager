@@ -13,6 +13,7 @@ import { buildExport, mergeVaults, parseImport } from '@/lib/import-export';
 import type { Msg, MsgResponse } from '@/lib/messaging';
 import { authorizeDrive } from '@/lib/oauth';
 import { vaultBackend } from '@/lib/storage';
+import { hasSyncRelevantChange } from '@/lib/sync-change';
 import { SyncClient } from '@/lib/sync';
 import { generateTotp, parseTotp } from '@/lib/totp';
 import {
@@ -320,8 +321,9 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
 
     case 'vault:save': {
       await requireUnlocked();
+      const before = structuredClone(cachedData!);
       await persistData(msg.data);
-      scheduleAutoSync();
+      if (hasSyncRelevantChange(before, cachedData!)) scheduleAutoSync();
       return;
     }
 
@@ -1661,7 +1663,7 @@ function resetLockTimer(): void {
 }
 
 function settingsFingerprint(settings: VaultSettings): string {
-  const { updatedAt: _updatedAt, ...rest } = settings;
+  const { dashboard: _dashboard, updatedAt: _updatedAt, ...rest } = settings;
   return JSON.stringify(rest);
 }
 

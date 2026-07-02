@@ -2,10 +2,28 @@
 import { describe, expect, it } from 'vitest';
 import { buildExport, mergeVaults, parseImport } from '../lib/import-export';
 import { createEncryptedVault, emptyVaultData } from '../lib/vault-core';
-import type { VaultData } from '../lib/types';
+import type { Project, VaultData, Workspace } from '../lib/types';
 import { newAccount, newEnvironment, newLink, newProject } from '../lib/vault-ops';
 
 const KDF = { type: 'pbkdf2', iterations: 1, hash: 'SHA-256' } as const;
+
+function projectWithLogin(name: string, username: string): Project {
+  const now = Date.now();
+  const link = newLink({ name: '后台', url: `https://${username}.example.test` });
+  link.accounts.push(newAccount({ label: '管理员', username, password: 'pw' }));
+  return {
+    id: crypto.randomUUID(),
+    name,
+    environments: [newEnvironment({ name: '生产', kind: 'prod', links: [link] })],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function workspace(id: string, name: string, projects: Project[]): Workspace {
+  const now = Date.now();
+  return { id, name, projects, createdAt: now, updatedAt: now };
+}
 
 function jsonVault(): VaultData {
   const now = Date.now();
@@ -236,6 +254,33 @@ describe('导入合并', () => {
 });
 
 describe('CSV 导出', () => {
+  it('多工作区 CSV 往返会保留工作区边界', async () => {
+    const company = workspace('ws-company', '公司', [projectWithLogin('同名项目', 'company-admin')]);
+    const personal = workspace('ws-personal', '个人', [projectWithLogin('同名项目', 'personal-admin')]);
+    const data = emptyVaultData();
+    data.workspaces = [company, personal];
+    data.activeWorkspaceId = company.id;
+    data.projects = company.projects;
+
+    const csv = (await buildExport(data, 'csv')).content;
+    const imported = await parseImport('csv', csv);
+
+    expect(csv.split(/\r?\n/)[0]).toContain('workspace');
+    expect(csv).toContain('公司');
+    expect(csv).toContain('个人');
+    expect(imported.workspaces?.map((w) => w.name)).toEqual(['公司', '个人']);
+    expect(
+      imported.workspaces
+        ?.find((w) => w.name === '公司')
+        ?.projects[0]?.environments[0]?.links[0]?.accounts[0]?.username,
+    ).toBe('company-admin');
+    expect(
+      imported.workspaces
+        ?.find((w) => w.name === '个人')
+        ?.projects[0]?.environments[0]?.links[0]?.accounts[0]?.username,
+    ).toBe('personal-admin');
+  });
+
   it('自定义字段可以随 CSV 往返导入导出', async () => {
     const now = Date.now();
     const data = emptyVaultData();
