@@ -44,6 +44,7 @@ export function newLink(p: Partial<PlatformLink> = {}): PlatformLink {
     envName: p.envName,
     url: p.url ?? '',
     urls: p.urls,
+    matchMode: p.matchMode,
     gitRepos: p.gitRepos,
     note: p.note,
     customFields: p.customFields,
@@ -144,12 +145,37 @@ export function addTombstone(data: VaultData, id: string): void {
 
 const DEFAULT_ENV_NAME = '默认';
 
-function normalizeEnvName(name: string | undefined): string {
-  return (name ?? '').replace(/\s+/g, ' ').trim() || DEFAULT_ENV_NAME;
+export const ENV_KIND_LABELS: Record<Environment['kind'], string> = {
+  dev: '开发',
+  test: '测试',
+  staging: '预发',
+  prod: '生产',
+  other: '其它',
+};
+
+export const ENV_KIND_COLORS: Record<Environment['kind'], string> = {
+  dev: 'bg-sky-100 text-sky-700',
+  test: 'bg-amber-100 text-amber-700',
+  staging: 'bg-violet-100 text-violet-700',
+  prod: 'bg-rose-100 text-rose-700',
+  other: 'bg-gray-100 text-gray-600',
+};
+
+function cleanEnvName(name: string | undefined): string {
+  return (name ?? '').replace(/\s+/g, ' ').trim();
+}
+
+export function envTagName(kind: Environment['kind'], name: string | undefined): string {
+  const normalized = cleanEnvName(name);
+  return !normalized || normalized === DEFAULT_ENV_NAME ? ENV_KIND_LABELS[kind] : normalized;
+}
+
+function normalizeEnvName(kind: Environment['kind'], name: string | undefined): string {
+  return envTagName(kind, name);
 }
 
 function envKey(env: Environment): string {
-  return `${env.kind}\0${normalizeEnvName(env.name).toLowerCase()}`;
+  return `${env.kind}\0${normalizeEnvName(env.kind, env.name).toLowerCase()}`;
 }
 
 function mergeText(a: string | undefined, b: string | undefined): string | undefined {
@@ -251,7 +277,7 @@ function normalizeProjects(projects: Project[], data: VaultData, timestamp: numb
     const byKey = new Map<string, Environment>();
 
     for (const env of project.environments) {
-      const name = normalizeEnvName(env.name);
+      const name = normalizeEnvName(env.kind, env.name);
       if (env.name !== name) {
         env.name = name;
         env.updatedAt = Math.max(env.updatedAt, timestamp);
@@ -259,8 +285,8 @@ function normalizeProjects(projects: Project[], data: VaultData, timestamp: numb
       }
 
       for (const link of env.links) {
-        const linkEnvName = normalizeEnvName(link.envName || env.name);
         const linkEnvKind = link.envKind || env.kind;
+        const linkEnvName = normalizeEnvName(linkEnvKind, link.envName || env.name);
         if (link.envName !== linkEnvName || link.envKind !== linkEnvKind) {
           link.envName = linkEnvName;
           link.envKind = linkEnvKind;
@@ -294,19 +320,3 @@ function normalizeProjects(projects: Project[], data: VaultData, timestamp: numb
 
   return changed;
 }
-
-export const ENV_KIND_LABELS: Record<Environment['kind'], string> = {
-  dev: '开发',
-  test: '测试',
-  staging: '预发',
-  prod: '生产',
-  other: '其它',
-};
-
-export const ENV_KIND_COLORS: Record<Environment['kind'], string> = {
-  dev: 'bg-sky-100 text-sky-700',
-  test: 'bg-amber-100 text-amber-700',
-  staging: 'bg-violet-100 text-violet-700',
-  prod: 'bg-rose-100 text-rose-700',
-  other: 'bg-gray-100 text-gray-600',
-};

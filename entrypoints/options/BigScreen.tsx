@@ -16,7 +16,7 @@ import { MemoRow } from '@/components/MemoRow';
 import { cx } from '@/components/ui';
 import type { Project } from '@/lib/types';
 import { sortMemos } from '@/lib/memo';
-import { ENV_KIND_COLORS, ENV_KIND_LABELS, gitCloneCommand, linkUrls } from '@/lib/vault-ops';
+import { ENV_KIND_COLORS, ENV_KIND_LABELS, envTagName, gitCloneCommand, linkUrls } from '@/lib/vault-ops';
 
 /** 项目大屏展示：链接 / 账号 / 备忘 / 说明文档，密码默认隐藏（可切换）。 */
 export function BigScreen({ project, onClose }: { project: Project; onClose: () => void }) {
@@ -79,13 +79,15 @@ export function BigScreen({ project, onClose }: { project: Project; onClose: () 
             {project.environments.length === 0 ? (
               <Empty>还没有环境</Empty>
             ) : (
-              project.environments.map((env) => (
+              project.environments.map((env) => {
+                const tagName = envTagName(env.kind, env.name);
+                return (
                 <div key={env.id} className="rounded-2xl border border-gray-200 bg-surface p-4">
                   <div className="mb-3 flex items-center gap-2">
                     <span className={cx('rounded px-2 py-0.5 text-xs font-medium', ENV_KIND_COLORS[env.kind])}>
                       {ENV_KIND_LABELS[env.kind]}
                     </span>
-                    <span className="font-semibold">{env.name}</span>
+                    {tagName !== ENV_KIND_LABELS[env.kind] && <span className="font-semibold">{tagName}</span>}
                   </div>
                   {(env.gitRepos ?? []).length > 0 && (
                     <div className="mb-3 flex flex-wrap gap-1.5">
@@ -160,7 +162,8 @@ export function BigScreen({ project, onClose }: { project: Project; onClose: () 
                     ))}
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
           </section>
 

@@ -3,9 +3,9 @@
 // 保留当前路径，构造跳转到对应环境的 URL。
 // 例：dev 的 https://admin-dev.x.com/orders/9 -> prod 的 https://admin.x.com/orders/9
 // ---------------------------------------------------------------------------
-import { getOrigin, originsMatch } from './autofill';
+import { getOrigin, linkMatchesUrl } from './autofill';
 import type { VaultData } from './types';
-import { linkUrls } from './vault-ops';
+import { envTagName, linkUrls } from './vault-ops';
 
 export interface EnvTarget {
   envId: string;
@@ -37,7 +37,7 @@ export function envSwitchTargets(data: VaultData, currentUrl: string): EnvSwitch
   for (const project of data.projects) {
     for (const env of project.environments) {
       for (const link of env.links) {
-        if (!linkUrls(link).some((u) => originsMatch(u, currentUrl))) continue;
+        if (!linkMatchesUrl(link, currentUrl)) continue;
 
         const targets: EnvTarget[] = [];
         for (const other of project.environments) {
@@ -46,19 +46,21 @@ export function envSwitchTargets(data: VaultData, currentUrl: string): EnvSwitch
           if (!sibling) continue;
           const base = getOrigin(sibling.url);
           if (base) {
+            const envKind = sibling.envKind ?? other.kind;
             targets.push({
               envId: other.id,
-              envName: other.name,
-              envKind: other.kind,
+              envName: envTagName(envKind, sibling.envName ?? other.name),
+              envKind,
               linkId: sibling.id,
               targetUrl: base + path,
             });
           }
         }
         if (targets.length) {
+          const currentEnvKind = link.envKind ?? env.kind;
           return {
             projectName: project.name,
-            currentEnvName: env.name,
+            currentEnvName: envTagName(currentEnvKind, link.envName ?? env.name),
             linkName: link.name,
             targets,
           };

@@ -7,6 +7,8 @@
 //  - 默认不自动提交；仅当用户在设置里显式开启时，才在填充后提交。
 // ---------------------------------------------------------------------------
 
+import type { LinkMatchMode, PlatformLink } from './types';
+
 export function getOrigin(url: string): string | null {
   try {
     const u = new URL(url);
@@ -24,6 +26,56 @@ export function originsMatch(entryUrl: string, pageUrl: string): boolean {
   const a = getOrigin(entryUrl);
   const b = getOrigin(pageUrl);
   return a !== null && b !== null && a === b;
+}
+
+function parseHttpUrl(url: string): URL | null {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return u;
+  } catch {
+    return null;
+  }
+}
+
+function pathPrefixMatches(prefix: string, current: string): boolean {
+  const cleanPrefix = normalizePrefix(prefix || '/');
+  const cleanCurrent = normalizePrefix(current || '/');
+  if (cleanPrefix === '/') return true;
+  return cleanCurrent === cleanPrefix || cleanCurrent.startsWith(cleanPrefix + '/');
+}
+
+function normalizePrefix(value: string): string {
+  return value.length > 1 && value.endsWith('/') ? value.slice(0, -1) : value;
+}
+
+/** 链接 URL 与页面 URL 的匹配。origin 为旧行为；路径模式用于同域同端口下区分多个系统。 */
+export function linkUrlMatches(
+  entryUrl: string,
+  pageUrl: string,
+  mode: LinkMatchMode = 'origin',
+): boolean {
+  const entry = parseHttpUrl(entryUrl);
+  const page = parseHttpUrl(pageUrl);
+  if (!entry || !page || entry.origin !== page.origin) return false;
+  if (mode === 'origin') return true;
+  if (mode === 'exact-url') {
+    return entry.pathname === page.pathname && entry.search === page.search && entry.hash === page.hash;
+  }
+  const pathOk = pathPrefixMatches(entry.pathname, page.pathname);
+  const hashOk = !entry.hash || pathPrefixMatches(entry.hash, page.hash);
+  return pathOk && hashOk;
+}
+
+export function linkMatchesUrl(
+  link: Pick<PlatformLink, 'url' | 'urls' | 'matchMode'>,
+  pageUrl: string,
+): string | null {
+  const mode = link.matchMode ?? 'origin';
+  return [link.url, ...(link.urls ?? [])]
+    .map((u) => u.trim())
+    .filter(Boolean)
+    .find((url) => linkUrlMatches(url, pageUrl, mode)) ?? null;
 }
 
 export interface FillResult {

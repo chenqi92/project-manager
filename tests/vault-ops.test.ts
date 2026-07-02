@@ -62,7 +62,7 @@ describe('normalizeVaultData', () => {
     expect(normalizeVaultData(data, 500)).toBe(true);
 
     expect(data.projects[0]!.environments).toHaveLength(1);
-    expect(data.projects[0]!.environments[0]!.name).toBe('默认');
+    expect(data.projects[0]!.environments[0]!.name).toBe('生产');
     expect(data.projects[0]!.environments[0]!.kind).toBe('prod');
     expect(data.projects[0]!.environments[0]!.links.map((l) => l.name)).toEqual([
       '运维管理中心',

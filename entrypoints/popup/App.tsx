@@ -22,14 +22,13 @@ import {
   fillCredentialsInPage,
   getOrigin,
   isSameSite,
-  originsMatch,
   registrableDomain,
 } from '@/lib/autofill';
 import { copyWithAutoClear } from '@/lib/clipboard';
 import { envSwitchTargets } from '@/lib/env-switch';
 import { api } from '@/lib/messaging';
 import { applyTheme, watchSystemTheme } from '@/lib/theme';
-import { flatten, matchForUrl, search, type FlatEntry } from '@/lib/search';
+import { entryMatchesUrl, flatten, matchForUrl, search, type FlatEntry } from '@/lib/search';
 import { getUsage, recordUse } from '@/lib/usage';
 import type { CapturePending, EnvKind } from '@/lib/types';
 import { ENV_KIND_COLORS, ENV_KIND_LABELS, linkUrls, produce } from '@/lib/vault-ops';
@@ -193,7 +192,7 @@ export default function App() {
 
   async function doFill(entry: FlatEntry) {
     if (!tab?.id || !tab.url) return;
-    if (!originsMatch(entry.url, tab.url)) {
+    if (!entryMatchesUrl(entry, tab.url)) {
       flash('当前页面网址与该条目不一致，已阻止填充');
       return;
     }
@@ -202,7 +201,7 @@ export default function App() {
       // 注入前以标签页「当前」URL 再复核一次 origin：popup 打开后页面可能已重定向，
       // 缓存的 tab.url 只能作 UI 提示，不能作安全边界（防 TOCTOU 跨源填充）。
       const liveTab = await browser.tabs.get(tab.id);
-      if (!liveTab.url || !originsMatch(entry.url, liveTab.url)) {
+      if (!liveTab.url || !entryMatchesUrl(entry, liveTab.url)) {
         flash('当前页面网址已变化，已阻止填充');
         return;
       }
@@ -239,7 +238,7 @@ export default function App() {
     setNeedGrant(null);
     try {
       const live = await browser.tabs.get(tab.id);
-      if (!live.url || !originsMatch(entry.url, live.url)) {
+      if (!live.url || !entryMatchesUrl(entry, live.url)) {
         flash('当前页面网址已变化，已阻止填充');
         return;
       }
@@ -537,7 +536,7 @@ export default function App() {
                   <Row
                     key={e.accountId}
                     entry={e}
-                    canFill={!!tab?.url && originsMatch(e.url, tab.url)}
+                    canFill={!!tab?.url && entryMatchesUrl(e, tab.url)}
                     onFill={doFill}
                     onCopy={copy}
                     onOpenLogin={openLogin}
@@ -571,7 +570,7 @@ export default function App() {
                       <Row
                         key={e.accountId}
                         entry={e}
-                        canFill={!!tab?.url && originsMatch(e.url, tab.url)}
+                        canFill={!!tab?.url && entryMatchesUrl(e, tab.url)}
                         onFill={doFill}
                         onCopy={copy}
                         onOpenLogin={openLogin}
@@ -585,7 +584,7 @@ export default function App() {
                       <Row
                         key={e.accountId}
                         entry={e}
-                        canFill={!!tab?.url && originsMatch(e.url, tab.url)}
+                        canFill={!!tab?.url && entryMatchesUrl(e, tab.url)}
                         onFill={doFill}
                         onCopy={copy}
                         onOpenLogin={openLogin}
@@ -636,23 +635,27 @@ export default function App() {
               <div className="mt-3">
                 <Section title={`环境切换 · ${envSwitch.linkName}`}>
                   <div className="flex flex-wrap gap-2">
-                    {envSwitch.targets.map((t) => (
-                      <button
-                        key={t.envId}
-                        onClick={() => browser.tabs.create({ url: t.targetUrl })}
-                        className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-surface px-2.5 py-1.5 text-xs hover:border-brand-300"
-                      >
-                        <span
-                          className={cx(
-                            'rounded px-1.5 py-0.5 text-[10px] font-medium',
-                            ENV_KIND_COLORS[t.envKind as EnvKind] ?? ENV_KIND_COLORS.other,
-                          )}
+                    {envSwitch.targets.map((t) => {
+                      const kind = t.envKind as EnvKind;
+                      const label = ENV_KIND_LABELS[kind] ?? t.envName;
+                      return (
+                        <button
+                          key={t.envId}
+                          onClick={() => browser.tabs.create({ url: t.targetUrl })}
+                          className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-surface px-2.5 py-1.5 text-xs hover:border-brand-300"
                         >
-                          {ENV_KIND_LABELS[t.envKind as EnvKind] ?? t.envName}
-                        </span>
-                        {t.envName}
-                      </button>
-                    ))}
+                          <span
+                            className={cx(
+                              'rounded px-1.5 py-0.5 text-[10px] font-medium',
+                              ENV_KIND_COLORS[kind] ?? ENV_KIND_COLORS.other,
+                            )}
+                          >
+                            {label}
+                          </span>
+                          {t.envName !== label && t.envName}
+                        </button>
+                      );
+                    })}
                   </div>
                 </Section>
               </div>

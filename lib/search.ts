@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // 把保险箱摊平成「账号级」记录，用于全局搜索与「当前站点匹配」。
 // ---------------------------------------------------------------------------
-import { originsMatch } from './autofill';
-import type { Account, Environment, PlatformLink, Project, VaultData } from './types';
-import { linkUrls } from './vault-ops';
+import { linkMatchesUrl, linkUrlMatches } from './autofill';
+import type { Account, Environment, LinkMatchMode, PlatformLink, Project, VaultData } from './types';
+import { envTagName, linkUrls } from './vault-ops';
 
 export interface FlatEntry {
   projectId: string;
@@ -14,6 +14,8 @@ export interface FlatEntry {
   linkId: string;
   linkName: string;
   url: string;
+  matchUrls: string[];
+  matchMode: LinkMatchMode;
   accountId: string;
   accountLabel: string;
   username: string;
@@ -44,11 +46,13 @@ function buildEntry(
     projectId: p.id,
     projectName: p.name,
     envId: e.id,
-    envName: l.envName || e.name,
+    envName: envTagName(l.envKind || e.kind, l.envName || e.name),
     envKind: l.envKind || e.kind,
     linkId: l.id,
     linkName: l.name,
     url,
+    matchUrls: linkUrls(l),
+    matchMode: l.matchMode ?? 'origin',
     accountId: a.id,
     accountLabel: a.label,
     username: a.username,
@@ -99,9 +103,14 @@ export function matchForUrl(data: VaultData, pageUrl: string): FlatEntry[] {
   for (const p of data.projects)
     for (const e of p.environments)
       for (const l of e.links) {
-        const matched = linkUrls(l).find((u) => originsMatch(u, pageUrl));
+        const matched = linkMatchesUrl(l, pageUrl);
         if (!matched) continue;
         for (const a of l.accounts) out.push(buildEntry(p, e, l, a, matched));
       }
   return out;
+}
+
+export function entryMatchesUrl(entry: FlatEntry, pageUrl: string): boolean {
+  const urls = entry.matchUrls.length > 0 ? entry.matchUrls : [entry.url];
+  return urls.some((url) => linkUrlMatches(url, pageUrl, entry.matchMode));
 }

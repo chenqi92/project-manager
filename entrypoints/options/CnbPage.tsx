@@ -33,6 +33,7 @@ import {
   loadOrgRepos,
   ROOT_PROJECT,
   type CnbGroup,
+  type RepoProjectNode,
   type CnbRepo,
   type RepoGroupNode,
 } from '@/lib/cnb';
@@ -148,7 +149,7 @@ export function CnbPage({
   const totalAll = allRepos.length;
 
   return (
-    <div className="flex-1 overflow-auto p-6">
+    <div className="flex-1 overflow-auto bg-gray-50 p-6">
       {/* 连接设置 */}
       <ConnectPanel
         data={data}
@@ -161,58 +162,72 @@ export function CnbPage({
 
       {/* 工具条 */}
       {cfg.token && orgs.length > 0 && (
-        <div className="mb-4 mt-[18px] flex flex-wrap items-center gap-2.5">
-          <div className="relative min-w-[220px] flex-1">
-            <Search
-              size={15}
-              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
-            />
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="搜索仓库名 / 路径 / 描述"
-              className="pl-8"
-            />
+        <div className="mb-4 mt-[18px] rounded-[14px] border border-gray-200 bg-surface p-3 shadow-sm">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="relative min-w-[260px] flex-1">
+              <Search
+                size={15}
+                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+              />
+              <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="搜索仓库名 / 路径 / 描述"
+                className="border-gray-200 bg-gray-50 pl-8 focus:bg-surface"
+              />
+            </div>
+            {languages.length > 0 && (
+              <select
+                value={lang}
+                onChange={(e) => setLang(e.target.value)}
+                className="h-[38px] rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm text-gray-700 outline-none focus:border-brand-500 focus:bg-surface"
+              >
+                <option value="">全部语言</option>
+                {languages.map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            )}
+            {visibilities.length > 1 && (
+              <select
+                value={vis}
+                onChange={(e) => setVis(e.target.value)}
+                className="h-[38px] rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm text-gray-700 outline-none focus:border-brand-500 focus:bg-surface"
+              >
+                <option value="">全部可见性</option>
+                {visibilities.map((v) => (
+                  <option key={v} value={v}>
+                    {visLabel(v)}
+                  </option>
+                ))}
+              </select>
+            )}
+            {(q || lang || vis) && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setQ('');
+                  setLang('');
+                  setVis('');
+                }}
+              >
+                清除
+              </Button>
+            )}
+            <Button variant="outline" disabled={anyLoading} onClick={refreshAll}>
+              {anyLoading ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <RefreshCw size={14} />
+              )}{' '}
+              刷新
+            </Button>
+            <span className="ml-auto shrink-0 rounded-full bg-gray-100 px-2.5 py-1 text-[11.5px] font-semibold text-gray-500">
+              {q || lang || vis ? `${totalShown} / ${totalAll}` : `${totalAll}`} 个仓库
+            </span>
           </div>
-          {languages.length > 0 && (
-            <select
-              value={lang}
-              onChange={(e) => setLang(e.target.value)}
-              className="h-[38px] rounded-lg border border-gray-300 bg-surface px-3 text-sm text-gray-700 outline-none focus:border-brand-500"
-            >
-              <option value="">全部语言</option>
-              {languages.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </select>
-          )}
-          {visibilities.length > 1 && (
-            <select
-              value={vis}
-              onChange={(e) => setVis(e.target.value)}
-              className="h-[38px] rounded-lg border border-gray-300 bg-surface px-3 text-sm text-gray-700 outline-none focus:border-brand-500"
-            >
-              <option value="">全部可见性</option>
-              {visibilities.map((v) => (
-                <option key={v} value={v}>
-                  {visLabel(v)}
-                </option>
-              ))}
-            </select>
-          )}
-          <Button variant="outline" disabled={anyLoading} onClick={refreshAll}>
-            {anyLoading ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <RefreshCw size={14} />
-            )}{' '}
-            刷新
-          </Button>
-          <span className="text-[11.5px] text-gray-400">
-            {q || lang || vis ? `${totalShown} / ${totalAll}` : `${totalAll}`} 个仓库
-          </span>
         </div>
       )}
 
@@ -451,9 +466,9 @@ function ConnectPanel({
   );
 }
 
-// --------------------------- 仓库浏览：左侧子组导航 + 右侧仓库网格 ---------------------------
-// 把「组织 → 子组 → 项目 → 仓库」从纵向手风琴改成 master-detail：左栏紧凑列出全部子组
-// （多组织时按组织分节），右栏展示选中子组的仓库（按项目分节、多列密集网格），充分用横向空间。
+// --------------------------- 仓库浏览：分类导航 + 项目二级菜单 + 仓库网格 ---------------------------
+// 左栏只负责定位子组织；每个分类悬停/聚焦时弹出项目菜单。右侧始终只展示当前项目，
+// 避免一个大分类下几十个仓库一次性铺满页面。
 function RepoBrowser({
   orgs,
   results,
@@ -482,14 +497,25 @@ function RepoBrowser({
     return out;
   }, [orgs, results, filterRepo]);
 
-  const [sel, setSel] = useState<string | null>(null);
-  const activeKey = sel && groups.some((g) => g.key === sel) ? sel : (groups[0]?.key ?? null);
+  const [selGroup, setSelGroup] = useState<string | null>(null);
+  const [selProject, setSelProject] = useState<string | null>(null);
+  const activeKey =
+    selGroup && groups.some((g) => g.key === selGroup) ? selGroup : (groups[0]?.key ?? null);
   const active = groups.find((g) => g.key === activeKey) ?? null;
+  const activeProjectKey =
+    active && selProject && active.node.projects.some((p) => p.key === selProject)
+      ? selProject
+      : (active?.node.projects[0]?.key ?? null);
+  const activeProject =
+    active?.node.projects.find((p) => p.key === activeProjectKey) ??
+    active?.node.projects[0] ??
+    null;
 
   const errorOrgs = orgs.filter((o) => results[o]?.error);
   const anyRepos = orgs.some((o) => results[o]?.repos);
   const stillLoading = orgs.some((o) => results[o]?.loading && !results[o]?.repos);
   const multiOrg = orgs.length > 1;
+  const projectTotal = groups.reduce((n, g) => n + g.node.projects.length, 0);
 
   if (!anyRepos && stillLoading) {
     return (
@@ -508,13 +534,20 @@ function RepoBrowser({
       ))}
 
       {groups.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-gray-200 py-12 text-center text-sm text-gray-400">
+        <p className="rounded-xl border border-dashed border-gray-300 bg-surface py-12 text-center text-sm text-gray-400">
           {filtering ? '没有匹配的仓库' : '所选组织下没有仓库'}
         </p>
       ) : (
-        <div className="flex gap-4">
+        <div className="grid gap-4 xl:grid-cols-[292px_minmax(0,1fr)]">
           {/* 左：子组导航 */}
-          <div className="sticky top-0 max-h-[80vh] w-[244px] shrink-0 self-start overflow-auto rounded-[14px] border border-gray-200 bg-surface p-2">
+          <div className="sticky top-0 z-20 self-start rounded-[14px] border border-gray-200 bg-surface shadow-sm">
+            <div className="border-b border-gray-100 px-3 py-2.5">
+              <div className="text-[12px] font-bold text-gray-800">分类定位</div>
+              <div className="mt-0.5 text-[10.5px] text-gray-400">
+                {groups.length} 分类 · {projectTotal} 项目
+              </div>
+            </div>
+            <div className="p-2">
             {multiOrg ? (
               orgs.map((org) => {
                 const gs = groups.filter((g) => g.org === org);
@@ -524,13 +557,21 @@ function RepoBrowser({
                     <div className="flex items-center gap-1.5 px-2 py-1 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">
                       <FolderGit2 size={12} /> {org}
                     </div>
-                    <div className="flex flex-col gap-0.5">
+                    <div className="flex flex-col gap-1">
                       {gs.map((g) => (
                         <GroupNavItem
                           key={g.key}
                           node={g.node}
                           active={g.key === activeKey}
-                          onClick={() => setSel(g.key)}
+                          activeProjectKey={g.key === activeKey ? activeProjectKey : null}
+                          onClick={() => {
+                            setSelGroup(g.key);
+                            setSelProject(g.node.projects[0]?.key ?? null);
+                          }}
+                          onProjectClick={(projectKey) => {
+                            setSelGroup(g.key);
+                            setSelProject(projectKey);
+                          }}
                         />
                       ))}
                     </div>
@@ -538,25 +579,35 @@ function RepoBrowser({
                 );
               })
             ) : (
-              <div className="flex flex-col gap-0.5">
+              <div className="flex flex-col gap-1">
                 {groups.map((g) => (
                   <GroupNavItem
                     key={g.key}
                     node={g.node}
                     active={g.key === activeKey}
-                    onClick={() => setSel(g.key)}
+                    activeProjectKey={g.key === activeKey ? activeProjectKey : null}
+                    onClick={() => {
+                      setSelGroup(g.key);
+                      setSelProject(g.node.projects[0]?.key ?? null);
+                    }}
+                    onProjectClick={(projectKey) => {
+                      setSelGroup(g.key);
+                      setSelProject(projectKey);
+                    }}
                   />
                 ))}
               </div>
             )}
+            </div>
           </div>
 
-          {/* 右：选中子组的仓库 */}
+          {/* 右：选中项目的仓库 */}
           <div className="min-w-0 flex-1">
-            {active && (
+            {active && activeProject && (
               <GroupDetail
                 org={active.org}
                 node={active.node}
+                project={activeProject}
                 multiOrg={multiOrg}
                 onCopy={onCopy}
                 onOpen={onOpen}
@@ -569,83 +620,210 @@ function RepoBrowser({
   );
 }
 
-// 左栏子组项：名称 + 仓库数；选中态高亮。
+// 左栏子组项：名称 + 仓库数；悬停/聚焦时弹出项目菜单。
 function GroupNavItem({
   node,
   active,
+  activeProjectKey,
   onClick,
+  onProjectClick,
 }: {
   node: RepoGroupNode;
   active: boolean;
+  activeProjectKey: string | null;
   onClick: () => void;
+  onProjectClick: (projectKey: string) => void;
 }) {
   return (
-    <button
-      onClick={onClick}
-      title={node.name}
-      className={cx(
-        'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors',
-        active ? 'bg-pribg text-prid' : 'text-gray-700 hover:bg-gray-50',
-      )}
-    >
-      <FolderGit2 size={14} className={cx('shrink-0', active ? 'text-prid' : 'text-gray-400')} />
-      <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">{node.name}</span>
-      <span
+    <div className="group relative">
+      <button
+        onClick={onClick}
+        title={node.name}
         className={cx(
-          'shrink-0 rounded-full px-1.5 text-[10px] font-semibold',
-          active ? 'bg-surface/70 text-prid' : 'bg-gray-100 text-gray-400',
+          'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors',
+          active ? 'bg-pribg text-prid' : 'text-gray-700 hover:bg-gray-50',
         )}
       >
-        {node.repoCount}
-      </span>
-    </button>
+        <FolderGit2 size={14} className={cx('shrink-0', active ? 'text-prid' : 'text-gray-400')} />
+        <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">{node.name}</span>
+        <span
+          className={cx(
+            'shrink-0 rounded-full px-1.5 text-[10px] font-semibold',
+            active ? 'bg-surface/80 text-prid' : 'bg-gray-100 text-gray-400',
+          )}
+        >
+          {node.repoCount}
+        </span>
+        <ChevronRight size={13} className="shrink-0 text-gray-400" />
+      </button>
+      <ProjectFlyout
+        node={node}
+        activeProjectKey={activeProjectKey}
+        onProjectClick={onProjectClick}
+      />
+    </div>
   );
 }
 
-// 右栏明细：标题 + 按项目分节的多列仓库网格。
+function ProjectFlyout({
+  node,
+  activeProjectKey,
+  onProjectClick,
+}: {
+  node: RepoGroupNode;
+  activeProjectKey: string | null;
+  onProjectClick: (projectKey: string) => void;
+}) {
+  return (
+    <div className="invisible absolute left-[calc(100%+10px)] top-0 z-30 w-[360px] translate-x-1 rounded-[14px] border border-gray-200 bg-surface p-2 opacity-0 shadow-xl shadow-gray-900/10 ring-1 ring-gray-100 transition group-hover:visible group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-x-0 group-focus-within:opacity-100">
+      <div className="mb-1.5 flex items-center justify-between px-2 py-1">
+        <div className="min-w-0">
+          <div className="truncate text-[12px] font-bold text-gray-800">{node.name}</div>
+          <div className="text-[10.5px] text-gray-400">
+            {node.projects.length} 项目 · {node.repoCount} 仓库
+          </div>
+        </div>
+        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500">
+          项目列表
+        </span>
+      </div>
+      <div className="max-h-[360px] overflow-auto pr-1">
+        {node.projects.map((project) => {
+          const latest = latestProjectUpdate(project);
+          const active = project.key === activeProjectKey;
+          return (
+            <button
+              key={project.key}
+              onClick={(e) => {
+                e.stopPropagation();
+                onProjectClick(project.key);
+              }}
+              className={cx(
+                'mb-1 flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors last:mb-0',
+                active ? 'bg-pribg text-prid' : 'text-gray-700 hover:bg-gray-50',
+              )}
+            >
+              <span
+                className={cx(
+                  'mt-1 h-1.5 w-1.5 shrink-0 rounded-full',
+                  active ? 'bg-brand-600' : 'bg-gray-300',
+                )}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5">
+                  <span className="truncate text-[12.5px] font-semibold">{project.name}</span>
+                  <span className="shrink-0 rounded-full bg-gray-100 px-1.5 text-[10px] font-semibold text-gray-500">
+                    {project.repos.length}
+                  </span>
+                </span>
+                <span className="mt-0.5 block truncate font-mono text-[10px] text-gray-400">
+                  {project.key}
+                </span>
+                <span className="mt-0.5 block truncate text-[10.5px] text-gray-400">
+                  {projectPreview(project)}
+                  {latest ? ` · ${relTime(latest)}` : ''}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// 右栏明细：标题 + 当前项目仓库网格。
 function GroupDetail({
   org,
   node,
+  project,
   multiOrg,
   onCopy,
   onOpen,
 }: {
   org: string;
   node: RepoGroupNode;
+  project: RepoProjectNode;
   multiOrg: boolean;
   onCopy: (text: string, what: string) => void;
   onOpen: (url: string) => void;
 }) {
+  const latest = latestProjectUpdate(project);
   return (
-    <section>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        {multiOrg && <span className="font-mono text-[11.5px] text-gray-400">{org} /</span>}
-        <FolderGit2 size={16} className="text-brand-600" />
-        <span className="text-[15px] font-bold text-gray-800">{node.name}</span>
-        <span className="text-[11.5px] text-gray-400">
-          {node.projects.length} 项目 · {node.repoCount} 仓库
-        </span>
-      </div>
-      <div className="flex flex-col gap-4">
-        {node.projects.map((p) => (
-          <div key={p.key}>
-            {p.name !== ROOT_PROJECT && (
-              <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-semibold text-gray-500">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-400" />
-                <span className="shrink-0">{p.name}</span>
-                <span className="truncate font-mono text-[10px] font-normal text-gray-400">{p.key}</span>
-              </div>
-            )}
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-              {p.repos.map((r) => (
-                <RepoCard key={r.id} repo={r} onCopy={onCopy} onOpen={onOpen} />
-              ))}
+    <section className="min-w-0">
+      <div className="mb-4 rounded-[14px] border border-gray-200 bg-surface px-4 py-3 shadow-sm">
+        <div className="flex flex-wrap items-start gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+            <FolderGit2 size={17} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-gray-400">
+              {multiOrg && <span className="font-mono">{org}</span>}
+              {multiOrg && <span>/</span>}
+              <span>{node.name}</span>
+              <span>/</span>
+              <span className="font-semibold text-gray-500">{project.name}</span>
+            </div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-2">
+              <h2 className="truncate text-[16px] font-bold text-gray-900">{project.name}</h2>
+              {project.name === ROOT_PROJECT && (
+                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
+                  直属
+                </span>
+              )}
+            </div>
+            <div className="mt-1 truncate font-mono text-[11px] text-gray-400">{project.key}</div>
+          </div>
+          <div className="flex shrink-0 gap-1.5">
+            <span className="rounded-full bg-pribg px-2.5 py-1 text-[11px] font-bold text-prid">
+              {project.repos.length} 仓库
+            </span>
+            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-gray-500">
+              {node.projects.length} 项目
+            </span>
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2 text-[11px] text-gray-500 sm:grid-cols-3">
+          <div className="rounded-lg bg-gray-50 px-3 py-2">
+            <div className="font-semibold text-gray-700">定位路径</div>
+            <div className="mt-0.5 truncate font-mono text-gray-400" title={project.key}>
+              {project.key}
             </div>
           </div>
+          <div className="rounded-lg bg-gray-50 px-3 py-2">
+            <div className="font-semibold text-gray-700">最近更新</div>
+            <div className="mt-0.5 text-gray-400">{latest ? relTime(latest) : '暂无记录'}</div>
+          </div>
+          <div className="rounded-lg bg-gray-50 px-3 py-2">
+            <div className="font-semibold text-gray-700">辅助识别</div>
+            <div className="mt-0.5 truncate text-gray-400">{projectPreview(project)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+        {project.repos.map((r) => (
+          <RepoCard key={r.id} repo={r} onCopy={onCopy} onOpen={onOpen} />
         ))}
       </div>
     </section>
   );
+}
+
+function latestProjectUpdate(project: RepoProjectNode): number | undefined {
+  const latest = project.repos.reduce((n, r) => Math.max(n, r.lastUpdatedAt ?? 0), 0);
+  return latest || undefined;
+}
+
+function projectPreview(project: RepoProjectNode): string {
+  const withDesc = project.repos.find((r) => r.description?.trim());
+  if (withDesc?.description) return withDesc.description;
+  return project.repos[0]?.name ? `最近仓库：${project.repos[0].name}` : '暂无描述';
+}
+
+function repoParentPath(repo: CnbRepo): string {
+  const segs = repo.path.split('/').filter(Boolean);
+  return segs.length > 1 ? segs.slice(0, -1).join('/') : repo.path;
 }
 
 // --------------------------- 仓库卡片 ---------------------------
@@ -658,24 +836,34 @@ function RepoCard({
   onCopy: (text: string, what: string) => void;
   onOpen: (url: string) => void;
 }) {
+  const parentPath = repoParentPath(repo);
   return (
-    <div className="flex flex-col rounded-xl border border-gray-200 bg-gray-50/60 p-3 transition hover:border-brand-300 hover:bg-surface">
-      <div className="flex items-start gap-2">
+    <div className="flex min-h-[166px] flex-col rounded-[14px] border border-gray-200 bg-surface p-3.5 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md">
+      <div className="flex items-start gap-2.5">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-brand-600 ring-1 ring-gray-200">
+          <FolderGit2 size={15} />
+        </span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-[13px] font-semibold text-gray-800">{repo.name}</span>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-[13.5px] font-bold text-gray-900">{repo.name}</span>
             {repo.visibility && repo.visibility !== 'public' && (
-              <span className="shrink-0 rounded bg-gray-200/70 px-1 text-[9px] font-semibold text-gray-500">
+              <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[9px] font-semibold text-gray-500">
                 {visLabel(repo.visibility)}
               </span>
             )}
           </div>
-          <div className="truncate text-[10.5px] text-gray-400">
+          <div className="mt-0.5 line-clamp-2 min-h-[30px] text-[11.5px] leading-snug text-gray-500">
             {repo.description || '—'}
           </div>
         </div>
       </div>
-      <div className="mt-2 flex items-center gap-2.5 text-[10.5px] text-gray-400">
+      <div
+        className="mt-3 truncate rounded-lg bg-gray-50 px-2.5 py-1.5 font-mono text-[10px] text-gray-500 ring-1 ring-gray-100"
+        title={repo.path}
+      >
+        {parentPath}/<span className="font-semibold text-gray-700">{repo.name}</span>
+      </div>
+      <div className="mt-2 flex min-h-[18px] flex-wrap items-center gap-x-2.5 gap-y-1 text-[10.5px] text-gray-400">
         {repo.language && (
           <span className="flex items-center gap-1">
             <span className="h-2 w-2 rounded-full bg-brand-400" />
@@ -701,11 +889,11 @@ function RepoCard({
           <span className="ml-auto shrink-0">{relTime(repo.lastUpdatedAt)}</span>
         )}
       </div>
-      <div className="mt-2 flex items-center gap-1 border-t border-gray-100 pt-2">
+      <div className="mt-auto flex items-center gap-1 border-t border-gray-100 pt-2.5">
         <button
           onClick={() => repo.webUrl && onOpen(repo.webUrl)}
           disabled={!repo.webUrl}
-          className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-brand-600 hover:bg-brand-50 disabled:opacity-40"
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold text-brand-600 hover:bg-brand-50 disabled:opacity-40"
         >
           <ExternalLink size={12} /> 打开
         </button>
@@ -723,9 +911,6 @@ function RepoCard({
         >
           <Terminal size={12} /> clone
         </button>
-        <span className="ml-auto truncate font-mono text-[9.5px] text-gray-300" title={repo.path}>
-          {repo.path}
-        </span>
       </div>
     </div>
   );

@@ -51,6 +51,7 @@ export interface GitRepo {
 }
 
 export type EnvKind = 'dev' | 'test' | 'staging' | 'prod' | 'other';
+export type LinkMatchMode = 'origin' | 'path-prefix' | 'exact-url';
 
 /** 环境下的一个平台 / 入口链接（如「管理后台」「API 控制台」） */
 export interface PlatformLink {
@@ -63,6 +64,8 @@ export interface PlatformLink {
   url: string;
   /** 额外网址（同一平台的多区域/多域名）；匹配填充时主+额外都会比对 */
   urls?: string[];
+  /** 当前页自动匹配策略；缺省为 origin，兼容旧数据。 */
+  matchMode?: LinkMatchMode;
   /** 关联的 Git 仓库（可一个或多个） */
   gitRepos?: GitRepo[];
   note?: string;

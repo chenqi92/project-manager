@@ -4,6 +4,7 @@ import {
   fillTotpInPage,
   fillUsernameInPage,
   getOrigin,
+  linkMatchesUrl,
   registrableDomain,
 } from '@/lib/autofill';
 import { fromB64, toB64 } from '@/lib/crypto';
@@ -43,6 +44,7 @@ import type {
   VaultStatus,
 } from '@/lib/types';
 import {
+  envTagName,
   linkUrls,
   newAccount,
   newEnvironment,
@@ -948,18 +950,19 @@ function captureAllowedForOrigin(data: VaultData, origin: string): boolean {
   return false;
 }
 
-function captureSaveTargets(data: VaultData, origin: string): CaptureSaveTarget[] {
+function captureSaveTargets(data: VaultData, pageUrl: string): CaptureSaveTarget[] {
   const out: CaptureSaveTarget[] = [];
   const activeData = workspaceScopedData(data);
   for (const proj of activeData.projects)
     for (const env of proj.environments)
       for (const link of env.links)
-        if (linkUrls(link).some((u) => getOrigin(u) === origin)) {
+        if (linkMatchesUrl(link, pageUrl)) {
+          const envKind = link.envKind ?? env.kind;
           out.push({
             projectId: proj.id,
             projectName: proj.name,
             envId: env.id,
-            envName: env.name,
+            envName: envTagName(envKind, link.envName ?? env.name),
             linkId: link.id,
             linkName: link.name,
           });
@@ -1141,9 +1144,9 @@ async function handleCaptureLogin(
   let matchAccountId: string | undefined;
   let linkName: string | undefined;
   let exactSame = false;
-  let matchedLinkOrigin = false;
+  let matchedKnownLink = false;
   const updateCandidates: CaptureUpdateCandidate[] = [];
-  const saveTargets = captureSaveTargets(cachedData, origin);
+  const saveTargets = captureSaveTargets(cachedData, url);
   const projectTargets = captureProjectTargets(cachedData);
   const captureWorkspaces = (cachedData.workspaces ?? []).map((w) => ({ id: w.id, name: w.name }));
   const activeWorkspaceId = cachedData.activeWorkspaceId;
@@ -1152,8 +1155,8 @@ async function handleCaptureLogin(
   for (const proj of activeData.projects) {
     for (const env of proj.environments) {
       for (const link of env.links) {
-        if (!linkUrls(link).some((u) => getOrigin(u) === origin)) continue;
-        matchedLinkOrigin = true;
+        if (!linkMatchesUrl(link, url)) continue;
+        matchedKnownLink = true;
         linkName = link.name;
         for (const acc of link.accounts) {
           updateCandidates.push({
@@ -1179,7 +1182,7 @@ async function handleCaptureLogin(
       }
     }
   }
-  if (!matchedLinkOrigin && cachedData.settings.webAssistAllSites !== true) {
+  if (!matchedKnownLink && cachedData.settings.webAssistAllSites !== true) {
     if (!opts.allowUnknownOrigin) return null; // 默认不捕获保险箱外的任意授权站点
   }
   if (exactSame) {
@@ -1301,7 +1304,7 @@ async function applyCapture(
       for (const proj of data.projects)
         for (const env of proj.environments)
           for (const link of env.links)
-            if (link.id === targetLinkId && linkUrls(link).some((u) => getOrigin(u) === p.origin)) {
+            if (link.id === targetLinkId && linkMatchesUrl(link, p.url)) {
               target = link;
               targetProject = proj;
               targetEnv = env;
@@ -1311,7 +1314,7 @@ async function applyCapture(
     for (const proj of data.projects)
       for (const env of proj.environments)
         for (const link of env.links)
-          if (!target && linkUrls(link).some((u) => getOrigin(u) === p.origin)) {
+          if (!target && linkMatchesUrl(link, p.url)) {
             target = link;
             targetProject = proj;
             targetEnv = env;
@@ -1332,18 +1335,18 @@ async function applyCapture(
       }
 
       targetEnv =
-        targetProject.environments.find((env) => env.name === '默认') ??
+        targetProject.environments.find((env) => env.name === envTagName(env.kind, undefined)) ??
         targetProject.environments[0] ??
         null;
       if (!targetEnv) {
-        targetEnv = newEnvironment({ name: '默认', kind: 'other' });
+        targetEnv = newEnvironment({ name: envTagName('other', undefined), kind: 'other' });
         targetProject.environments.push(targetEnv);
       }
 
       target = newLink({
         name: captureLinkName(p),
         envKind: targetEnv.kind,
-        envName: targetEnv.name,
+        envName: envTagName(targetEnv.kind, targetEnv.name),
         url: p.url || p.origin,
       });
       targetEnv.links.push(target);

@@ -3,6 +3,7 @@ import { Banner, Button, Input, Label, Modal, Select } from '@/components/ui';
 import type { EnvKind, VaultData } from '@/lib/types';
 import {
   ENV_KIND_LABELS,
+  envTagName,
   newAccount,
   newEnvironment,
   newLink,
@@ -83,13 +84,13 @@ export function CaptureModal({
         }
         let env = envId === NEW ? undefined : proj.environments.find((e) => e.id === envId);
         if (!env) {
-          env = newEnvironment({ name: newEnvName.trim() || '默认', kind: envKind });
+          env = newEnvironment({ name: envTagName(envKind, newEnvName), kind: envKind });
           proj.environments.push(env);
         }
         const link = newLink({
           name: linkName.trim() || defaultLinkName('', url),
           envKind: env.kind,
-          envName: env.name,
+          envName: envTagName(env.kind, env.name),
           url: url.trim(),
         });
         if (withAccount && (username.trim() || label.trim() || password || totp.trim())) {
@@ -135,7 +136,7 @@ export function CaptureModal({
             <Select value={envId} onChange={(e) => setEnvId(e.target.value)}>
               {(project?.environments ?? []).map((env) => (
                 <option key={env.id} value={env.id}>
-                  {env.name}
+                  {envTagName(env.kind, env.name)}
                 </option>
               ))}
               <option value={NEW}>+ 新建环境…</option>

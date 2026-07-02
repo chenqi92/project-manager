@@ -9,10 +9,12 @@ import type {
   EnvKind,
   Environment,
   GitRepo,
+  LinkMatchMode,
   PlatformLink,
   Project,
+  Workspace,
 } from '@/lib/types';
-import { ENV_KIND_COLORS, ENV_KIND_LABELS, newGitRepo } from '@/lib/vault-ops';
+import { ENV_KIND_COLORS, ENV_KIND_LABELS, envTagName, newGitRepo } from '@/lib/vault-ops';
 
 function genPassword(len = 20): string {
   const charset =
@@ -336,6 +338,8 @@ export function LinkEditor({
   initial?: PlatformLink;
   location?: {
     projects: Project[];
+    workspaces: Workspace[];
+    workspaceId: string;
     projectId: string;
     envId: string;
   };
@@ -344,21 +348,40 @@ export function LinkEditor({
     name: string;
     envKind?: EnvKind;
     envName?: string;
+    matchMode?: LinkMatchMode;
     url: string;
     note?: string;
     urls?: string[];
     gitRepos?: GitRepo[];
     customFields?: CustomField[];
-  }, location?: { projectId: string }) => void;
+  }, location?: { workspaceId: string; projectId: string }) => void;
 }) {
-  const [projectId, setProjectId] = useState(location?.projectId ?? '');
+  const [workspaceId, setWorkspaceId] = useState(location?.workspaceId ?? location?.workspaces[0]?.id ?? '');
+  const workspaceOptions = location?.workspaces?.length
+    ? location.workspaces
+    : location
+      ? [{ id: workspaceId, name: '当前工作区', projects: location.projects } as Workspace]
+      : [];
+  const selectedWorkspace = workspaceOptions.find((ws) => ws.id === workspaceId) ?? workspaceOptions[0];
+  const targetProjects = selectedWorkspace?.projects ?? [];
+  const [projectId, setProjectId] = useState(location?.projectId ?? targetProjects[0]?.id ?? '');
   // 环境仅用于给新链接的标签提供默认值（如果是在某个环境上下文里新建）。
-  const sourceEnv = location?.projects
-    .find((p) => p.id === (location.projectId ?? ''))
-    ?.environments.find((env) => env.id === (location.envId ?? ''));
+  const sourceWorkspaceId = location?.workspaceId ?? workspaceId;
+  const sourceProjectId = location?.projectId ?? '';
+  const sourceEnvId = location?.envId ?? '';
+  const sourceEnv = workspaceOptions
+    .find((ws) => ws.id === sourceWorkspaceId)
+    ?.projects
+    .find((p) => p.id === sourceProjectId)
+    ?.environments.find((env) => env.id === sourceEnvId);
+  const initialEnvKind = initial?.envKind ?? sourceEnv?.kind ?? 'dev';
+  const initialEnvName = envTagName(initialEnvKind, initial?.envName ?? sourceEnv?.name);
   const [name, setName] = useState(initial?.name ?? '');
-  const [envKind, setEnvKind] = useState<EnvKind>(initial?.envKind ?? sourceEnv?.kind ?? 'dev');
-  const [envName, setEnvName] = useState(initial?.envName ?? sourceEnv?.name ?? '');
+  const [envKind, setEnvKind] = useState<EnvKind>(initialEnvKind);
+  const [envName, setEnvName] = useState(
+    initialEnvName === ENV_KIND_LABELS[initialEnvKind] ? '' : initialEnvName,
+  );
+  const [matchMode, setMatchMode] = useState<LinkMatchMode>(initial?.matchMode ?? 'origin');
   const [url, setUrl] = useState(initial?.url ?? '');
   const [extraUrls, setExtraUrls] = useState((initial?.urls ?? []).join('\n'));
   const [note, setNote] = useState(initial?.note ?? '');
@@ -368,16 +391,34 @@ export function LinkEditor({
   return (
     <Modal title={initial ? '编辑链接' : '新建链接 / 平台'} onClose={onClose} wide>
       <div className="flex flex-col gap-3">
-        {initial && location && location.projects.length > 1 && (
+        {initial && location && (
           <div>
-            <Label>所属项目（改这里可把链接移动到其它项目）</Label>
-            <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              {location.projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </Select>
+            <Label>所属位置（改这里可把链接移动到其它工作区 / 项目）</Label>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Select
+                value={workspaceId}
+                onChange={(e) => {
+                  const nextWorkspaceId = e.target.value;
+                  const nextWorkspace = workspaceOptions.find((ws) => ws.id === nextWorkspaceId);
+                  setWorkspaceId(nextWorkspaceId);
+                  setProjectId(nextWorkspace?.projects[0]?.id ?? '');
+                }}
+              >
+                {workspaceOptions.map((ws) => (
+                  <option key={ws.id} value={ws.id}>
+                    {ws.name}
+                  </option>
+                ))}
+              </Select>
+              <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                {targetProjects.length === 0 && <option value="">该工作区暂无项目</option>}
+                {targetProjects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
         )}
         <div>
@@ -419,8 +460,19 @@ export function LinkEditor({
           <Label>主网址</Label>
           <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://admin.example.com" />
           <p className="mt-1 text-[11px] text-gray-400">
-            匹配按 <b>origin（协议 + 域名/IP + 端口）</b>判断，<b>路径会被忽略</b>；http 与 https、不同端口都算不同站点。
-            填 <code>http://1.2.3.4:8080/login</code> 与 <code>http://1.2.3.4:8080/</code> 完全等价。
+            默认按 <b>origin（协议 + 域名/IP + 端口）</b>判断；http 与 https、不同端口都算不同站点。
+            需要区分同站点下多个系统时，下面改为路径前缀或精确地址。
+          </p>
+        </div>
+        <div>
+          <Label>自动匹配方式</Label>
+          <Select value={matchMode} onChange={(e) => setMatchMode(e.target.value as LinkMatchMode)}>
+            <option value="origin">同源匹配（默认，忽略路径）</option>
+            <option value="path-prefix">路径前缀（区分同域名/端口下的多个系统）</option>
+            <option value="exact-url">精确地址（路径、参数、hash 都一致）</option>
+          </Select>
+          <p className="mt-1 text-[11px] text-gray-400">
+            同一个域名和端口下有多个系统时，选“路径前缀”，例如 <code>/admin</code> 或 <code>#/portal</code> 才会匹配到对应账号。
           </p>
         </div>
         <div>
@@ -450,7 +502,7 @@ export function LinkEditor({
       <div className={FOOTER}>
         <Button variant="subtle" onClick={onClose}>取消</Button>
         <Button
-          disabled={!name.trim()}
+          disabled={!name.trim() || (Boolean(location) && !projectId)}
           onClick={() => {
             const urls = extraUrls
               .split('\n')
@@ -460,12 +512,13 @@ export function LinkEditor({
               name: name.trim(),
               envKind,
               envName: envName.trim() || ENV_KIND_LABELS[envKind],
+              matchMode: matchMode === 'origin' ? undefined : matchMode,
               url: url.trim(),
               note: note.trim() || undefined,
               urls: urls.length ? urls : undefined,
               gitRepos: cleanRepos(repos),
               customFields: cleanCustomFields(customFields),
-            }, location ? { projectId } : undefined);
+            }, location ? { workspaceId, projectId } : undefined);
           }}
         >
           保存

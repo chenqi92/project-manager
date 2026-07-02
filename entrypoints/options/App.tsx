@@ -57,6 +57,7 @@ import type {
 import {
   ENV_KIND_COLORS,
   ENV_KIND_LABELS,
+  envTagName,
   gitCloneCommand,
   newAccount,
   newEnvironment,
@@ -570,6 +571,7 @@ export default function App() {
       name: string;
       envKind?: Environment['kind'];
       envName?: string;
+      matchMode?: PlatformLink['matchMode'];
       url: string;
       note?: string;
       urls?: string[];
@@ -577,18 +579,29 @@ export default function App() {
       customFields?: CustomField[];
     },
     target?: {
+      workspaceId?: string;
       projectId: string;
     },
   ) => {
+    if (!data) return;
     let nextProjectId: string | null = null;
-    await update((d) => {
+    let nextWorkspaceId: string | null = null;
+    let movedLocation = false;
+    try {
+      const draft = structuredClone(data);
+      prepareWorkspaceDraft(draft);
+      commitWorkspaceDraft(draft);
       const now = Date.now();
-      const sourceProject = d.projects.find((p) => p.id === sourceProjectId);
+      const workspaceList = draft.workspaces ?? [];
+      const sourceWorkspace =
+        workspaceList.find((ws) => ws.id === activeWorkspace?.id) ?? workspaceList[0];
+      if (!sourceWorkspace) throw new Error('找不到当前工作区');
+      const sourceProject = sourceWorkspace.projects.find((p) => p.id === sourceProjectId);
       if (!sourceProject) throw new Error('找不到当前项目');
 
       // 环境 = 链接上的标签(kind + name)：容器只是按标签归类的实现细节，找不到就建。
       const kind = value.envKind ?? 'other';
-      const tagName = value.envName?.trim() || ENV_KIND_LABELS[kind];
+      const tagName = envTagName(kind, value.envName);
       const linkValue = { ...value, envKind: kind, envName: tagName };
       const findOrCreateEnv = (proj: Project): Environment => {
         let env = proj.environments.find((e) => e.kind === kind && e.name === tagName);
@@ -598,51 +611,79 @@ export default function App() {
         }
         return env;
       };
+      const targetWorkspace =
+        workspaceList.find((ws) => ws.id === (target?.workspaceId || sourceWorkspace.id));
+      if (!targetWorkspace) throw new Error('找不到目标工作区');
+      const targetProject = targetWorkspace.projects.find(
+        (p) => p.id === (target?.projectId || sourceProjectId),
+      );
+      if (!targetProject) throw new Error('找不到目标项目');
 
       // 新建链接：直接按标签归入对应容器（0 环境也能加）。
       if (!existing) {
-        const env = findOrCreateEnv(sourceProject);
+        const env = findOrCreateEnv(targetProject);
         env.links.push(newLink(linkValue));
         env.updatedAt = now;
-        sourceProject.updatedAt = now;
-        return;
+        targetProject.updatedAt = now;
+        targetWorkspace.updatedAt = Math.max(targetWorkspace.updatedAt ?? 0, now);
+      } else {
+        // 编辑：定位原容器与索引。
+        const sourceEnv = sourceProject.environments.find((env) => env.id === sourceEnvId);
+        if (!sourceEnv) throw new Error('找不到当前环境');
+        const sourceIndex = sourceEnv.links.findIndex((link) => link.id === existing.id);
+        if (sourceIndex < 0) throw new Error('找不到要编辑的链接');
+
+        const targetEnv = findOrCreateEnv(targetProject);
+
+        // 标签未变且同位置 → 原地更新。
+        if (
+          targetWorkspace.id === sourceWorkspace.id &&
+          targetProject.id === sourceProject.id &&
+          targetEnv.id === sourceEnv.id
+        ) {
+          Object.assign(sourceEnv.links[sourceIndex]!, linkValue, { updatedAt: now });
+          sourceEnv.updatedAt = now;
+          sourceProject.updatedAt = now;
+          sourceWorkspace.updatedAt = Math.max(sourceWorkspace.updatedAt ?? 0, now);
+        } else {
+          // 改了标签或换了位置 → 从原容器移出、并入目标容器（用墓碑防同步重现旧位置）。
+          const [moved] = sourceEnv.links.splice(sourceIndex, 1);
+          if (!moved) throw new Error('找不到要移动的链接');
+          const updatedAt = now + 1;
+          addMoveTombstone(draft, moved.id, now);
+          Object.assign(moved, linkValue, { updatedAt });
+          sourceEnv.updatedAt = updatedAt;
+          sourceProject.updatedAt = updatedAt;
+          targetEnv.links.push(moved);
+          targetEnv.updatedAt = updatedAt;
+          targetProject.updatedAt = updatedAt;
+          sourceWorkspace.updatedAt = Math.max(sourceWorkspace.updatedAt ?? 0, updatedAt);
+          targetWorkspace.updatedAt = Math.max(targetWorkspace.updatedAt ?? 0, updatedAt);
+        }
       }
 
-      // 编辑：定位原容器与索引。
-      const sourceEnv = sourceProject.environments.find((env) => env.id === sourceEnvId);
-      if (!sourceEnv) throw new Error('找不到当前环境');
-      const sourceIndex = sourceEnv.links.findIndex((link) => link.id === existing.id);
-      if (sourceIndex < 0) throw new Error('找不到要编辑的链接');
-
-      const targetProject = d.projects.find((p) => p.id === (target?.projectId || sourceProjectId));
-      if (!targetProject) throw new Error('找不到目标项目');
-      const targetEnv = findOrCreateEnv(targetProject);
-
-      // 标签未变且同项目 → 原地更新。
-      if (targetProject.id === sourceProject.id && targetEnv.id === sourceEnv.id) {
-        Object.assign(sourceEnv.links[sourceIndex]!, linkValue, { updatedAt: now });
-        sourceEnv.updatedAt = now;
-        sourceProject.updatedAt = now;
+      movedLocation = targetWorkspace.id !== sourceWorkspace.id || targetProject.id !== sourceProject.id;
+      if (movedLocation) {
+        nextProjectId = targetProject.id;
+        nextWorkspaceId = targetWorkspace.id;
+      }
+      if (nextWorkspaceId && nextWorkspaceId !== activeWorkspace?.id) {
+        switchActiveWorkspace(draft, nextWorkspaceId);
+      }
+      await vault.save(draft);
+    } catch (e) {
+      if (e instanceof Error && e.message === VAULT_LOCKED_MSG) {
+        await vault.checkLocked();
         return;
       }
-
-      // 改了标签或换了项目 → 从原容器移出、并入目标容器（跨项目用墓碑防同步重现）。
-      const [moved] = sourceEnv.links.splice(sourceIndex, 1);
-      if (!moved) throw new Error('找不到要移动的链接');
-      const updatedAt = now + 1;
-      addMoveTombstone(d, moved.id, now);
-      Object.assign(moved, linkValue, { updatedAt });
-      sourceEnv.updatedAt = updatedAt;
-      sourceProject.updatedAt = updatedAt;
-      targetEnv.links.push(moved);
-      targetEnv.updatedAt = updatedAt;
-      targetProject.updatedAt = updatedAt;
-      if (targetProject.id !== sourceProject.id) nextProjectId = targetProject.id;
-    });
-    if (nextProjectId) {
+      flash('保存失败：' + (e instanceof Error ? e.message : String(e)));
+      throw e;
+    }
+    if (movedLocation && nextProjectId) {
       setSelectedId(nextProjectId);
       setShowHome(false);
-      flash('已移动链接');
+      setPage(null);
+      flash(nextWorkspaceId && nextWorkspaceId !== activeWorkspace?.id ? '已移动到目标工作区' : '已移动链接');
     }
   };
 
@@ -1110,7 +1151,13 @@ export default function App() {
         <LinkEditor
           initial={editing.link}
           location={
-            { projects, projectId: editing.projectId, envId: editing.envId }
+            {
+              projects,
+              workspaces,
+              workspaceId: activeWorkspace?.id ?? '',
+              projectId: editing.projectId,
+              envId: editing.envId,
+            }
           }
           onClose={() => setEditing(null)}
           onSave={async (v, target) => {
@@ -1385,9 +1432,11 @@ function ProjectView(props: ProjectViewProps) {
     env.links.map((link) => ({ env, link })),
   );
   // 环境 = 链接上的彩色标签(kind+name)：从链接聚合出去重标签，供顶部筛选。
-  const TAGSEP = ' ';
-  const tagKeyOf = (env: Environment, link: PlatformLink) =>
-    (link.envKind ?? env.kind) + TAGSEP + (link.envName ?? env.name);
+  const TAGSEP = '\0';
+  const tagKeyOf = (env: Environment, link: PlatformLink) => {
+    const kind = link.envKind ?? env.kind;
+    return kind + TAGSEP + envTagName(kind, link.envName ?? env.name);
+  };
   const tags = (() => {
     const seen = new Map<
       string,
@@ -1395,7 +1444,7 @@ function ProjectView(props: ProjectViewProps) {
     >();
     for (const { env, link } of linkRows) {
       const kind = link.envKind ?? env.kind;
-      const name = link.envName ?? env.name;
+      const name = envTagName(kind, link.envName ?? env.name);
       const key = kind + TAGSEP + name;
       const cur = seen.get(key);
       if (cur) cur.count++;
@@ -1552,7 +1601,9 @@ function LinkBlock({
   const [fieldsOpen, setFieldsOpen] = useState(false);
   const canOpenDefaultLogin = Boolean(link.url && acc0);
   const linkEnvKind = link.envKind ?? env.kind;
-  const linkEnvName = link.envName ?? env.name;
+  const linkEnvName = envTagName(linkEnvKind, link.envName ?? env.name);
+  const matchModeLabel =
+    link.matchMode === 'path-prefix' ? '路径匹配' : link.matchMode === 'exact-url' ? '精确匹配' : '';
   const openDefaultLogin = () => {
     if (!link.url || !acc0) return;
     props.onOpenLogin(link.url, acc0.username, acc0.password);
@@ -1602,6 +1653,14 @@ function LinkBlock({
             className="shrink-0 rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600"
           >
             +{link.urls.length} 网址
+          </span>
+        )}
+        {matchModeLabel && (
+          <span
+            title="自动匹配方式"
+            className="shrink-0 rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600"
+          >
+            {matchModeLabel}
           </span>
         )}
         {link.gitRepos?.map((r) => (

@@ -150,7 +150,7 @@ describe('mergeVaultData', () => {
     const m = mergeVaultData(vault([local]), vault([remote]), NOW);
 
     expect(m.projects[0]!.environments).toHaveLength(1);
-    expect(m.projects[0]!.environments[0]!.name).toBe('默认');
+    expect(m.projects[0]!.environments[0]!.name).toBe('生产');
     expect(m.projects[0]!.environments[0]!.links.map((l) => l.name)).toEqual([
       '登录页',
       '开启终端',

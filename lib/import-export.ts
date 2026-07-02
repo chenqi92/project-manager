@@ -16,6 +16,7 @@ import {
 } from './vault-core';
 import {
   newAccount,
+  envTagName,
   newEnvironment,
   newLink,
   newProject,
@@ -33,6 +34,7 @@ import type {
   ExportMode,
   ImportFormat,
   ImportMode,
+  LinkMatchMode,
   PlatformLink,
   Project,
   VaultData,
@@ -193,6 +195,7 @@ const OWN_CSV_HEADER = [
   'env_kind',
   'link',
   'url',
+  'match_mode',
   'account_label',
   'username',
   'password',
@@ -214,6 +217,7 @@ function toCsv(data: VaultData): string {
             e.kind,
             l.name,
             l.url,
+            l.matchMode ?? 'origin',
             '',
             '',
             '',
@@ -230,6 +234,7 @@ function toCsv(data: VaultData): string {
             e.kind,
             l.name,
             l.url,
+            l.matchMode ?? 'origin',
             a.label,
             a.username,
             a.password,
@@ -252,10 +257,11 @@ function fromOwnCsv(content: string): VaultData {
   for (const row of rows) {
     builder.add({
       project: row[idx('project')] ?? '导入',
-      environment: row[idx('environment')] ?? '默认',
+      environment: row[idx('environment')] ?? '',
       envKind: (row[idx('env_kind')] as Environment['kind']) || 'other',
       link: row[idx('link')] ?? row[idx('url')] ?? '链接',
       url: row[idx('url')] ?? '',
+      matchMode: parseLinkMatchMode(row[idx('match_mode')]),
       label: row[idx('account_label')] ?? '',
       username: row[idx('username')] ?? '',
       password: row[idx('password')] ?? '',
@@ -277,7 +283,7 @@ function fromChromeCsv(content: string): VaultData {
     const url = row[idx('url')] ?? '';
     builder.add({
       project: '导入 (Chrome)',
-      environment: '默认',
+      environment: '',
       envKind: 'other',
       link: row[idx('name')] || hostOf(url) || '链接',
       url,
@@ -302,7 +308,7 @@ function fromBitwardenCsv(content: string): VaultData {
     const url = row[idx('login_uri')] ?? '';
     builder.add({
       project: '导入 (Bitwarden)',
-      environment: row[idx('folder')] || '默认',
+      environment: row[idx('folder')] ?? '',
       envKind: 'other',
       link: row[idx('name')] || hostOf(url) || '链接',
       url,
@@ -336,7 +342,7 @@ function from1PasswordCsv(content: string): VaultData {
     const url = pick(row, 'url', 'website', 'login_uri');
     builder.add({
       project: '导入 (1Password)',
-      environment: '默认',
+      environment: '',
       envKind: 'other',
       link: pick(row, 'title', 'name') || hostOf(url) || '链接',
       url,
@@ -357,7 +363,7 @@ function fromGoogleAuthenticator(content: string): VaultData {
   for (const otp of otps) {
     builder.add({
       project: '导入 (Google Authenticator)',
-      environment: '默认',
+      environment: '',
       envKind: 'other',
       link: otp.issuer || otp.name || 'TOTP',
       url: '',
@@ -379,6 +385,7 @@ interface FlatRow {
   envKind: Environment['kind'];
   link: string;
   url: string;
+  matchMode?: LinkMatchMode;
   label: string;
   username: string;
   password: string;
@@ -395,7 +402,7 @@ class VaultBuilder {
   add(r: FlatRow): void {
     const proj = this.upsertProject(r.project);
     const env = this.upsertEnv(proj, r.environment, r.envKind);
-    const link = this.upsertLink(env, r.link, r.url);
+    const link = this.upsertLink(env, r.link, r.url, r.matchMode);
     if (r.linkFields?.length && !link.customFields?.length) {
       link.customFields = r.linkFields;
     }
@@ -435,7 +442,7 @@ class VaultBuilder {
     name: string,
     kind: Environment['kind'],
   ): Environment {
-    const key = name.trim() || '默认';
+    const key = envTagName(kind, name);
     let e = proj.environments.find((x) => x.name === key);
     if (!e) {
       e = newEnvironment({ name: key, kind });
@@ -444,19 +451,31 @@ class VaultBuilder {
     return e;
   }
 
-  private upsertLink(env: Environment, name: string, url: string): PlatformLink {
+  private upsertLink(
+    env: Environment,
+    name: string,
+    url: string,
+    matchMode?: LinkMatchMode,
+  ): PlatformLink {
     let l = env.links.find((x) => x.name === name && x.url === url);
     if (!l) {
       l = newLink({
         name: name.trim() || '链接',
         envKind: env.kind,
-        envName: env.name,
+        envName: envTagName(env.kind, env.name),
+        matchMode: matchMode === 'origin' ? undefined : matchMode,
         url,
       });
       env.links.push(l);
+    } else if (matchMode && matchMode !== 'origin' && !l.matchMode) {
+      l.matchMode = matchMode;
     }
     return l;
   }
+}
+
+function parseLinkMatchMode(value: string | undefined): LinkMatchMode | undefined {
+  return value === 'path-prefix' || value === 'exact-url' ? value : undefined;
 }
 
 function csvCell(v: string): string {

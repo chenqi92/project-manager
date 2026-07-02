@@ -5,6 +5,7 @@ import {
   fillUsernameInPage,
   getOrigin,
   isSameSite,
+  linkUrlMatches,
   originsMatch,
   registrableDomain,
 } from '../lib/autofill';
@@ -41,6 +42,29 @@ describe('originsMatch（防钓鱼的精确匹配）', () => {
   it('非法 URL 返回 null/不匹配', () => {
     expect(getOrigin('not a url')).toBe(null);
     expect(originsMatch('not a url', 'https://a.com')).toBe(false);
+  });
+});
+
+describe('linkUrlMatches（链接级匹配方式）', () => {
+  it('默认同源匹配会忽略路径', () => {
+    expect(linkUrlMatches('https://a.com/admin/login', 'https://a.com/portal/login')).toBe(true);
+  });
+
+  it('路径前缀可区分同 origin 下的不同路径', () => {
+    expect(linkUrlMatches('https://a.com/admin', 'https://a.com/admin/login', 'path-prefix')).toBe(true);
+    expect(linkUrlMatches('https://a.com/admin/', 'https://a.com/admin', 'path-prefix')).toBe(true);
+    expect(linkUrlMatches('https://a.com/admin', 'https://a.com/portal/login', 'path-prefix')).toBe(false);
+    expect(linkUrlMatches('https://a.com/admin', 'https://a.com/admin2/login', 'path-prefix')).toBe(false);
+  });
+
+  it('路径前缀支持 hash 路由', () => {
+    expect(linkUrlMatches('https://a.com/#/nas', 'https://a.com/#/nas/signin', 'path-prefix')).toBe(true);
+    expect(linkUrlMatches('https://a.com/#/nas', 'https://a.com/#/git/signin', 'path-prefix')).toBe(false);
+  });
+
+  it('精确地址要求路径、参数和 hash 都一致', () => {
+    expect(linkUrlMatches('https://a.com/login?site=1#/p', 'https://a.com/login?site=1#/p', 'exact-url')).toBe(true);
+    expect(linkUrlMatches('https://a.com/login?site=1#/p', 'https://a.com/login?site=2#/p', 'exact-url')).toBe(false);
   });
 });
 
