@@ -1,5 +1,15 @@
-import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
-import { Eye, EyeOff, GitBranch, Plus, QrCode, RefreshCw, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import {
+  Check,
+  Eye,
+  EyeOff,
+  GitBranch,
+  Plus,
+  QrCode,
+  RefreshCw,
+  SlidersHorizontal,
+  Trash2,
+} from 'lucide-react';
 import { Button, Input, Label, Modal, Select, cx } from '@/components/ui';
 import { decodeQrImage } from '@/lib/qr';
 import type {
@@ -27,6 +37,126 @@ function genPassword(len = 20): string {
 }
 
 const FOOTER = 'mt-5 flex justify-end gap-2';
+
+const MATCH_MODES: Array<{ value: LinkMatchMode; label: string; desc: string }> = [
+  { value: 'origin', label: '同源匹配', desc: '忽略路径。协议 + 域名/IP + 端口一致即匹配。' },
+  { value: 'path-prefix', label: '路径前缀', desc: '区分同域名/端口下的多个系统，如 /admin、#/portal。' },
+  { value: 'exact-url', label: '精确地址', desc: '路径、参数、hash 都完全一致才匹配。' },
+];
+
+/** 主网址 + 自动匹配方式合并控件：输入框右侧一个设置按钮弹出匹配方式（1Password 风格）。 */
+function UrlMatchField({
+  url,
+  setUrl,
+  matchMode,
+  setMatchMode,
+}: {
+  url: string;
+  setUrl: (v: string) => void;
+  matchMode: LinkMatchMode;
+  setMatchMode: (v: LinkMatchMode) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const current = MATCH_MODES.find((m) => m.value === matchMode) ?? MATCH_MODES[0]!;
+  const isDefault = matchMode === 'origin';
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div>
+      <Label>主网址</Label>
+      <div ref={wrapRef} className="relative">
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://admin.example.com"
+          className={cx(
+            'w-full rounded-lg border border-gray-300 py-2 pl-3 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100',
+            isDefault ? 'pr-11' : 'pr-[7.5rem]',
+          )}
+        />
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          title="自动匹配方式"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          className={cx(
+            'absolute right-1.5 top-1/2 flex max-w-[6.5rem] -translate-y-1/2 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition',
+            isDefault
+              ? 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+              : 'bg-brand-50 text-brand-700 hover:bg-brand-100',
+          )}
+        >
+          <SlidersHorizontal size={13} className="shrink-0" />
+          {!isDefault && <span className="truncate">{current.label}</span>}
+        </button>
+        {open && (
+          <div className="pem-pop absolute right-0 top-full z-20 mt-1.5 w-[300px] overflow-hidden rounded-xl border border-gray-200 bg-surface shadow-xl">
+            <div className="border-b border-gray-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-gray-400">
+              自动匹配方式
+            </div>
+            {MATCH_MODES.map((m) => {
+              const active = m.value === matchMode;
+              return (
+                <button
+                  key={m.value}
+                  type="button"
+                  onClick={() => {
+                    setMatchMode(m.value);
+                    setOpen(false);
+                  }}
+                  className={cx(
+                    'flex w-full items-start gap-2 px-3 py-2 text-left transition hover:bg-gray-50',
+                    active && 'bg-brand-50/60',
+                  )}
+                >
+                  <Check
+                    size={15}
+                    className={cx('mt-0.5 shrink-0', active ? 'text-brand-600' : 'text-transparent')}
+                  />
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5 text-[13px] font-semibold text-gray-800">
+                      {m.label}
+                      {m.value === 'origin' && (
+                        <span className="rounded bg-gray-100 px-1 py-px text-[10px] font-bold text-gray-500">
+                          默认
+                        </span>
+                      )}
+                    </span>
+                    <span className="mt-0.5 block text-[11px] leading-snug text-gray-400">
+                      {m.desc}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <p className="mt-1 text-[11px] text-gray-400">
+        默认按 <b>origin（协议 + 域名/IP + 端口）</b>判断；http 与 https、不同端口都算不同站点。需要区分同站点下多个系统时，点右侧
+        <SlidersHorizontal size={11} className="mx-0.5 inline align-[-1px]" />
+        改为路径前缀或精确地址。
+      </p>
+    </div>
+  );
+}
 
 const FIELD_TYPES: Array<{ value: CustomFieldType; label: string; defaultSensitive?: boolean }> = [
   { value: 'text', label: '文本' },
@@ -456,25 +586,7 @@ export function LinkEditor({
             选种类（决定颜色），可再填自定义名区分同类环境（如 华东 / 客户现场），留空即用种类名；相同标签的链接归到一起，详情页顶部可按标签筛选。
           </p>
         </div>
-        <div>
-          <Label>主网址</Label>
-          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://admin.example.com" />
-          <p className="mt-1 text-[11px] text-gray-400">
-            默认按 <b>origin（协议 + 域名/IP + 端口）</b>判断；http 与 https、不同端口都算不同站点。
-            需要区分同站点下多个系统时，下面改为路径前缀或精确地址。
-          </p>
-        </div>
-        <div>
-          <Label>自动匹配方式</Label>
-          <Select value={matchMode} onChange={(e) => setMatchMode(e.target.value as LinkMatchMode)}>
-            <option value="origin">同源匹配（默认，忽略路径）</option>
-            <option value="path-prefix">路径前缀（区分同域名/端口下的多个系统）</option>
-            <option value="exact-url">精确地址（路径、参数、hash 都一致）</option>
-          </Select>
-          <p className="mt-1 text-[11px] text-gray-400">
-            同一个域名和端口下有多个系统时，选“路径前缀”，例如 <code>/admin</code> 或 <code>#/portal</code> 才会匹配到对应账号。
-          </p>
-        </div>
+        <UrlMatchField url={url} setUrl={setUrl} matchMode={matchMode} setMatchMode={setMatchMode} />
         <div>
           <Label>更多网址（每行一个，可选）</Label>
           <textarea
