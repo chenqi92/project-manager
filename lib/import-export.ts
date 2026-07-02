@@ -199,6 +199,7 @@ const OWN_CSV_HEADER = [
   'match_mode',
   'account_label',
   'username',
+  'tenant',
   'password',
   'totp',
   'note',
@@ -225,6 +226,7 @@ function toCsv(data: VaultData): string {
               '',
               '',
               '',
+              '',
               l.note ?? '',
               fieldsCell(l.customFields),
               '',
@@ -241,6 +243,7 @@ function toCsv(data: VaultData): string {
               l.matchMode ?? 'origin',
               a.label,
               a.username,
+              a.tenant ?? '',
               a.password,
               a.totp ?? '',
               a.note ?? '',
@@ -270,6 +273,7 @@ function fromOwnCsv(content: string): VaultData {
       matchMode: parseLinkMatchMode(row[idx('match_mode')]),
       label: row[idx('account_label')] ?? '',
       username: row[idx('username')] ?? '',
+      tenant: row[idx('tenant')] ?? '',
       password: row[idx('password')] ?? '',
       totp: row[idx('totp')] ?? '',
       note: row[idx('note')] ?? '',
@@ -395,6 +399,7 @@ interface FlatRow {
   matchMode?: LinkMatchMode;
   label: string;
   username: string;
+  tenant?: string;
   password: string;
   totp: string;
   note: string;
@@ -419,6 +424,7 @@ class VaultBuilder {
         newAccount({
           label: r.label,
           username: r.username,
+          tenant: r.tenant || undefined,
           password: r.password,
           totp: r.totp || undefined,
           note: r.note || undefined,

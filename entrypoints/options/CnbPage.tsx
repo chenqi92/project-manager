@@ -345,7 +345,7 @@ function ConnectPanel({
         onClick={() => setOpen(!open)}
         className="flex w-full items-center gap-2.5 px-[18px] py-3.5 text-left"
       >
-        <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+        <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg bg-brand-50 text-prid">
           <FolderGit2 size={16} />
         </span>
         <div className="min-w-0 flex-1">
@@ -753,7 +753,7 @@ function GroupDetail({
     <section className="min-w-0">
       <div className="mb-4 rounded-[14px] border border-gray-200 bg-surface px-4 py-3 shadow-sm">
         <div className="flex flex-wrap items-start gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-prid">
             <FolderGit2 size={17} />
           </span>
           <div className="min-w-0 flex-1">
@@ -893,7 +893,7 @@ function RepoCard({
         <button
           onClick={() => repo.webUrl && onOpen(repo.webUrl)}
           disabled={!repo.webUrl}
-          className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold text-brand-600 hover:bg-brand-50 disabled:opacity-40"
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold text-prid hover:bg-brand-50 disabled:opacity-40"
         >
           <ExternalLink size={12} /> 打开
         </button>

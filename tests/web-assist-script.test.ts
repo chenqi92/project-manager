@@ -95,6 +95,21 @@ describe('web-assist.js login credential capture', () => {
     expect(latestCaptureCandidate()?.username).toBe('13800138000');
   });
 
+  it('captures the tenant field separately from the username', async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="tenant" placeholder="租户编码" value="acme" />
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+
+    const candidate = latestCaptureCandidate();
+    expect(candidate?.username).toBe('admin');
+    expect(candidate?.tenant).toBe('acme');
+  });
+
   it('does not send plain base32 login QR tokens as TOTP', async () => {
     (window as any).BarcodeDetector = class {
       async detect() {

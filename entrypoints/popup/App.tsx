@@ -167,7 +167,13 @@ export default function App() {
     const res = await browser.scripting.executeScript({
       target: site ? { tabId, allFrames: true } : { tabId },
       func: fillCredentialsInPage,
-      args: [entry.username, entry.password, data?.settings.autoSubmit === true, site || undefined],
+      args: [
+        entry.username,
+        entry.password,
+        data?.settings.autoSubmit === true,
+        site || undefined,
+        entry.tenant || undefined,
+      ],
     });
     const results = res
       .map((r) => r.result)
@@ -185,6 +191,12 @@ export default function App() {
   ): Promise<boolean> {
     if (!outcome.filled) return false;
     await recordUse(entry.accountId);
+    // 登记本次自动填充：登录捕获发现凭据与刚填的一致（未修改）时不再弹保存/更新提示。
+    if (tab?.id && tab.url) {
+      await api
+        .markAutoFill(tab.id, tab.url, entry.username, entry.password, entry.tenant)
+        .catch(() => {});
+    }
     if (outcome.filled.submitSkipped && outcome.filled.reason) flash(outcome.filled.reason);
     else window.close();
     return true;
@@ -302,6 +314,8 @@ export default function App() {
         result.username,
         result.password,
         tab.title,
+        undefined,
+        result.tenant,
       );
       if (!p) {
         flash('该登录已是最新，暂无需要保存的变化');
@@ -337,6 +351,7 @@ export default function App() {
           entry.username,
           entry.password,
           data?.settings.autoSubmit === true,
+          entry.tenant,
         );
         await recordUse(entry.accountId);
         if (r.reason) flash(r.reason);
@@ -436,7 +451,7 @@ export default function App() {
             <select
               value={selectedCaptureAccountId}
               onChange={(e) => setSelectedCaptureAccountId(e.target.value)}
-              className="mb-2 w-full rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs text-amber-900 outline-none"
+              className="mb-2 w-full rounded-lg border border-amber-200 bg-surface px-2 py-1.5 text-xs text-amber-900 outline-none"
             >
               {pending.updateCandidates.map((c) => (
                 <option key={c.accountId} value={c.accountId}>
@@ -760,7 +775,7 @@ function siteOf(url: string): string {
 }
 
 type CaptureInputResult =
-  | { ok: true; url: string; username: string; password: string }
+  | { ok: true; url: string; username: string; password: string; tenant?: string }
   | { ok: false; reason: string };
 
 function collectLoginInputInPage(): CaptureInputResult {
@@ -789,11 +804,30 @@ function collectLoginInputInPage(): CaptureInputResult {
   if (!pw?.value) return { ok: false, reason: '页面上没有已填写的密码框' };
 
   const scope = pw.form ?? document;
-  const candidates = Array.from(
+  const allCandidates = Array.from(
     scope.querySelectorAll<HTMLInputElement>(
       'input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[inputmode="numeric"], input:not([type])',
     ),
   ).filter((el) => el.type !== 'password' && el.value && visible(el));
+
+  // 租户 / 企业 / 域字段单独收集，不当作用户名。
+  const tenantRe = /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b)/i;
+  const isTenantField = (el: HTMLInputElement): boolean =>
+    tenantRe.test(
+      [
+        el.name,
+        el.id,
+        el.autocomplete,
+        el.placeholder,
+        el.getAttribute('aria-label') ?? '',
+        el.getAttribute('title') ?? '',
+        el.closest('label')?.textContent ?? '',
+      ]
+        .join(' ')
+        .toLowerCase(),
+    );
+  const tenant = allCandidates.find(isTenantField)?.value || undefined;
+  const candidates = allCandidates.filter((el) => !isTenantField(el));
 
   let username = '';
   for (const el of candidates) {
@@ -807,6 +841,7 @@ function collectLoginInputInPage(): CaptureInputResult {
     url: location.href,
     username,
     password: pw.value,
+    tenant,
   };
 }
 

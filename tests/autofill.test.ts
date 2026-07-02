@@ -111,6 +111,46 @@ describe('fillCredentialsInPage', () => {
     expect((document.querySelector('input[name=pass]') as HTMLInputElement).value).toBe('pw');
   });
 
+  it('账号带租户时填进租户框，用户名不误填租户框（租户/用户名/密码布局）', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="tenantCode" placeholder="租户编码" />
+        <input type="text" name="username" />
+        <input type="password" name="pass" />
+      </form>`;
+    const r = fillCredentialsInPage('alice', 'pw', false, undefined, 'acme');
+    expect(r.ok).toBe(true);
+    expect((document.querySelector('input[name=tenantCode]') as HTMLInputElement).value).toBe('acme');
+    expect((document.querySelector('input[name=username]') as HTMLInputElement).value).toBe('alice');
+    expect((document.querySelector('input[name=pass]') as HTMLInputElement).value).toBe('pw');
+  });
+
+  it('用户名/租户/密码布局：用户名填进用户名框而不是紧邻密码框的租户框', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="loginName" />
+        <input type="text" name="tenant" />
+        <input type="password" name="pass" />
+      </form>`;
+    const r = fillCredentialsInPage('alice', 'pw', false);
+    expect(r.ok).toBe(true);
+    expect((document.querySelector('input[name=loginName]') as HTMLInputElement).value).toBe('alice');
+    expect((document.querySelector('input[name=tenant]') as HTMLInputElement).value).toBe('');
+  });
+
+  it('没存租户值时不填租户框', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="tenant" />
+        <input type="text" name="username" />
+        <input type="password" name="pass" />
+      </form>`;
+    const r = fillCredentialsInPage('alice', 'pw', false);
+    expect(r.ok).toBe(true);
+    expect((document.querySelector('input[name=tenant]') as HTMLInputElement).value).toBe('');
+    expect((document.querySelector('input[name=username]') as HTMLInputElement).value).toBe('alice');
+  });
+
   it('顶层无密码框但有内嵌登录 iframe 时回报该 iframe origin', () => {
     document.body.innerHTML = `
       <div>

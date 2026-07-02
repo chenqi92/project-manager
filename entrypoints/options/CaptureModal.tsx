@@ -33,6 +33,7 @@ export function CaptureModal({
   initialTitle,
   initialUsername,
   initialPassword,
+  initialTenant,
   initialTotp,
   initialAccountLabel,
   onClose,
@@ -43,6 +44,7 @@ export function CaptureModal({
   initialTitle: string;
   initialUsername?: string;
   initialPassword?: string;
+  initialTenant?: string;
   initialTotp?: string;
   initialAccountLabel?: string;
   onClose: () => void;
@@ -55,9 +57,12 @@ export function CaptureModal({
   const [envKind, setEnvKind] = useState<EnvKind>('dev');
   const [linkName, setLinkName] = useState(() => defaultLinkName(initialTitle, initialUrl));
   const [url, setUrl] = useState(initialUrl);
-  const [withAccount, setWithAccount] = useState(Boolean(initialUsername || initialPassword || initialTotp || initialAccountLabel));
+  const [withAccount, setWithAccount] = useState(
+    Boolean(initialUsername || initialPassword || initialTenant || initialTotp || initialAccountLabel),
+  );
   const [label, setLabel] = useState(initialAccountLabel ?? '');
   const [username, setUsername] = useState(initialUsername ?? '');
+  const [tenant, setTenant] = useState(initialTenant ?? '');
   const [password, setPassword] = useState(initialPassword ?? '');
   const [totp, setTotp] = useState(initialTotp ?? '');
   const [busy, setBusy] = useState(false);
@@ -95,7 +100,13 @@ export function CaptureModal({
         });
         if (withAccount && (username.trim() || label.trim() || password || totp.trim())) {
           link.accounts.push(
-            newAccount({ label: label.trim(), username: username.trim(), password, totp: totp.trim() || undefined }),
+            newAccount({
+              label: label.trim(),
+              username: username.trim(),
+              password,
+              tenant: tenant.trim() || undefined,
+              totp: totp.trim() || undefined,
+            }),
           );
         }
         env.links.push(link);
@@ -185,6 +196,11 @@ export function CaptureModal({
           <div className="grid grid-cols-2 gap-2">
             <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="账号备注名" />
             <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="用户名" />
+            <Input
+              value={tenant}
+              onChange={(e) => setTenant(e.target.value)}
+              placeholder="租户 / 企业 / 域（可选）"
+            />
             <Input
               type="password"
               value={password}

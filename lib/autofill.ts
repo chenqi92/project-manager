@@ -121,12 +121,14 @@ export function isSameSite(originA: string, originB: string): boolean {
  * 注入到目标页面执行的填充函数。必须自包含、不引用任何外部作用域
  * （会被 chrome.scripting.executeScript 序列化后在页面里运行）。
  * 只填值并派发 input/change 事件，不点击提交。
+ * tenant：多租户系统登录页的租户 / 企业 / 域字段值（可选，账号存了才会填）。
  */
 export function fillCredentialsInPage(
   username: string,
   password: string,
   submit = false,
   site?: string,
+  tenant?: string,
 ): FillResult {
   // 跨 frame 注入（allFrames）时的同主域护栏：site 为「允许填充的可注册域(eTLD+1)」。
   // 只在当前 frame 的主机等于该域或其子域时才填，避免被一起注入的无关 iframe
@@ -313,20 +315,46 @@ export function fillCredentialsInPage(
     };
   }
 
-  // 用户名框：同一表单内、密码框之前最近的一个文本/邮箱/电话输入框。
+  // 租户 / 企业 / 域字段：多租户系统在用户名之外的第三个输入框。
+  // 用户名选择时要跳过它，避免把用户名填进租户框；账号存了租户值时才往里填。
+  // 只看输入框自身属性与 label 文案（不看父容器整段文本），避免把普通用户名框误判成租户框。
+  const tenantRe = /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b)/i;
+  const isTenantField = (el: HTMLInputElement): boolean =>
+    tenantRe.test(
+      [
+        el.name,
+        el.id,
+        el.autocomplete,
+        el.placeholder,
+        el.getAttribute('aria-label') ?? '',
+        el.getAttribute('title') ?? '',
+        el.closest('label')?.textContent ?? '',
+      ]
+        .join(' ')
+        .toLowerCase(),
+    );
+
+  // 用户名框：同一表单内、密码框之前最近的一个文本/邮箱/电话输入框（跳过租户框）。
   let userField: HTMLInputElement | null = null;
   const scope = pw.form ?? document;
-  const candidates = Array.from(
+  const allCandidates = Array.from(
     scope.querySelectorAll<HTMLInputElement>(
       'input[type="text"], input[type="email"], input[type="tel"], input:not([type])',
     ),
   ).filter((el) => el.type !== 'password' && visible(el));
+  const candidates = allCandidates.filter((el) => !isTenantField(el));
   for (const el of candidates) {
     const pos = el.compareDocumentPosition(pw);
     if (pos & Node.DOCUMENT_POSITION_FOLLOWING) userField = el; // el 在 pw 之前
   }
   if (!userField && candidates.length > 0) userField = candidates[0]!;
+  // 全部候选都像租户框时退回旧行为（宁可填错位置也别不填）。
+  if (!userField && allCandidates.length > 0) userField = allCandidates[0]!;
 
+  const tenantField = tenant
+    ? allCandidates.find((el) => el !== userField && isTenantField(el)) ?? null
+    : null;
+  if (tenantField && tenant) setValue(tenantField, tenant);
   if (userField && username) setValue(userField, username);
   setValue(pw, password);
 

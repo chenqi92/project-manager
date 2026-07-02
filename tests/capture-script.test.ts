@@ -75,6 +75,36 @@ describe('capture.js login credential capture', () => {
     expect(latestCaptureCandidate()?.username).toBe('13800138000');
   });
 
+  it('captures the tenant field separately from the username', async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="tenant" placeholder="租户编码" value="acme" />
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+
+    const candidate = latestCaptureCandidate();
+    expect(candidate?.username).toBe('admin');
+    expect(candidate?.tenant).toBe('acme');
+  });
+
+  it('does not treat a company/tenant field next to the password as the username', async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="text" name="companyCode" value="acme" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+
+    const candidate = latestCaptureCandidate();
+    expect(candidate?.username).toBe('admin');
+    expect(candidate?.tenant).toBe('acme');
+  });
+
   it('does not reuse an older cached username when the password page has no username field', async () => {
     sessionStorage.setItem(
       'pemLastLoginUsername',

@@ -21,6 +21,7 @@ export interface FlatEntry {
   username: string;
   /** 注意：明文密码也在内存里，仅供已解锁的扩展 UI 使用 */
   password: string;
+  tenant?: string;
   totp?: string;
   updatedAt: number;
   note?: string;
@@ -57,6 +58,7 @@ function buildEntry(
     accountLabel: a.label,
     username: a.username,
     password: a.password,
+    tenant: a.tenant,
     totp: a.totp,
     updatedAt: a.updatedAt,
     note: a.note ?? l.note,

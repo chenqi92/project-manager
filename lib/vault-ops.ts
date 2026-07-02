@@ -28,6 +28,7 @@ export function newAccount(p: Partial<Account> = {}): Account {
     label: p.label ?? '',
     username: p.username ?? '',
     password: p.password ?? '',
+    tenant: p.tenant,
     note: p.note,
     totp: p.totp,
     customFields: p.customFields,

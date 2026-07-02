@@ -72,6 +72,8 @@ const SYNC_MAP_KEY = 'syncStateMap'; // 按目标 id 的多端同步状态
 const PENDING_KEY = 'pendingCapture';
 const LOGIN_CANDIDATES_KEY = 'loginCaptureCandidates';
 const LOGIN_CANDIDATE_TTL_MS = 5 * 60_000;
+const AUTO_FILLS_KEY = 'recentAutoFills';
+const AUTO_FILL_TTL_MS = 30 * 60_000;
 
 // 全部仅存在于内存（SW 重启后从 session 恢复，浏览器关闭即丢失）。
 let dek: Uint8Array | null = null;
@@ -83,14 +85,25 @@ let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let clipboardOffscreenReady = false;
 let pendingCaptures: Record<string, CapturePending> = {};
 let loginCandidates: Record<string, LoginCaptureCandidate> = {};
+let recentAutoFills: Record<string, RecentAutoFill> = {};
 let foreignVaultPasswords: string[] = [];
 
 type LoginCaptureCandidate = Pick<
   CapturePending,
-  'origin' | 'url' | 'pageTitle' | 'username' | 'password' | 'authProvider' | 'totp' | 'tabId'
+  'origin' | 'url' | 'pageTitle' | 'username' | 'password' | 'tenant' | 'authProvider' | 'totp' | 'tabId'
 > & {
   createdAt: number;
 };
+
+/** 最近一次由扩展执行的自动填充（按 tab+origin）：捕获到同样的凭据时不再提示保存/更新。 */
+interface RecentAutoFill {
+  origin: string;
+  username: string;
+  password: string;
+  tenant?: string;
+  tabId?: number;
+  at: number;
+}
 
 export default defineBackground(() => {
   browser.storage.session
@@ -168,6 +181,7 @@ export default defineBackground(() => {
       entry.username,
       entry.password,
       cachedData.settings.autoSubmit === true,
+      entry.tenant,
     );
   });
 
@@ -210,21 +224,89 @@ async function injectCredentialFill(
   password: string,
   submit: boolean,
   url: string,
+  tenant?: string,
 ): Promise<ReturnType<typeof fillCredentialsInPage>> {
   const site = siteForFill(url);
   const res = await browser.scripting.executeScript({
     target: site ? { tabId, allFrames: true } : { tabId },
     func: fillCredentialsInPage,
-    args: [username, password, submit, site || undefined],
+    args: [username, password, submit, site || undefined, tenant || undefined],
   });
   const results = res
     .map((r) => r.result)
     .filter((r): r is NonNullable<typeof r> => Boolean(r));
-  return (
+  const merged =
     results.find((r) => r.ok === true) ??
     results.find((r) => r.reason && r.reason !== 'frame-not-allowed') ??
-    results[0] ?? { ok: true }
-  );
+    results[0] ?? { ok: true };
+  if (merged.ok === true) {
+    await recordAutoFill(tabId, url, { username, password, tenant });
+  }
+  return merged;
+}
+
+/**
+ * 登记一次由扩展执行的自动填充。登录捕获若发现提交的密码与刚填充的完全一致
+ * （即用户没改动），就不再弹「更新账号 / 新建登录」提示。
+ */
+async function recordAutoFill(
+  tabId: number | undefined,
+  url: string,
+  creds: { username: string; password: string; tenant?: string },
+): Promise<void> {
+  const origin = getOrigin(url);
+  if (!origin || !creds.password) return;
+  await ensureAutoFillsRestored();
+  pruneAutoFills();
+  recentAutoFills[pendingId(origin, tabId)] = {
+    origin,
+    username: creds.username,
+    password: creds.password,
+    tenant: creds.tenant,
+    tabId,
+    at: Date.now(),
+  };
+  await saveAutoFills();
+}
+
+function pruneAutoFills(): void {
+  const cutoff = Date.now() - AUTO_FILL_TTL_MS;
+  for (const [id, f] of Object.entries(recentAutoFills)) {
+    if ((f.at ?? 0) < cutoff) delete recentAutoFills[id];
+  }
+}
+
+async function ensureAutoFillsRestored(): Promise<void> {
+  if (Object.keys(recentAutoFills).length > 0) return;
+  const s = await browser.storage.session.get(AUTO_FILLS_KEY);
+  recentAutoFills = (s[AUTO_FILLS_KEY] as Record<string, RecentAutoFill> | undefined) ?? {};
+}
+
+async function saveAutoFills(): Promise<void> {
+  if (Object.keys(recentAutoFills).length > 0) {
+    await browser.storage.session.set({ [AUTO_FILLS_KEY]: recentAutoFills });
+  } else {
+    await browser.storage.session.remove(AUTO_FILLS_KEY);
+  }
+}
+
+/** 取该页面来源最近一次自动填充记录：优先同 tab，退回同源最新一条。 */
+async function getRecentAutoFill(
+  origin: string,
+  tabId?: number,
+): Promise<RecentAutoFill | null> {
+  await ensureAutoFillsRestored();
+  pruneAutoFills();
+  const exact = recentAutoFills[pendingId(origin, tabId)];
+  if (exact) return exact;
+  const list = Object.values(recentAutoFills)
+    .filter((f) => f.origin === origin)
+    .sort((a, b) => b.at - a.at);
+  if (tabId !== undefined) {
+    const sameTab = list.find((f) => f.tabId === tabId);
+    if (sameTab) return sameTab;
+  }
+  return list[0] ?? null;
 }
 
 /** 快捷键「填充当前页」：唯一匹配则直接填，否则打开 popup 让用户选。 */
@@ -245,6 +327,7 @@ async function fillActiveTab(): Promise<void> {
       m.password,
       cachedData.settings.autoSubmit === true,
       m.url,
+      m.tenant,
     );
   } else {
     browser.action.openPopup?.().catch(() => {});
@@ -604,7 +687,16 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
     }
 
     case 'tab:openAndFill':
-      return openAndFill(msg.url, msg.username, msg.password, msg.submit);
+      return openAndFill(msg.url, msg.username, msg.password, msg.submit, msg.tenant);
+
+    case 'capture:markAutoFill':
+      // 仅扩展页面可发（pageMessage 白名单外）：popup 直填成功后登记，捕获时据此跳过提示。
+      await recordAutoFill(msg.tabId, msg.url, {
+        username: msg.username,
+        password: msg.password,
+        tenant: msg.tenant,
+      });
+      return;
 
     case 'assist:matches':
       return assistMatches(sender);
@@ -630,6 +722,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
         msg.title,
         msg.totp,
         msg.authProvider,
+        msg.tenant,
       );
       return;
     }
@@ -652,6 +745,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
         msg.title,
         msg.totp,
         msg.authProvider,
+        msg.tenant,
       );
     }
     case 'capture:manual': {
@@ -674,6 +768,8 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
         },
         msg.title,
         msg.totp,
+        undefined,
+        msg.tenant,
       );
     }
     case 'capture:pending':
@@ -779,7 +875,7 @@ async function assistFill(
   submit: boolean,
 ): Promise<unknown> {
   const { entry, tabId } = await findAssistEntry(sender, accountId);
-  return injectCredentialFill(tabId, entry.username, entry.password, submit, entry.url);
+  return injectCredentialFill(tabId, entry.username, entry.password, submit, entry.url, entry.tenant);
 }
 
 async function assistFillTotp(
@@ -869,6 +965,7 @@ async function handleCaptureCandidate(
   pageTitle?: string,
   rawTotp?: string,
   rawAuthProvider?: string,
+  rawTenant?: string,
 ): Promise<void> {
   await ensureRestored();
   const authProvider = cleanAuthProvider(rawAuthProvider);
@@ -885,6 +982,7 @@ async function handleCaptureCandidate(
     pageTitle: cleanCaptureTitle(pageTitle),
     username: nextUsername,
     password: nextPassword,
+    tenant: cleanTenant(rawTenant),
     authProvider,
     totp,
     tabId,
@@ -939,6 +1037,7 @@ async function handleCaptureSuccessCheck(
     candidate.pageTitle || pageTitle,
     totp,
     candidate.authProvider,
+    candidate.tenant,
   );
 }
 
@@ -987,6 +1086,11 @@ function captureProjectTargets(data: VaultData): NonNullable<CapturePending['pro
 function cleanAuthProvider(provider?: string): string | undefined {
   const clean = (provider ?? '').replace(/\s+/g, ' ').trim();
   return clean ? clean.slice(0, 40) : undefined;
+}
+
+function cleanTenant(tenant?: string): string | undefined {
+  const clean = (tenant ?? '').replace(/\s+/g, ' ').trim();
+  return clean ? clean.slice(0, 80) : undefined;
 }
 
 function providerAccountName(provider?: string): string {
@@ -1119,6 +1223,7 @@ async function handleCaptureLogin(
   pageTitle?: string,
   rawTotp?: string,
   rawAuthProvider?: string,
+  rawTenant?: string,
 ): Promise<{
   pending: true;
   id?: string;
@@ -1135,13 +1240,26 @@ async function handleCaptureLogin(
   accountLabel?: string;
   targetLinkId?: string;
   totp?: string;
+  tenant?: string;
 } | null> {
   await ensureRestored();
   const authProvider = cleanAuthProvider(rawAuthProvider);
   const password = String(rawPassword ?? '');
   const username = cleanCaptureUsername(rawUsername, authProvider);
   const totp = normalizeCapturedTotp(rawTotp);
+  const tenant = cleanTenant(rawTenant);
   if (!dek || !cachedData || (!password && !authProvider && !totp)) return null; // 锁定时忽略
+
+  // 自动填充抑制：提交的密码与扩展刚在该页面填充的完全一致（用户没改动），
+  // 就不弹保存/更新提示——用户名匹配交给页面启发式时常有误差（掩码手机号 / 租户框等），
+  // 密码逐字节一致已足够说明「这就是保险箱里那条凭据」。手动捕获（popup 兜底）不受此限制。
+  if (!opts.allowUnknownOrigin && password) {
+    const auto = await getRecentAutoFill(origin, tabId);
+    if (auto && auto.password === password && (!tenant || (auto.tenant ?? '') === tenant)) {
+      await clearPending(undefined, origin, tabId);
+      return null;
+    }
+  }
 
   let matchAccountId: string | undefined;
   let linkName: string | undefined;
@@ -1167,9 +1285,12 @@ async function handleCaptureLogin(
             username: acc.username,
             linkName: link.name,
           });
+          // 捕获到的租户与已存的不同才算变化；捕获不到租户（页面没这个字段）不算。
+          const tenantSame = !tenant || (acc.tenant ?? '') === tenant;
           if (acc.username && username && acc.username.toLowerCase() === username.toLowerCase()) {
             matchAccountId = acc.id;
-            if (acc.password === password && (!totp || acc.totp === totp)) exactSame = true;
+            if (acc.password === password && (!totp || acc.totp === totp) && tenantSame)
+              exactSame = true;
           } else if (
             authProvider &&
             !acc.password &&
@@ -1178,7 +1299,7 @@ async function handleCaptureLogin(
               .some((value) => value.toLowerCase().includes(authProvider.toLowerCase()))
           ) {
             matchAccountId = acc.id;
-            if (!totp || acc.totp === totp) exactSame = true;
+            if ((!totp || acc.totp === totp) && tenantSame) exactSame = true;
           }
         }
       }
@@ -1201,6 +1322,7 @@ async function handleCaptureLogin(
       pageTitle: cleanPageTitle,
       username,
       password,
+      tenant,
       authProvider,
       totp,
       tabId,
@@ -1219,6 +1341,7 @@ async function handleCaptureLogin(
       pageTitle: cleanPageTitle,
       username,
       password,
+      tenant,
       authProvider,
       totp,
       tabId,
@@ -1249,6 +1372,7 @@ async function handleCaptureLogin(
     accountLabel: saved.accountLabel,
     targetLinkId: saved.targetLinkId,
     totp: saved.totp,
+    tenant: saved.tenant,
   };
 }
 
@@ -1292,6 +1416,7 @@ async function applyCapture(
               if (nextUsername) acc.username = nextUsername;
               if (nextLabel) acc.label = nextLabel;
               if (p.totp) acc.totp = p.totp;
+              if (p.tenant) acc.tenant = p.tenant;
               if (p.password || !p.authProvider) acc.password = p.password;
               acc.updatedAt = Date.now();
               updated = true;
@@ -1357,7 +1482,13 @@ async function applyCapture(
     if (!target) throw new Error('请选择保存项目或新建项目');
     const now = Date.now();
     target.accounts.push(
-      newAccount({ label: nextLabel, username: nextUsername, password: p.password, totp: p.totp }),
+      newAccount({
+        label: nextLabel,
+        username: nextUsername,
+        password: p.password,
+        tenant: p.tenant,
+        totp: p.totp,
+      }),
     );
     target.updatedAt = now;
     if (targetEnv) targetEnv.updatedAt = now;
@@ -1460,6 +1591,7 @@ async function openAndFill(
   username: string,
   password: string,
   submit: boolean,
+  tenant?: string,
 ): Promise<{ filled: boolean; reason?: string }> {
   const targetOrigin = getOrigin(url);
   if (!targetOrigin) throw new Error('链接地址不合法');
@@ -1475,7 +1607,7 @@ async function openAndFill(
     return { filled: false, reason: '页面最终地址与链接不一致，已阻止填充' };
   }
 
-  const result = await injectCredentialFill(tabId, username, password, submit, url);
+  const result = await injectCredentialFill(tabId, username, password, submit, url, tenant);
   if (result.ok === false) return { filled: false, reason: result.reason ?? '未能填充' };
   return { filled: true, reason: result.submitSkipped ? result.reason : undefined };
 }

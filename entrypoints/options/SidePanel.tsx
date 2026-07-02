@@ -223,7 +223,7 @@ function RailTab({
         {label}
       </span>
       {badge !== undefined && (
-        <span className="rounded-full bg-brand-50 px-1 text-[10px] font-semibold text-brand-700">
+        <span className="rounded-full bg-brand-50 px-1 text-[10px] font-semibold text-prid">
           {badge}
         </span>
       )}

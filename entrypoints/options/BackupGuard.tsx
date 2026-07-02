@@ -61,7 +61,7 @@ export function BackupReminder({
         <Button onClick={onExport}>
           <Download size={14} /> 立即备份
         </Button>
-        <button onClick={onSnooze} className="text-xs text-amber-700 hover:underline">
+        <button onClick={onSnooze} className="text-xs text-amber-800 hover:underline">
           稍后
         </button>
       </div>
@@ -175,7 +175,7 @@ function FeatureSwitchRow({
 }) {
   return (
     <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-surface px-3.5 py-3">
-      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-brand-50 text-brand-700">
+      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-brand-50 text-prid">
         {icon}
       </span>
       <div className="min-w-0 flex-1">

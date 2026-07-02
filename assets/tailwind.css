@@ -41,7 +41,9 @@
  * 深色模式：直接重映射灰阶与 surface 的 CSS 变量。
  * Tailwind v4 的颜色工具都引用 var(--color-*)，因此无需给每个组件加 dark: 类，
  * 现有的 bg-surface / bg-gray-* / text-gray-* / border-gray-* 会自动翻转。
- * 彩色徽标（brand/sky/amber...）保持不变，在深色背景上作为浅色标签依然清晰。
+ * 彩色小徽标（bg-*-100 + text-*-700，如环境标签）保持浅底深字，在深色背景上依然清晰。
+ * 大面积浅底面板用的 *-50 底 / *-200·300 边框 / *-800 正文则翻转成深底浅字，
+ * 避免暗色下出现「亮色面板 + 浅灰文字」的低对比组合。
  */
 .dark {
   --color-surface: #111827;
@@ -55,6 +57,22 @@
   --color-gray-700: #d1d5db;
   --color-gray-800: #e5e7eb;
   --color-gray-900: #f3f4f6;
+
+  /* 品牌浅底（首次引导面板、TOTP 徽标、选中态 chip 等）翻转为深青 */
+  --color-brand-50: #0c2b29;
+  --color-brand-100: #123f3a;
+  --color-brand-200: #17524b;
+
+  /* 警示/危险面板：*-50 底与边框翻暗，*-800/900 正文提亮 */
+  --color-amber-50: #2c2410;
+  --color-amber-200: #4d3c14;
+  --color-amber-300: #5e4a16;
+  --color-amber-800: #fcd34d;
+  --color-amber-900: #fde68a;
+  --color-rose-50: #2c1517;
+  --color-rose-200: #55232a;
+  --color-rose-300: #662a33;
+  --color-rose-800: #fda4af;
 
   /* 语义浅底在深色上要变暗；前景色略提亮以在深色背景上清晰 */
   --color-prid: #5eead4;
@@ -270,16 +288,17 @@ html.dark {
 .md-body .mermaid-rendered svg { max-width: 100%; height: auto; }
 .md-body .mermaid-error {
   font-size: 12px;
-  color: #b45309;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
+  color: var(--color-amber-800);
+  background: var(--color-amber-50);
+  border: 1px solid var(--color-amber-200);
   border-radius: 6px;
   padding: 4px 8px;
   margin-bottom: 4px;
 }
 .md-body mark.md-hit {
+  /* 高亮底固定亮黄，字固定深色：亮暗主题下都保持可读（暗色正文是浅色，不能 inherit） */
   background: #fde68a;
-  color: inherit;
+  color: #1a1d23;
   border-radius: 2px;
   padding: 0 1px;
 }

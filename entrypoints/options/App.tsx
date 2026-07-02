@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import {
+  Building2,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -153,6 +154,7 @@ type CaptureDraft = {
   title: string;
   username?: string;
   password?: string;
+  tenant?: string;
   totp?: string;
   accountLabel?: string;
   pendingId?: string;
@@ -259,6 +261,7 @@ export default function App() {
           title: p.linkName || hostOf(p.origin),
           username: p.username,
           password: p.password,
+          tenant: p.tenant,
           totp: p.totp,
           accountLabel: p.accountLabel ?? '',
           pendingId: p.id,
@@ -315,7 +318,7 @@ export default function App() {
     flash(`${what}已复制（25 秒后自动清空）`);
   };
 
-  const openLogin = async (url: string, username: string, password: string) => {
+  const openLogin = async (url: string, username: string, password: string, tenant?: string) => {
     const origin = getOrigin(url);
     if (!origin) return flash('链接地址不合法');
     const pattern = origin + '/*';
@@ -331,6 +334,7 @@ export default function App() {
         username,
         password,
         data?.settings.autoSubmit === true,
+        tenant,
       );
       if (r.reason) flash(r.reason);
     } catch (e) {
@@ -1299,6 +1303,7 @@ export default function App() {
           initialTitle={capture.title}
           initialUsername={capture.username}
           initialPassword={capture.password}
+          initialTenant={capture.tenant}
           initialTotp={capture.totp}
           initialAccountLabel={capture.accountLabel}
           onClose={() => {
@@ -1494,7 +1499,7 @@ interface ProjectViewProps {
   onEditAccount: (envId: string, linkId: string, account: Account) => void;
   onDeleteAccount: (envId: string, linkId: string, account: Account) => void;
   onCopy: (text: string, what: string) => void;
-  onOpenLogin: (url: string, username: string, password: string) => void;
+  onOpenLogin: (url: string, username: string, password: string, tenant?: string) => void;
   onOpenDocs: () => void;
   onAddMemo: (text: string, dueAt: number | undefined, urgent: boolean) => void;
   onToggleMemoDone: (id: string) => void;
@@ -1687,7 +1692,7 @@ function LinkBlock({
     link.matchMode === 'path-prefix' ? '路径匹配' : link.matchMode === 'exact-url' ? '精确匹配' : '';
   const openDefaultLogin = () => {
     if (!link.url || !acc0) return;
-    props.onOpenLogin(link.url, acc0.username, acc0.password);
+    props.onOpenLogin(link.url, acc0.username, acc0.password, acc0.tenant);
   };
   return (
     <div className="border-t border-gray-100 px-4 py-3.5">
@@ -1787,7 +1792,7 @@ function LinkBlock({
             onEdit={() => props.onEditAccount(env.id, link.id, a)}
             onDelete={() => props.onDeleteAccount(env.id, link.id, a)}
             onOpenLogin={
-              link.url ? () => props.onOpenLogin(link.url, a.username, a.password) : undefined
+              link.url ? () => props.onOpenLogin(link.url, a.username, a.password, a.tenant) : undefined
             }
           />
         ))}
@@ -1828,6 +1833,7 @@ function AccountRow({
           </div>
           <div className="truncate text-[10.5px] text-gray-400">
             {account.label || '（默认账号）'}
+            {account.tenant ? ` · 租户 ${account.tenant}` : ''}
           </div>
         </div>
         <div className="min-w-0 flex-1 truncate font-mono text-[12.5px] tracking-wide text-gray-500">
@@ -1852,6 +1858,11 @@ function AccountRow({
           <IconButton title="复制用户名" onClick={() => onCopy(account.username, '用户名')}>
             <Users size={15} />
           </IconButton>
+          {account.tenant && (
+            <IconButton title="复制租户" onClick={() => onCopy(account.tenant!, '租户')}>
+              <Building2 size={15} />
+            </IconButton>
+          )}
           <IconButton title="复制密码" onClick={() => onCopy(account.password, '密码')}>
             <Copy size={15} />
           </IconButton>
@@ -1889,7 +1900,7 @@ function CustomFieldsToggle({
       className={cx(
         'flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold',
         open
-          ? 'border-brand-200 bg-brand-50 text-brand-700'
+          ? 'border-brand-200 bg-brand-50 text-prid'
           : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100',
       )}
     >
@@ -2008,7 +2019,7 @@ function SearchView({
 }: {
   results: FlatEntry[];
   onCopy: (text: string, what: string) => void;
-  onOpenLogin: (url: string, username: string, password: string) => void;
+  onOpenLogin: (url: string, username: string, password: string, tenant?: string) => void;
 }) {
   return (
     <div className="flex-1 space-y-2 overflow-auto p-6">
@@ -2029,7 +2040,7 @@ function SearchRow({
 }: {
   entry: FlatEntry;
   onCopy: (text: string, what: string) => void;
-  onOpenLogin: (url: string, username: string, password: string) => void;
+  onOpenLogin: (url: string, username: string, password: string, tenant?: string) => void;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -2068,7 +2079,7 @@ function SearchRow({
           <>
             <IconButton
               title="打开并登录"
-              onClick={() => onOpenLogin(entry.url, entry.username, entry.password)}
+              onClick={() => onOpenLogin(entry.url, entry.username, entry.password, entry.tenant)}
             >
               <LogIn size={15} />
             </IconButton>
@@ -2106,7 +2117,7 @@ function GitRepoChip({
         className="flex shrink-0 items-center gap-1 self-stretch border-l border-gray-200 px-2 py-1 hover:bg-gray-100"
       >
         {repo.branch && (
-          <span className="rounded bg-brand-50 px-1 text-brand-600">{repo.branch}</span>
+          <span className="rounded bg-brand-50 px-1 text-prid">{repo.branch}</span>
         )}
         <Terminal size={12} className="shrink-0 text-gray-400" />
       </button>

@@ -43,7 +43,7 @@ export function MemoRow({
       <span
         className={cx(
           'min-w-0 flex-1 break-words',
-          memo.done ? 'text-gray-400 line-through' : alarm ? 'text-rose-700' : 'text-gray-700',
+          memo.done ? 'text-gray-400 line-through' : alarm ? 'text-rose-800' : 'text-gray-700',
         )}
       >
         {memo.text}

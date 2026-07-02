@@ -651,6 +651,7 @@ export function AccountEditor({
     label: string;
     username: string;
     password: string;
+    tenant?: string;
     note?: string;
     totp?: string;
     customFields?: CustomField[];
@@ -658,6 +659,7 @@ export function AccountEditor({
 }) {
   const [label, setLabel] = useState(initial?.label ?? '');
   const [username, setUsername] = useState(initial?.username ?? '');
+  const [tenant, setTenant] = useState(initial?.tenant ?? '');
   const [password, setPassword] = useState(initial?.password ?? '');
   const [note, setNote] = useState(initial?.note ?? '');
   const [totp, setTotp] = useState(initial?.totp ?? '');
@@ -692,6 +694,14 @@ export function AccountEditor({
         <div>
           <Label>用户名</Label>
           <Input value={username} onChange={(e) => setUsername(e.target.value)} />
+        </div>
+        <div>
+          <Label>租户 / 企业 / 域（可选，多租户系统登录页的第三个字段）</Label>
+          <Input
+            value={tenant}
+            onChange={(e) => setTenant(e.target.value)}
+            placeholder="例如：租户编码、公司代码、域"
+          />
         </div>
         <div>
           <Label>密码</Label>
@@ -766,6 +776,7 @@ export function AccountEditor({
               label: label.trim(),
               username: username.trim(),
               password,
+              tenant: tenant.trim() || undefined,
               note: note.trim() || undefined,
               totp: totp.trim() || undefined,
               customFields: cleanCustomFields(customFields),

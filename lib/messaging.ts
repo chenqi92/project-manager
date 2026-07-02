@@ -87,6 +87,7 @@ export type Msg =
       url: string;
       username: string;
       password: string;
+      tenant?: string;
       submit: boolean;
     }
   // 网页内助手（content script 发起；后台按 sender origin 二次校验）
@@ -102,6 +103,7 @@ export type Msg =
       title?: string;
       username: string;
       password: string;
+      tenant?: string;
       authProvider?: string;
       totp?: string;
     }
@@ -113,6 +115,7 @@ export type Msg =
       title?: string;
       username: string;
       password: string;
+      tenant?: string;
       authProvider?: string;
       totp?: string;
     }
@@ -123,7 +126,17 @@ export type Msg =
       title?: string;
       username: string;
       password: string;
+      tenant?: string;
       totp?: string;
+    }
+  // popup 直填成功后上报（仅扩展页面可发）：登录捕获时据此识别「未修改的自动填充」并跳过提示
+  | {
+      type: 'capture:markAutoFill';
+      tabId: number;
+      url: string;
+      username: string;
+      password: string;
+      tenant?: string;
     }
   | { type: 'capture:pending'; id?: string }
   | {
@@ -235,12 +248,13 @@ export const api = {
     send<VaultStatus>({ type: 'vault:adopt', serverUrl, token }),
 
   // 打开链接并自动填充（调用前需在页面里先 chrome.permissions.request 该 origin）
-  openAndFill: (url: string, username: string, password: string, submit: boolean) =>
+  openAndFill: (url: string, username: string, password: string, submit: boolean, tenant?: string) =>
     send<{ filled: boolean; reason?: string }>({
       type: 'tab:openAndFill',
       url,
       username,
       password,
+      tenant,
       submit,
     }),
 
@@ -255,8 +269,12 @@ export const api = {
     password: string,
     title?: string,
     totp?: string,
+    tenant?: string,
   ) =>
-    send<CapturePending | null>({ type: 'capture:manual', tabId, url, title, username, password, totp }),
+    send<CapturePending | null>({ type: 'capture:manual', tabId, url, title, username, password, totp, tenant }),
+  /** popup 直填成功后上报，用于登录捕获识别「未修改的自动填充」并跳过保存提示。 */
+  markAutoFill: (tabId: number, url: string, username: string, password: string, tenant?: string) =>
+    send<void>({ type: 'capture:markAutoFill', tabId, url, username, password, tenant }),
   capturePending: (id?: string) => send<CapturePending | null>({ type: 'capture:pending', id }),
   captureSave: (
     id?: string,

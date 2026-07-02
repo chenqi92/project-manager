@@ -507,7 +507,7 @@ function SearchRow({ entry, ctx }: { entry: FlatEntry; ctx: WidgetProps['ctx'] }
           <span className="text-[10px] font-bold">PW</span>
         </IconBtn>
         {entry.url && (
-          <IconBtn title="打开并登录" onClick={() => ctx.onOpenLogin(entry.url, entry.username, entry.password)}>
+          <IconBtn title="打开并登录" onClick={() => ctx.onOpenLogin(entry.url, entry.username, entry.password, entry.tenant)}>
             <LogIn size={14} />
           </IconBtn>
         )}
@@ -720,7 +720,7 @@ export function RecentWidget({ widget, data, ctx }: WidgetProps) {
               {entry.url && (
                 <IconBtn
                   title="再次打开并登录"
-                  onClick={() => ctx.onOpenLogin(entry.url, entry.username, entry.password)}
+                  onClick={() => ctx.onOpenLogin(entry.url, entry.username, entry.password, entry.tenant)}
                 >
                   <LogIn size={14} />
                 </IconBtn>
@@ -768,7 +768,7 @@ export function ReposWidget({ widget, data, ctx }: WidgetProps) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1">
                   <span className="truncate font-medium text-gray-800">{repo.label || repo.url}</span>
-                  {repo.branch && <span className="shrink-0 rounded bg-brand-50 px-1 text-[9px] text-brand-600">{repo.branch}</span>}
+                  {repo.branch && <span className="shrink-0 rounded bg-brand-50 px-1 text-[9px] text-prid">{repo.branch}</span>}
                 </div>
                 <div className="truncate font-mono text-[10px] text-gray-400">{project}</div>
               </div>
@@ -801,7 +801,7 @@ export function TagsWidget({ widget, data }: WidgetProps) {
           {tags.map(([t, n]) => (
             <span
               key={t}
-              className="rounded-full bg-brand-50 px-2 py-0.5 text-brand-700"
+              className="rounded-full bg-brand-50 px-2 py-0.5 text-prid"
               style={{ fontSize: `${11 + Math.min(6, n - 1)}px` }}
               title={`${n} 个项目`}
             >
@@ -902,7 +902,7 @@ export function BackupWidget({ widget, data, ctx }: WidgetProps) {
               {lastBackup ? `上次 ${relativeTime(lastBackup, now)}（${backupAge} 天前）` : '从未导出，建议立即备份'}
             </div>
           </div>
-          <button onClick={ctx.onOpenExport} className="shrink-0 rounded-md bg-brand-50 px-2 py-1 text-[11px] text-brand-700 hover:bg-brand-100">
+          <button onClick={ctx.onOpenExport} className="shrink-0 rounded-md bg-brand-50 px-2 py-1 text-[11px] text-prid hover:bg-brand-100">
             去备份
           </button>
         </div>

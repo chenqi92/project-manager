@@ -53,7 +53,7 @@ export function Home({
   onOpenSettings: () => void;
   onOpenCnb: () => void;
   onCopy: (text: string, what: string) => void;
-  onOpenLogin: (url: string, username: string, password: string) => void;
+  onOpenLogin: (url: string, username: string, password: string, tenant?: string) => void;
 }) {
   const { confirm, prompt } = useDialog();
   const [editing, setEditing] = useState(false);
@@ -365,7 +365,7 @@ export function Home({
         )}
 
         {editing && cols !== GRID_COLS && (
-          <p className="mb-3 inline-block rounded-lg bg-amber-50 px-2.5 py-1 text-xs text-amber-700">
+          <p className="mb-3 inline-block rounded-lg bg-amber-50 px-2.5 py-1 text-xs text-amber-800">
             当前为窄屏自适应视图（只读）。请在更宽的窗口下编辑布局。
           </p>
         )}
@@ -531,7 +531,7 @@ export function Home({
                   onClick={() => addWidget(t)}
                   className="group flex items-start gap-3 rounded-xl border border-gray-200 bg-surface p-3 text-left transition hover:border-brand-500 hover:shadow-[0_6px_16px_-8px_rgba(20,26,40,.18)]"
                 >
-                  <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[10px] bg-brand-50 text-brand-600">
+                  <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[10px] bg-brand-50 text-prid">
                     <Icon size={18} />
                   </span>
                   <div className="min-w-0 flex-1">

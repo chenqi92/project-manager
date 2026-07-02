@@ -43,7 +43,7 @@ export function TotpBadge({
     <button
       onClick={() => onCopy?.(code)}
       title="复制验证码"
-      className="inline-flex items-center gap-1.5 rounded-md bg-brand-50 px-2 py-1 font-mono text-sm text-brand-700 hover:bg-brand-100"
+      className="inline-flex items-center gap-1.5 rounded-md bg-brand-50 px-2 py-1 font-mono text-sm text-prid hover:bg-brand-100"
     >
       <span className="tracking-widest">
         {code.slice(0, Math.ceil(code.length / 2))} {code.slice(Math.ceil(code.length / 2))}

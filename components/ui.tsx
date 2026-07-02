@@ -139,8 +139,8 @@ export function Banner({
 }) {
   const tones = {
     info: 'bg-pribg text-prid',
-    warn: 'bg-amber-50 text-amber-700',
-    error: 'bg-rose-50 text-rose-700',
+    warn: 'bg-amber-50 text-amber-800',
+    error: 'bg-rose-50 text-rose-800',
   };
   return (
     <div className={cx('rounded-lg px-3 py-2 text-xs leading-relaxed', tones[tone])}>

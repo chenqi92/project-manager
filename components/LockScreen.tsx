@@ -153,7 +153,7 @@ export function LockScreen({
         <div className="mt-2 text-lg font-bold text-gray-900">
           {initialized ? '欢迎回来' : firstRun ? '先创建保险库密码' : '创建保险箱'}
         </div>
-        <div className="text-[12.5px] text-gray-400">
+        <div className="text-[12.5px] text-gray-500">
           {initialized
             ? hasBiometric
               ? '可用生物识别或主密码解锁保险箱'
@@ -164,7 +164,7 @@ export function LockScreen({
 
       {showFirstRunGuide && (
         <div className="mt-5 rounded-[14px] border border-brand-100 bg-brand-50/70 p-3.5 text-left">
-          <div className="text-[12px] font-bold text-brand-700">首次使用</div>
+          <div className="text-[12px] font-bold text-prid">首次使用</div>
           <div className="mt-1 text-[12px] leading-5 text-gray-600">
             先设置一个只有你知道的保险库密码。创建后会进入管理页面，可继续新建项目、导入备份或开启同步。
           </div>

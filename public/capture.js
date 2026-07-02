@@ -160,6 +160,21 @@
     if (picked) rememberUsername(picked.value);
   };
 
+  // 租户 / 企业 / 域字段：多租户登录页在用户名之外的第三个输入框。
+  // 识别出来单独捕获，且不再被误当成用户名。
+  const TENANT_RE = /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b)/i;
+  const isTenantField = (el) => TENANT_RE.test(fieldText(el));
+
+  const tenantForPassword = (pw) => {
+    const scope = pw.form || document;
+    const field = Array.from(
+      scope.querySelectorAll(
+        'input[type="text"], input[type="email"], input[type="tel"], input:not([type])',
+      ),
+    ).find((el) => el.type !== 'password' && el.value && visible(el) && isTenantField(el));
+    return field ? field.value : '';
+  };
+
   const captureUsernameFields = (scope) =>
     Array.from(
       scope.querySelectorAll(
@@ -169,6 +184,7 @@
       if (el.type === 'password' || !el.value || !visible(el)) return false;
       const text = fieldText(el);
       if (/(search|query|keyword|验证码|验证|code|otp|totp)/i.test(text)) return false;
+      if (isTenantField(el)) return false;
       if (looksLikeSearchFilter(el)) return false;
       return true;
     });
@@ -393,7 +409,12 @@
     const username = usernameForPassword(pw);
     if (username) rememberUsername(username);
 
-    return { username, password: pw.value, totp: await extractTotpSecretAsync() };
+    return {
+      username,
+      password: pw.value,
+      tenant: tenantForPassword(pw) || undefined,
+      totp: await extractTotpSecretAsync(),
+    };
   };
 
   const captureCandidate = async () => {
@@ -411,6 +432,7 @@
       title: document.title || '',
       username: creds.username,
       password: creds.password,
+      tenant: creds.tenant,
       totp: creds.totp,
     });
   };

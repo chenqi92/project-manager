@@ -224,7 +224,7 @@ function Stat({
     >
       <span className={accent ? 'text-rose-600' : 'text-brand-600'}>{icon}</span>
       <div>
-        <div className={cx('text-xl font-bold leading-none', accent ? 'text-rose-700' : 'text-gray-900')}>
+        <div className={cx('text-xl font-bold leading-none', accent ? 'text-rose-800' : 'text-gray-900')}>
           {value}
         </div>
         <div className="mt-0.5 text-[11px] text-gray-500">{label}</div>

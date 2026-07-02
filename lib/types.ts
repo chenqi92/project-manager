@@ -30,6 +30,8 @@ export interface Account {
   label: string;
   username: string;
   password: string;
+  /** 租户 / 企业 / 域：多租户系统登录页在用户名之外的第三个字段（可选） */
+  tenant?: string;
   note?: string;
   /** TOTP 两步验证：base32 密钥或 otpauth:// URI */
   totp?: string;
@@ -552,6 +554,8 @@ export interface CapturePending {
   pageTitle?: string;
   username: string;
   password: string;
+  /** 登录页租户 / 企业 / 域字段的值（可选） */
+  tenant?: string;
   /** 第三方登录来源，例如 Google / GitHub；这类登录可能没有本地密码。 */
   authProvider?: string;
   /** 注册或启用两步验证时捕获到的 TOTP 密钥 / otpauth:// URI */

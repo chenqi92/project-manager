@@ -70,7 +70,7 @@ function ToolNav({
       onClick={onClick}
       className={cx(
         'flex items-center gap-2.5 rounded-[9px] px-3 py-2.5 text-left text-[13px] font-semibold transition-colors',
-        active ? 'bg-brand-50 text-brand-700' : 'text-gray-600 hover:bg-gray-100',
+        active ? 'bg-brand-50 text-prid' : 'text-gray-600 hover:bg-gray-100',
       )}
     >
       {icon}
