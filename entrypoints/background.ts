@@ -792,6 +792,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       await applyCapture(msg.id, senderOrigin(sender), sender?.tab?.id, msg.accountId, {
         username: msg.username,
         accountLabel: msg.accountLabel,
+        tenant: msg.tenant,
         targetLinkId: msg.targetLinkId,
         targetProjectId: msg.targetProjectId,
         newProjectName: msg.newProjectName,
@@ -1552,6 +1553,7 @@ async function applyCapture(
   edits: {
     username?: string;
     accountLabel?: string;
+    tenant?: string;
     targetLinkId?: string;
     targetProjectId?: string;
     newProjectName?: string;
@@ -1566,6 +1568,8 @@ async function applyCapture(
   const targetAccountId = updateAccountId || (p.kind === 'update' ? p.accountId : undefined);
   const nextUsername = (edits.username ?? p.username).trim();
   const nextLabel = (edits.accountLabel ?? p.accountLabel ?? '').trim();
+  // 浮层里显式编辑过租户（含清空）以编辑值为准；否则用页面捕获值。
+  const nextTenant = edits.tenant !== undefined ? cleanTenant(edits.tenant) : undefined;
   if (
     updateAccountId &&
     updateAccountId !== p.accountId &&
@@ -1584,7 +1588,8 @@ async function applyCapture(
               if (nextUsername) acc.username = nextUsername;
               if (nextLabel) acc.label = nextLabel;
               if (p.totp) acc.totp = p.totp;
-              if (p.tenant) acc.tenant = p.tenant;
+              if (edits.tenant !== undefined) acc.tenant = nextTenant;
+              else if (p.tenant) acc.tenant = p.tenant;
               if (p.password || !p.authProvider) acc.password = p.password;
               acc.updatedAt = Date.now();
               updated = true;
@@ -1654,7 +1659,7 @@ async function applyCapture(
         label: nextLabel,
         username: nextUsername,
         password: p.password,
-        tenant: p.tenant,
+        tenant: edits.tenant !== undefined ? nextTenant : p.tenant,
         totp: p.totp,
       }),
     );

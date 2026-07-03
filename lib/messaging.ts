@@ -148,6 +148,7 @@ export type Msg =
       accountId?: string;
       username?: string;
       accountLabel?: string;
+      tenant?: string;
       targetLinkId?: string;
       targetProjectId?: string;
       newProjectName?: string;
@@ -285,6 +286,7 @@ export const api = {
     edits?: {
       username?: string;
       accountLabel?: string;
+      tenant?: string;
       targetLinkId?: string;
       targetProjectId?: string;
       newProjectName?: string;

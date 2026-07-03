@@ -173,17 +173,24 @@
 
   // 租户 / 企业 / 域字段：多租户登录页在用户名之外的第三个输入框。
   // 识别出来单独捕获，且不再被误当成用户名。
-  const TENANT_RE = /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b)/i;
-  const isTenantField = (el) => TENANT_RE.test(fieldText(el));
+  const TENANT_RE = /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b|\borg)/i;
+  const isTenantField = (el) =>
+    TENANT_RE.test(`${fieldText(el)} ${(el.closest && el.closest('label')?.textContent) || ''}`);
 
   const tenantForPassword = (pw) => {
     const scope = pw.form || document;
-    const field = Array.from(
+    // 租户编码常是数字输入框（type=number / inputmode=numeric），一并纳入。
+    const input = Array.from(
       scope.querySelectorAll(
-        'input[type="text"], input[type="email"], input[type="tel"], input:not([type])',
+        'input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[inputmode="numeric"], input:not([type])',
       ),
     ).find((el) => el.type !== 'password' && el.value && visible(el) && isTenantField(el));
-    return field ? field.value : '';
+    if (input) return input.value;
+    // 单位 / 租户为下拉框的系统：取选中项的 value。
+    const select = Array.from(scope.querySelectorAll('select')).find(
+      (el) => el.value && visible(el) && isTenantField(el),
+    );
+    return select ? select.value : '';
   };
 
   const captureUsernameFields = (scope) =>

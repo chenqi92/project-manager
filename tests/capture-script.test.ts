@@ -168,6 +168,52 @@ describe('capture.js login credential capture', () => {
     });
   });
 
+  it('captures a numeric org-code tenant field (type=number, English name only)', async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="number" name="orgCode" placeholder="编码" value="1024" />
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+
+    const candidate = latestCaptureCandidate();
+    expect(candidate?.username).toBe('admin');
+    expect(candidate?.tenant).toBe('1024');
+  });
+
+  it('captures a select-based tenant control', async () => {
+    document.body.innerHTML = `
+      <form>
+        <select name="company">
+          <option value="">请选择</option>
+          <option value="acme" selected>Acme 公司</option>
+        </select>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.tenant).toBe('acme');
+  });
+
+  it('captures a label-wrapped tenant input without tenant-ish attributes', async () => {
+    document.body.innerHTML = `
+      <form>
+        <label>租户编码<input type="text" name="c1" value="t01" /></label>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+
+    const candidate = latestCaptureCandidate();
+    expect(candidate?.tenant).toBe('t01');
+    expect(candidate?.username).toBe('admin');
+  });
+
   it('does not treat a math captcha image url as TOTP', async () => {
     document.body.innerHTML = `
       <form>

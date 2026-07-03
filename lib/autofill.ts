@@ -150,7 +150,7 @@ export function fillCredentialsInPage(
     );
   };
 
-  const setValue = (el: HTMLInputElement, value: string): void => {
+  const setValue = (el: HTMLInputElement | HTMLSelectElement, value: string): void => {
     const proto = Object.getPrototypeOf(el) as object;
     const desc = Object.getOwnPropertyDescriptor(proto, 'value');
     desc?.set ? desc.set.call(el, value) : (el.value = value);
@@ -318,14 +318,14 @@ export function fillCredentialsInPage(
   // 租户 / 企业 / 域字段：多租户系统在用户名之外的第三个输入框。
   // 用户名选择时要跳过它，避免把用户名填进租户框；账号存了租户值时才往里填。
   // 只看输入框自身属性与 label 文案（不看父容器整段文本），避免把普通用户名框误判成租户框。
-  const tenantRe = /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b)/i;
-  const isTenantField = (el: HTMLInputElement): boolean =>
+  const tenantRe = /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b|\borg)/i;
+  const isTenantField = (el: HTMLElement): boolean =>
     tenantRe.test(
       [
-        el.name,
+        (el as HTMLInputElement).name ?? '',
         el.id,
-        el.autocomplete,
-        el.placeholder,
+        (el as HTMLInputElement).autocomplete ?? '',
+        (el as HTMLInputElement).placeholder ?? '',
         el.getAttribute('aria-label') ?? '',
         el.getAttribute('title') ?? '',
         el.closest('label')?.textContent ?? '',
@@ -351,10 +351,31 @@ export function fillCredentialsInPage(
   // 全部候选都像租户框时退回旧行为（宁可填错位置也别不填）。
   if (!userField && allCandidates.length > 0) userField = allCandidates[0]!;
 
-  const tenantField = tenant
-    ? allCandidates.find((el) => el !== userField && isTenantField(el)) ?? null
-    : null;
-  if (tenantField && tenant) setValue(tenantField, tenant);
+  if (tenant) {
+    // 租户控件可能是文本框、数字编码框（type=number / inputmode=numeric）或下拉框。
+    const tenantInput =
+      allCandidates.find((el) => el !== userField && isTenantField(el)) ??
+      Array.from(
+        scope.querySelectorAll<HTMLInputElement>(
+          'input[type="number"], input[inputmode="numeric"]',
+        ),
+      ).find((el) => el !== userField && visible(el) && isTenantField(el)) ??
+      null;
+    if (tenantInput) {
+      setValue(tenantInput, tenant);
+    } else {
+      const tenantSelect = Array.from(scope.querySelectorAll('select')).find(
+        (el) => visible(el) && isTenantField(el),
+      );
+      if (tenantSelect) {
+        const wanted = tenant.trim();
+        const option =
+          Array.from(tenantSelect.options).find((o) => o.value === wanted) ??
+          Array.from(tenantSelect.options).find((o) => (o.textContent ?? '').trim() === wanted);
+        if (option) setValue(tenantSelect, option.value);
+      }
+    }
+  }
   if (userField && username) setValue(userField, username);
   setValue(pw, password);
 

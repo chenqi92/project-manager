@@ -812,14 +812,14 @@ function collectLoginInputInPage(): CaptureInputResult {
   ).filter((el) => el.type !== 'password' && el.value && visible(el));
 
   // 租户 / 企业 / 域字段单独收集，不当作用户名。
-  const tenantRe = /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b)/i;
-  const isTenantField = (el: HTMLInputElement): boolean =>
+  const tenantRe = /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b|\borg)/i;
+  const isTenantField = (el: HTMLElement): boolean =>
     tenantRe.test(
       [
-        el.name,
+        (el as HTMLInputElement).name ?? '',
         el.id,
-        el.autocomplete,
-        el.placeholder,
+        (el as HTMLInputElement).autocomplete ?? '',
+        (el as HTMLInputElement).placeholder ?? '',
         el.getAttribute('aria-label') ?? '',
         el.getAttribute('title') ?? '',
         el.closest('label')?.textContent ?? '',
@@ -827,7 +827,11 @@ function collectLoginInputInPage(): CaptureInputResult {
         .join(' ')
         .toLowerCase(),
     );
-  const tenant = allCandidates.find(isTenantField)?.value || undefined;
+  // 单位 / 租户为下拉框的系统：取选中项的 value。
+  const tenantSelect = Array.from(scope.querySelectorAll('select')).find(
+    (el) => el.value && visible(el) && isTenantField(el),
+  );
+  const tenant = allCandidates.find(isTenantField)?.value || tenantSelect?.value || undefined;
   const candidates = allCandidates.filter((el) => !isTenantField(el));
 
   let username = '';

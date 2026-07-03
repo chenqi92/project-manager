@@ -151,6 +151,40 @@ describe('fillCredentialsInPage', () => {
     expect((document.querySelector('input[name=username]') as HTMLInputElement).value).toBe('alice');
   });
 
+  it('数字编码型租户框（type=number）也能填进去', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="number" name="orgCode" placeholder="单位编码" />
+        <input type="text" name="username" />
+        <input type="password" name="pass" />
+      </form>`;
+    const r = fillCredentialsInPage('alice', 'pw', false, undefined, '1024');
+    expect(r.ok).toBe(true);
+    expect((document.querySelector('input[name=orgCode]') as HTMLInputElement).value).toBe('1024');
+    expect((document.querySelector('input[name=username]') as HTMLInputElement).value).toBe('alice');
+  });
+
+  it('下拉框型租户按 value 或选项文本选中', () => {
+    document.body.innerHTML = `
+      <form>
+        <select name="tenantId">
+          <option value="">请选择租户</option>
+          <option value="t-1">Acme 公司</option>
+          <option value="t-2">Beta 公司</option>
+        </select>
+        <input type="text" name="username" />
+        <input type="password" name="pass" />
+      </form>`;
+    const byValue = fillCredentialsInPage('alice', 'pw', false, undefined, 't-2');
+    expect(byValue.ok).toBe(true);
+    expect((document.querySelector('select[name=tenantId]') as HTMLSelectElement).value).toBe('t-2');
+
+    (document.querySelector('select[name=tenantId]') as HTMLSelectElement).value = '';
+    const byText = fillCredentialsInPage('alice', 'pw', false, undefined, 'Acme 公司');
+    expect(byText.ok).toBe(true);
+    expect((document.querySelector('select[name=tenantId]') as HTMLSelectElement).value).toBe('t-1');
+  });
+
   it('顶层无密码框但有内嵌登录 iframe 时回报该 iframe origin', () => {
     document.body.innerHTML = `
       <div>
