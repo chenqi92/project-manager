@@ -167,4 +167,64 @@ describe('capture.js login credential capture', () => {
       authProvider: 'Google',
     });
   });
+
+  it('does not treat a math captcha image url as TOTP', async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+        <input type="text" name="calc" placeholder="请输入计算结果" />
+        <img alt="图形验证码" src="/captcha?secret=ABCDEFGHJKMNPQRS2345&type=math" />
+      </form>`;
+
+    await submitAndFlush();
+
+    const candidate = latestCaptureCandidate();
+    expect(candidate?.username).toBe('admin');
+    expect(candidate?.totp).toBeFalsy();
+  });
+
+  it('ignores secret-labelled base32 text when the page has no authenticator context', async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>
+      <div>接口密钥 ABCDEFGHJKMNPQRS2345</div>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.totp).toBeFalsy();
+  });
+
+  it('keeps the setup key on a real authenticator enrollment page', async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>
+      <div>
+        <h3>两步验证</h3>
+        <p>无法扫描？将密钥手动输入到身份验证器：</p>
+        <code>ABCD EFGH JKMN 2345</code>
+      </div>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.totp).toBe('ABCDEFGHJKMN2345');
+  });
+
+  it('still ignores captcha urls even when the page mentions two-factor', async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+        <img alt="验证码" src="/captcha?secret=ABCDEFGHJKMNPQRS2345" />
+      </form>
+      <div>开启两步验证可保护账号安全</div>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.totp).toBeFalsy();
+  });
 });

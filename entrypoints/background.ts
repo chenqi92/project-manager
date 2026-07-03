@@ -8,6 +8,7 @@ import {
   registrableDomain,
 } from '@/lib/autofill';
 import { fromB64, toB64 } from '@/lib/crypto';
+import { detectOAuthAuthorize } from '@/lib/federated-oauth';
 import { flatten, matchForUrl, search } from '@/lib/search';
 import { buildExport, mergeVaults, parseImport } from '@/lib/import-export';
 import type { Msg, MsgResponse } from '@/lib/messaging';
@@ -93,6 +94,10 @@ type LoginCaptureCandidate = Pick<
   'origin' | 'url' | 'pageTitle' | 'username' | 'password' | 'tenant' | 'authProvider' | 'totp' | 'tabId'
 > & {
   createdAt: number;
+  /** 由 IdP 授权页导航建立（capture:oauthNav）：url 是合成的 origin 根，判定成功时不看「离开提交页」 */
+  viaIdp?: boolean;
+  /** viaIdp 候选的授权页 origin；用于把「站点→Auth0→Google」链式流程的最终 IdP 归到站点上 */
+  idpOrigin?: string;
 };
 
 /** 最近一次由扩展执行的自动填充（按 tab+origin）：捕获到同样的凭据时不再提示保存/更新。 */
@@ -344,6 +349,7 @@ async function handle(msg: Msg, sender?: MsgSender): Promise<MsgResponse<unknown
   const pageMessage =
     msg.type === 'capture:candidate' ||
     msg.type === 'capture:successCheck' ||
+    msg.type === 'capture:oauthNav' ||
     msg.type === 'capture:login' ||
     msg.type === 'capture:save' ||
     msg.type === 'capture:editSave' ||
@@ -731,6 +737,13 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       if (!trusted || trusted !== getOrigin(msg.url)) return null;
       return handleCaptureSuccessCheck(trusted, msg.url, msg.signals, sender?.tab?.id, msg.title);
     }
+    case 'capture:oauthNav': {
+      // 只信任 sender 的真实来源：授权页 URL 必须就是发消息的页面自己。
+      const trusted = senderOrigin(sender);
+      if (!trusted || trusted !== getOrigin(msg.url)) return;
+      await handleOAuthNav(trusted, msg.url, sender?.tab?.id);
+      return;
+    }
     case 'capture:login': {
       // 只信任 sender 的真实来源，丢弃消息体里可被伪造的 origin 字段；并要求 url 同源。
       const trusted = senderOrigin(sender);
@@ -997,22 +1010,18 @@ async function handleCaptureSuccessCheck(
   signals: CaptureSuccessSignals,
   tabId?: number,
   pageTitle?: string,
-): Promise<{
-  pending: true;
-  id?: string;
-  kind: CapturePending['kind'];
-  origin: string;
-  username: string;
-  linkName?: string;
-} | null> {
+): Promise<CapturePromptResponse | null> {
   await ensureRestored();
   if (!dek || !cachedData) return null;
   await ensureLoginCandidatesRestored();
   pruneLoginCandidates();
-  const candidate = getLoginCandidateForContext(origin, tabId);
+  const candidate =
+    getLoginCandidateForContext(origin, tabId) ?? adoptIdpCandidateForOrigin(origin, tabId);
   if (!candidate) {
     await saveLoginCandidates();
-    return null;
+    // 没有候选但已有未处理的捕获：登录后站点常立刻再跳转一次，建提示的那页
+    // 随即销毁；在同源后续页面上把提示重新展示出来（直到保存或忽略）。
+    return recentPendingPrompt(origin, tabId);
   }
   if (candidate.origin !== origin || getOrigin(url) !== origin) return null;
   const totp = normalizeCapturedTotp(signals.totp) || candidate.totp;
@@ -1039,6 +1048,146 @@ async function handleCaptureSuccessCheck(
     candidate.authProvider,
     candidate.tenant,
   );
+}
+
+/** IdP 授权流程里给站点标签页的成功检测窗口：授权 + 回跳可能耗时数十秒。 */
+const OAUTH_ARM_WINDOW_MS = 150_000;
+
+/**
+ * 内容脚本报告了一次第三方登录授权页导航（如 accounts.google.com/o/oauth2/…）。
+ * 解析出「provider 登录 clientOrigin」后为该站点建立登录候选；用户完成授权回到
+ * 站点时，普通的 capture:successCheck 会把候选提升为保存/更新提示。
+ * 与页面按钮点击识别互补：GIS iframe 按钮、纯图标按钮、shadow DOM 等点击探不到的
+ * 场景都会走到这里；点击识别则兜住 Supabase / Firebase 之类整链 302、授权页
+ * 不渲染文档的托管认证。
+ */
+async function handleOAuthNav(idpOrigin: string, url: string, tabId?: number): Promise<void> {
+  const det = detectOAuthAuthorize(url);
+  if (!det || det.idpOrigin !== idpOrigin) return;
+  await ensureRestored();
+  if (!dek || !cachedData) return;
+  await ensureLoginCandidatesRestored();
+  pruneLoginCandidates();
+
+  const armOrigins = new Set<string>();
+
+  // 链式流程（站点 → Auth0/Okta 等中转 → Google）：中转授权页此前已登记
+  // 「站点 ← 中转」的候选；本次更深一跳把站点候选的登录方式升级为最终 IdP。
+  for (const c of Object.values(loginCandidates)) {
+    if (!c.viaIdp || !c.idpOrigin || c.idpOrigin !== det.clientOrigin) continue;
+    c.authProvider = det.provider;
+    c.username = providerAccountName(det.provider);
+    c.createdAt = Date.now();
+    armOrigins.add(c.origin);
+  }
+
+  if (captureAllowedForOrigin(cachedData, det.clientOrigin)) {
+    const key = pendingId(det.clientOrigin, tabId);
+    const existing = loginCandidates[key];
+    if (existing && !existing.viaIdp) {
+      // 页面点击路径已建候选（url / 标题是真实的）：只补上没识别出的登录方式。
+      if (!existing.authProvider && !existing.password) {
+        existing.authProvider = det.provider;
+        if (!existing.username) existing.username = providerAccountName(det.provider);
+      }
+      existing.createdAt = Date.now();
+    } else {
+      loginCandidates[key] = {
+        origin: det.clientOrigin,
+        url: `${det.clientOrigin}/`,
+        username: providerAccountName(det.provider),
+        password: '',
+        authProvider: det.provider,
+        tabId,
+        createdAt: Date.now(),
+        viaIdp: true,
+        idpOrigin: det.idpOrigin,
+      };
+    }
+    armOrigins.add(det.clientOrigin);
+  }
+
+  await saveLoginCandidates();
+  if (armOrigins.size) await armCaptureChecksForOrigins(armOrigins, tabId);
+}
+
+/**
+ * 通知发起登录的站点标签页延长成功检测窗口：弹窗式授权里站点页面不跳转，
+ * 页面加载时自带的 7 秒窗口早已过期，需要后台推一把才能在授权完成后弹提示。
+ */
+async function armCaptureChecksForOrigins(origins: Iterable<string>, idpTabId?: number): Promise<void> {
+  const tabIds = new Set<number>();
+  for (const origin of origins) {
+    const patterns = [`${origin}/*`];
+    const site = registrableDomainOfOrigin(origin);
+    if (site) patterns.push(`https://*.${site}/*`, `http://*.${site}/*`);
+    for (const pattern of patterns) {
+      try {
+        for (const tab of await browser.tabs.query({ url: pattern })) {
+          if (tab.id !== undefined && tab.id !== idpTabId) tabIds.add(tab.id);
+        }
+      } catch {
+        /* url 过滤需要对应主机权限；拿不到就只能靠 opener 兜底 */
+      }
+    }
+  }
+  if (idpTabId !== undefined) {
+    // 弹窗式授权窗口的 opener 就是发起登录的站点标签页。
+    const tab = await browser.tabs.get(idpTabId).catch(() => null);
+    if (tab?.openerTabId !== undefined && tab.openerTabId !== idpTabId) tabIds.add(tab.openerTabId);
+  }
+  await Promise.all(
+    [...tabIds].map((id) =>
+      browser.tabs
+        .sendMessage(id, { type: 'capture:armSuccess', windowMs: OAUTH_ARM_WINDOW_MS })
+        .catch(() => {}),
+    ),
+  );
+}
+
+function registrableDomainOfOrigin(origin: string): string {
+  try {
+    return registrableDomain(new URL(origin).hostname);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * successCheck 的来源与候选 origin 不完全一致时（redirect_uri 指向 passport.site.com、
+ * 用户实际回到 www.site.com），把同主域的 viaIdp 候选改挂到实际回到的来源上。
+ */
+function adoptIdpCandidateForOrigin(origin: string, tabId?: number): LoginCaptureCandidate | null {
+  const site = registrableDomainOfOrigin(origin);
+  if (!site) return null;
+  const found = Object.values(loginCandidates)
+    .filter((c) => c.viaIdp && c.origin !== origin && registrableDomainOfOrigin(c.origin) === site)
+    .sort((a, b) => b.createdAt - a.createdAt)[0];
+  if (!found) return null;
+  delete loginCandidates[pendingId(found.origin, found.tabId)];
+  const adopted: LoginCaptureCandidate = {
+    ...found,
+    origin,
+    url: `${origin}/`,
+    tabId: tabId ?? found.tabId,
+  };
+  loginCandidates[pendingId(origin, adopted.tabId)] = adopted;
+  return adopted;
+}
+
+/** 捕获提示建立后可在同源后续页面重新展示的时限。 */
+const PENDING_REPROMPT_MS = 10 * 60_000;
+
+async function recentPendingPrompt(
+  origin: string,
+  tabId?: number,
+): Promise<CapturePromptResponse | null> {
+  await ensurePendingRestored();
+  const list = Object.values(pendingCaptures)
+    .filter((p) => p.origin === origin && Date.now() - (p.createdAt ?? 0) < PENDING_REPROMPT_MS)
+    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  const p = (tabId !== undefined ? list.find((x) => x.tabId === tabId) : undefined) ?? list[0];
+  return p ? toPendingResponse(p) : null;
 }
 
 function captureAllowedForOrigin(data: VaultData, origin: string): boolean {
@@ -1162,6 +1311,13 @@ function loginSuccessLooksLikely(
   if (signals.visiblePasswordFields > 0 || signals.filledPasswordFields > 0) return false;
   if (normalizeCapturedTotp(signals.totp) && age >= 450) return true;
 
+  if (candidate.viaIdp) {
+    // IdP 导航建的候选没有真实提交页 URL（url 是合成的 origin 根），
+    // 「离开提交页」不可判；看成功迹象，或授权耗时已过且页面无密码/OTP 步骤。
+    if (signals.successHint) return true;
+    return age >= 1_500 && signals.visibleOtpFields === 0;
+  }
+
   const leftSubmitPage = normalizeCaptureUrl(candidate.url) !== normalizeCaptureUrl(currentUrl);
   if (signals.successHint) return true;
   if (leftSubmitPage) return true;
@@ -1213,6 +1369,52 @@ async function saveLoginCandidates(): Promise<void> {
   }
 }
 
+/** 发回内容脚本用于展示保存/更新浮层的捕获提示载荷。 */
+interface CapturePromptResponse {
+  pending: true;
+  id?: string;
+  /** pendingId 按 tab+origin 复用；页面用 id+createdAt 区分「同一条提示」与「新捕获」 */
+  createdAt?: number;
+  kind: CapturePending['kind'];
+  origin: string;
+  username: string;
+  accountId?: string;
+  linkName?: string;
+  authProvider?: string;
+  updateCandidates?: CaptureUpdateCandidate[];
+  saveTargets?: CaptureSaveTarget[];
+  projectTargets?: NonNullable<CapturePending['projectTargets']>;
+  workspaces?: CapturePending['workspaces'];
+  activeWorkspaceId?: string;
+  accountLabel?: string;
+  targetLinkId?: string;
+  totp?: string;
+  tenant?: string;
+}
+
+function toPendingResponse(saved: CapturePending): CapturePromptResponse {
+  return {
+    pending: true,
+    createdAt: saved.createdAt,
+    kind: saved.kind,
+    origin: saved.origin,
+    username: saved.username,
+    accountId: saved.accountId,
+    linkName: saved.linkName,
+    authProvider: saved.authProvider,
+    id: saved.id,
+    updateCandidates: saved.updateCandidates,
+    saveTargets: saved.saveTargets,
+    projectTargets: saved.projectTargets,
+    workspaces: saved.workspaces,
+    activeWorkspaceId: saved.activeWorkspaceId,
+    accountLabel: saved.accountLabel,
+    targetLinkId: saved.targetLinkId,
+    totp: saved.totp,
+    tenant: saved.tenant,
+  };
+}
+
 async function handleCaptureLogin(
   origin: string,
   url: string,
@@ -1224,24 +1426,7 @@ async function handleCaptureLogin(
   rawTotp?: string,
   rawAuthProvider?: string,
   rawTenant?: string,
-): Promise<{
-  pending: true;
-  id?: string;
-  kind: CapturePending['kind'];
-  origin: string;
-  username: string;
-  accountId?: string;
-  linkName?: string;
-  updateCandidates?: CaptureUpdateCandidate[];
-  saveTargets?: CaptureSaveTarget[];
-  projectTargets?: NonNullable<CapturePending['projectTargets']>;
-  workspaces?: CapturePending['workspaces'];
-  activeWorkspaceId?: string;
-  accountLabel?: string;
-  targetLinkId?: string;
-  totp?: string;
-  tenant?: string;
-} | null> {
+): Promise<CapturePromptResponse | null> {
   await ensureRestored();
   const authProvider = cleanAuthProvider(rawAuthProvider);
   const password = String(rawPassword ?? '');
@@ -1356,24 +1541,7 @@ async function handleCaptureLogin(
     };
   }
   const saved = await savePending(pending);
-  return {
-    pending: true,
-    kind: saved.kind,
-    origin: saved.origin,
-    username: saved.username,
-    accountId: saved.accountId,
-    linkName: saved.linkName,
-    id: saved.id,
-    updateCandidates: saved.updateCandidates,
-    saveTargets: saved.saveTargets,
-    projectTargets: saved.projectTargets,
-    workspaces: saved.workspaces,
-    activeWorkspaceId: saved.activeWorkspaceId,
-    accountLabel: saved.accountLabel,
-    targetLinkId: saved.targetLinkId,
-    totp: saved.totp,
-    tenant: saved.tenant,
-  };
+  return toPendingResponse(saved);
 }
 
 async function applyCapture(

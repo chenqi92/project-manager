@@ -244,7 +244,7 @@ export function Settings({
             </SettingsRow>
             <SettingsRow
               title="新网站登录捕获"
-              desc="浏览器要求手动授权所有网站；开启后新网址登录也会提示保存"
+              desc="浏览器要求手动授权所有网站；开启后新网址登录（含 Google / GitHub 等第三方登录）也会提示保存"
             >
               <Toggle
                 checked={webAssistAllSites}

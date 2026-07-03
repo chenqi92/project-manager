@@ -140,6 +140,22 @@ describe('web-assist.js login credential capture', () => {
     });
   });
 
+  it('does not treat a math captcha image url as TOTP', async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+        <input type="text" name="calc" placeholder="请输入计算结果" />
+        <img alt="图形验证码" src="/captcha?secret=ABCDEFGHJKMNPQRS2345&type=math" />
+      </form>`;
+
+    await submitAndFlush();
+
+    const candidate = latestCaptureCandidate();
+    expect(candidate?.username).toBe('admin');
+    expect(candidate?.totp).toBeFalsy();
+  });
+
   it('auto fills TOTP when a single matched account owns the OTP field', async () => {
     snapshotMatches = [
       {

@@ -436,12 +436,13 @@ export default function App() {
       {pending && (
         <div className="border-b border-amber-200 bg-amber-50 px-3 py-2.5 text-xs">
           <div className="mb-1.5 text-amber-800">
-            检测到在 <b>{hostOf(pending.origin)}</b> 的登录/注册
+            检测到在 <b>{hostOf(pending.origin)}</b>{' '}
+            {pending.authProvider ? `使用 ${pending.authProvider} 的第三方登录` : '的登录/注册'}
             {pending.kind === 'update'
-              ? `，更新「${pending.linkName ?? ''}」的密码？`
+              ? `，更新「${pending.linkName ?? ''}」的${pending.authProvider ? '登录方式' : '密码'}？`
               : pendingNeedsLocation
-                ? `（${pending.username || '无用户名'}），选择项目后保存？`
-                : `（${pending.username || '无用户名'}），保存到保险箱？`}
+                ? `${pending.authProvider ? '' : `（${pending.username || '无用户名'}）`}，选择项目后保存？`
+                : `${pending.authProvider ? '' : `（${pending.username || '无用户名'}）`}，保存到保险箱？`}
             {pending.kind === 'new' && pending.updateCandidates?.length
               ? ' 也可以更新已有账号。'
               : ''}

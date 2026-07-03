@@ -92,17 +92,28 @@
       );
     });
 
-  const actionText = (el) =>
-    [
+  const actionText = (el) => {
+    const parts = [
       el.textContent || '',
       el.getAttribute?.('aria-label') || '',
       el.getAttribute?.('title') || '',
       el.getAttribute?.('href') || '',
       el.value || '',
-    ]
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    ];
+    // 纯图标按钮：提供商名往往只在 img 的 alt/title 或 svg 的 <title> 里。
+    if (el.querySelectorAll) {
+      for (const media of el.querySelectorAll('img[alt], img[title], svg title, [aria-label]')) {
+        if (media.tagName.toLowerCase() === 'title') parts.push(media.textContent || '');
+        else
+          parts.push(
+            media.getAttribute('alt') || '',
+            media.getAttribute('title') || '',
+            media.getAttribute('aria-label') || '',
+          );
+      }
+    }
+    return parts.join(' ').replace(/\s+/g, ' ').trim();
+  };
 
   const federatedProviderFromText = (text) => {
     const normalized = String(text || '');
@@ -268,8 +279,25 @@
     return out.trim();
   };
 
-  const TOTP_SETUP_CONTEXT_RE = /(totp|authenticator|two.?factor|2fa|mfa|setup.?key|secret|密钥|秘钥|验证器|两步|二次验证|手动输入|无法扫描)/i;
+  // 强 2FA 绑定上下文：出现这些词才认为页面在展示验证器密钥。
+  const TOTP_SETUP_CONTEXT_RE = /(totp|authenticator|two.?factor|2fa|mfa|setup.?key|otp.?secret|验证器|两步验证|二次验证|双重验证|动态口令|谷歌验证|无法扫描)/i;
+  // 弱上下文：secret / 密钥也大量出现在图形验证码地址、API 密钥表格等场景，
+  // 需页面同时出现强上下文才作数。
+  const TOTP_WEAK_CONTEXT_RE = /(secret|密钥|秘钥|手动输入)/i;
+  // 图形 / 算式 / 滑动验证码：一次性人机校验，不是 TOTP，出现即排除。
+  const CAPTCHA_CONTEXT_RE = /(captcha|图形验证|图片验证|滑动验证|拼图|算式|请计算|计算结果|看不清|换一张|点击刷新)/i;
   const BASE32_SECRET_RE = /(?:[A-Z2-7]{4}[\s-]+){3,}[A-Z2-7]{4}=*|(?:[A-Z2-7]{8}[\s-]+)+[A-Z2-7]{8}=*|[A-Z2-7]{16,}=*/g;
+
+  let totpPageHint = false;
+  let totpPageHintAt = 0;
+  const pageTotpSetupContext = () => {
+    const now = Date.now();
+    if (now - totpPageHintAt < 2000) return totpPageHint;
+    totpPageHintAt = now;
+    const sample = `${document.title || ''} ${(document.body?.textContent || '').slice(0, 30000)}`;
+    totpPageHint = TOTP_SETUP_CONTEXT_RE.test(sample);
+    return totpPageHint;
+  };
 
   const extractOtpauth = (raw) => {
     const text = cleanCandidateText(raw);
@@ -286,7 +314,13 @@
 
   const extractBase32Secret = (raw) => {
     const text = cleanCandidateText(raw);
-    if (!TOTP_SETUP_CONTEXT_RE.test(text)) return '';
+    if (CAPTCHA_CONTEXT_RE.test(text)) return '';
+    if (
+      !TOTP_SETUP_CONTEXT_RE.test(text) &&
+      !(TOTP_WEAK_CONTEXT_RE.test(text) && pageTotpSetupContext())
+    ) {
+      return '';
+    }
     const matches = text.toUpperCase().match(BASE32_SECRET_RE) || [];
     for (const m of matches) {
       const clean = normalizeBase32Secret(m);
@@ -485,13 +519,47 @@
     else void captureCandidate();
   };
 
+  // 疑似第三方登录授权页（OAuth / OIDC / CAS）：把地址报给 background 做权威解析，
+  // 由它为发起登录的站点建立候选。这里只做零成本预筛，避免每个页面都发消息。
+  const maybeReportOAuthNav = () => {
+    try {
+      if (window.top !== window) return; // 授权页都是顶层导航 / 弹窗
+    } catch {
+      return;
+    }
+    const q = location.search || '';
+    if (q.length < 12) return;
+    const hasClientId = /[?&](client_id|appid|app_id)=/i.test(q);
+    const hasRedirect = /[?&](redirect_uri|redirect_url|redirect_to|oauth_callback|return_url|return_to)=/i.test(q);
+    const casLike =
+      /[?&]service=https?(%3a%2f%2f|:\/\/)/i.test(q) && /\/login\/?$/i.test(location.pathname);
+    const googleLike =
+      /(^|\.)accounts\.google\.com$/i.test(location.hostname) && /[?&](origin|continue|client_id)=/i.test(q);
+    if (!(hasClientId && hasRedirect) && !casLike && !googleLike) return;
+    send({ type: 'capture:oauthNav', url: location.href });
+  };
+
+  // 弹窗式第三方授权里站点页面不跳转：background 检测到授权页后，
+  // 通知发起站点的标签页延长成功检测窗口，授权完成即可弹出保存提示。
+  try {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg && msg.type === 'capture:armSuccess') {
+        armSuccessChecks(Math.min(Number(msg.windowMs) || 120_000, 300_000));
+      }
+    });
+  } catch {
+    /* 扩展上下文失效时忽略 */
+  }
+
   document.addEventListener('input', rememberVisibleUsername, true);
   document.addEventListener('change', rememberVisibleUsername, true);
   document.addEventListener('submit', () => loginAction(''), true);
   document.addEventListener(
     'click',
     (e) => {
-      const t = e.target;
+      // shadow DOM 里的点击会被重定位到宿主：用 composedPath 拿到真实目标。
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+      const t = path[0] && path[0].nodeType === 1 ? path[0] : e.target;
       const federated = federatedLoginAction(t);
       if (federated) {
         loginAction(federated.provider);
@@ -519,4 +587,5 @@
   // 新页面加载时检查上一页提交留下的同源候选。
   rememberVisibleUsername();
   armSuccessChecks(7000);
+  maybeReportOAuthNav();
 })();

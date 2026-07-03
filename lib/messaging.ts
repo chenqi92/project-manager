@@ -108,6 +108,9 @@ export type Msg =
       totp?: string;
     }
   | { type: 'capture:successCheck'; origin: string; url: string; title?: string; signals: CaptureSuccessSignals }
+  // 内容脚本在第三方登录（OAuth / OIDC / CAS）授权页上报当前地址；
+  // background 解析出「哪个 IdP 登录哪个站点」，为站点建立登录候选
+  | { type: 'capture:oauthNav'; url: string }
   | {
       type: 'capture:login';
       origin: string;
