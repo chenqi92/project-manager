@@ -308,9 +308,7 @@ export function SyncTargetEditor({
                 <Input readOnly value={redirectUri} onFocus={(e) => e.target.select()} className="font-mono text-xs" />
               </div>
             )}
-            {builtinId ? (
-              <Banner tone="info">已内置官方应用，无需填写 client_id / client_secret，直接点下方「授权」即可。</Banner>
-            ) : (
+            {!builtinId && (
               <Field label="client_id（在控制台自建 OAuth 应用获得）" v={t.clientId} on={(x) => set('clientId', x)} />
             )}
             {isGoogle && !builtinSecret && (
@@ -321,15 +319,15 @@ export function SyncTargetEditor({
               {busy === 'auth' && <Loader2 size={14} className="animate-spin" />}
               {authorized ? '重新授权' : '授权'}
             </Button>
-            <p className="text-xs text-gray-500">
-              {builtinId
-                ? '已内置官方 OAuth 应用，无需自行注册：直接点「授权」用你的网盘账号登录即可；密文只存放在该网盘的「应用专属隐藏目录」，碰不到你其它文件。'
-                : isGoogle
+            {!builtinId && (
+              <p className="text-xs text-gray-500">
+                {isGoogle
                   ? 'Google 需选「Web 应用」客户端类型、重定向 URI 填上方地址，并填 client_secret。授权后只保存可刷新令牌，密文存于 Drive 应用数据隐藏目录。'
                   : draft.type === 'dropbox'
                     ? 'Dropbox 在 App Console 建「Scoped app · App folder」，Permissions 勾选 files.content.read / files.content.write，OAuth2 Redirect URI 填上方地址；无需 secret（PKCE）。密文存于该应用专属文件夹。'
                     : 'OneDrive 在 Azure 注册时重定向 URI 要加在「移动和桌面应用程序」平台下（勿选 SPA），无需 client_secret。授权后密文存于 OneDrive 应用专属文件夹。'}
-            </p>
+              </p>
+            )}
           </>
         )}
 

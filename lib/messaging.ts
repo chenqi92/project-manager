@@ -30,7 +30,9 @@ export type Msg =
   | { type: 'vault:unlock'; password: string }
   | { type: 'vault:lock' }
   | { type: 'vault:get' }
-  | { type: 'vault:save'; data: VaultData }
+  // switchWorkspace：本次保存显式携带工作区切换（新建/删除/切换）。普通保存不允许改
+  // activeWorkspaceId——它是设备本地 UI 状态，旧快照（popup/其它标签页）保存时不得回滚它。
+  | { type: 'vault:save'; data: VaultData; switchWorkspace?: boolean }
   | { type: 'vault:changePassword'; current: string; next: string }
   | { type: 'vault:export'; mode: ExportMode; password?: string; projectIds?: string[] }
   | {
@@ -182,7 +184,8 @@ export const api = {
   unlock: (password: string) => send<VaultStatus>({ type: 'vault:unlock', password }),
   lock: () => send<VaultStatus>({ type: 'vault:lock' }),
   get: () => send<VaultData>({ type: 'vault:get' }),
-  save: (data: VaultData) => send<void>({ type: 'vault:save', data }),
+  save: (data: VaultData, opts?: { switchWorkspace?: boolean }) =>
+    send<void>({ type: 'vault:save', data, switchWorkspace: opts?.switchWorkspace }),
   changePassword: (current: string, next: string) =>
     send<void>({ type: 'vault:changePassword', current, next }),
   export: (mode: ExportMode, password?: string, projectIds?: string[]) =>

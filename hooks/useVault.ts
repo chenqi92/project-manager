@@ -14,7 +14,7 @@ export interface VaultController {
   unlock: (password: string) => Promise<void>;
   create: (password: string) => Promise<void>;
   lock: () => Promise<void>;
-  save: (data: VaultData) => Promise<void>;
+  save: (data: VaultData, opts?: { switchWorkspace?: boolean }) => Promise<void>;
   reload: () => Promise<void>;
   /** 轻量探测后台是否已锁定（如空闲自动锁定）：仅在已锁定时切到锁定态并清空数据，
    *  解锁态不做任何事（不重拉数据，避免闪烁）。返回是否已锁定。 */
@@ -96,11 +96,11 @@ export function useVault(): VaultController {
     setData(null);
   }, []);
 
-  const save = useCallback(async (next: VaultData) => {
+  const save = useCallback(async (next: VaultData, opts?: { switchWorkspace?: boolean }) => {
     const prepared = structuredClone(next);
     commitWorkspaceDraft(prepared);
     normalizeVaultData(prepared);
-    const op = saveChain.current.catch(() => {}).then(() => api.save(prepared));
+    const op = saveChain.current.catch(() => {}).then(() => api.save(prepared, opts));
     saveChain.current = op.catch(() => {});
     await op;
     setData(prepared);

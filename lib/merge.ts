@@ -179,7 +179,13 @@ function mergeWorkspaceList(
     byName.set(key(item), item);
   }
   for (const item of b) {
-    const existing = byId.get(item.id) ?? byName.get(key(item));
+    // byName 的名字键可能已过时（该 id 在本轮更早的合并中被改名/取代）：解引用到 byId 的
+    // 最新版本，且要求最新版本的名字仍与 item 匹配才算按名命中。否则改名后残留的名字键
+    // 会把另一个同旧名的新工作区错误并入，导致其丢失。
+    const nameHit = byName.get(key(item));
+    const nameFresh = nameHit ? (byId.get(nameHit.id) ?? nameHit) : undefined;
+    const existing =
+      byId.get(item.id) ?? (nameFresh && key(nameFresh) === key(item) ? nameFresh : undefined);
     const merged =
       existing && existing.id !== item.id
         ? { ...mergeOne(existing, item), id: existing.id }

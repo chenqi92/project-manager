@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { browser } from 'wxt/browser';
 import { Check, Palette, Pencil, Plus, Settings2, Trash2, Wand2, X } from 'lucide-react';
 import { Button, Modal, cx } from '@/components/ui';
@@ -64,9 +65,20 @@ export function Home({
   const [drag, setDrag] = useState<DragState | null>(null);
   const [width, setWidth] = useState(0);
   const [hostPermissionVersion, setHostPermissionVersion] = useState(0);
+  const [portalTargets, setPortalTargets] = useState<{
+    boardSwitcher: HTMLElement | null;
+    boardActions: HTMLElement | null;
+  }>({ boardSwitcher: null, boardActions: null });
   const gridRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const roRef = useRef<ResizeObserver | null>(null);
+
+  useLayoutEffect(() => {
+    setPortalTargets({
+      boardSwitcher: document.getElementById('home-board-switcher-slot'),
+      boardActions: document.getElementById('home-board-actions-slot'),
+    });
+  }, []);
 
   // 看板：把（可能旧版的）配置归一化为多看板视图。
   const { boards, activeBoardId } = useMemo(
@@ -278,66 +290,86 @@ export function Home({
   const bg = appearanceBackground(appearance);
   const configWidget = configId ? widgets.find((w) => w.id === configId) : null;
   const dragSnap = drag ? layoutById.get(drag.id) : null;
-
-  return (
-    <>
-      {/* 看板页签 + 编辑控制（页面标题在 App 统一顶栏） */}
-      <div className="flex items-center gap-2.5 px-6 pb-1 pt-[18px]">
-        <div className="no-scrollbar flex items-center gap-0.5 overflow-x-auto rounded-[9px] border border-gray-200 bg-gray-50 p-[3px]">
-          {boards.map((b) => (
-            <div key={b.id} className="flex shrink-0 items-center">
-              <button
-                onClick={() => setLocalActive(b.id)}
-                onDoubleClick={() => editing && renameBoard(b.id)}
-                className={cx(
-                  'rounded-md px-3 py-1 text-[12.5px] font-semibold transition-colors',
-                  b.id === activeId
-                    ? 'bg-surface text-gray-900 shadow-sm'
-                    : 'text-gray-400 hover:text-gray-600',
-                )}
-                title={editing ? '双击重命名' : undefined}
-              >
-                {b.name}
-              </button>
-              {editing && b.id === activeId && boards.length > 1 && (
-                <button
-                  onClick={() => deleteBoard(b.id)}
-                  title="删除看板"
-                  className="ml-0.5 rounded p-0.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-          ))}
-          {editing && (
+  const boardSwitcher = (
+    <div
+      className="no-scrollbar flex max-w-[280px] items-center gap-0.5 overflow-x-auto rounded-[9px] border border-gray-200 bg-gray-50 p-[3px]"
+      aria-label="看板切换"
+    >
+      {boards.map((b) => (
+        <div key={b.id} className="flex shrink-0 items-center">
+          <button
+            type="button"
+            onClick={() => setLocalActive(b.id)}
+            onDoubleClick={() => editing && renameBoard(b.id)}
+            className={cx(
+              'rounded-md px-3 py-1 text-[12px] font-semibold transition-colors',
+              b.id === activeId
+                ? 'bg-surface text-gray-900 shadow-sm'
+                : 'text-gray-400 hover:text-gray-600',
+            )}
+            title={editing ? '双击重命名' : undefined}
+          >
+            {b.name}
+          </button>
+          {editing && b.id === activeId && boards.length > 1 && (
             <button
-              onClick={addBoard}
-              title="新建看板"
-              className="flex w-7 shrink-0 items-center justify-center rounded-md py-1 text-gray-400 hover:text-gray-600"
+              type="button"
+              onClick={() => deleteBoard(b.id)}
+              title="删除看板"
+              className="ml-0.5 rounded p-0.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
             >
-              <Plus size={14} />
+              <X size={12} />
             </button>
           )}
         </div>
-        <div className="flex-1" />
-        {editing && (
-          <>
-            <Button variant="outline" onClick={() => setShowAdd(true)}>
-              <Plus size={15} /> 添加磁贴
-            </Button>
-            <Button variant="outline" onClick={() => setShowAppearance(true)}>
-              <Palette size={15} /> 外观
-            </Button>
-            <Button variant="outline" onClick={autoArrange} disabled={!canEdit} title="按当前顺序紧凑回填，消除空隙">
-              <Wand2 size={15} /> 自动排版
-            </Button>
-          </>
-        )}
-        <Button variant={editing ? 'primary' : 'outline'} onClick={() => setEditing((e) => !e)}>
-          {editing ? <Check size={15} /> : <Pencil size={15} />} {editing ? '完成' : '编辑看板'}
-        </Button>
-      </div>
+      ))}
+      {editing && (
+        <button
+          type="button"
+          onClick={addBoard}
+          title="新建看板"
+          className="flex w-7 shrink-0 items-center justify-center rounded-md py-1 text-gray-400 hover:text-gray-600"
+        >
+          <Plus size={14} />
+        </button>
+      )}
+    </div>
+  );
+  const boardActions = (
+    <>
+      {editing && (
+        <>
+          <Button variant="outline" className="h-9 whitespace-nowrap" onClick={() => setShowAdd(true)}>
+            <Plus size={15} /> 添加磁贴
+          </Button>
+          <Button variant="outline" className="h-9 whitespace-nowrap" onClick={() => setShowAppearance(true)}>
+            <Palette size={15} /> 外观
+          </Button>
+          <Button
+            variant="outline"
+            className="h-9 whitespace-nowrap"
+            onClick={autoArrange}
+            disabled={!canEdit}
+            title="按当前顺序紧凑回填，消除空隙"
+          >
+            <Wand2 size={15} /> 自动排版
+          </Button>
+        </>
+      )}
+      <Button
+        variant={editing ? 'primary' : 'outline'}
+        className="h-9 whitespace-nowrap"
+        onClick={() => setEditing((e) => !e)}
+      >
+        {editing ? <Check size={15} /> : <Pencil size={15} />} {editing ? '完成' : '编辑看板'}
+      </Button>
+    </>
+  );
+
+  return (
+    <>
+      {portalTargets.boardSwitcher && createPortal(boardSwitcher, portalTargets.boardSwitcher)}
+      {portalTargets.boardActions && createPortal(boardActions, portalTargets.boardActions)}
 
       <div
         ref={scrollRef}

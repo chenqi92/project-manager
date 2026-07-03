@@ -54,7 +54,7 @@ import {
   newProject,
   normalizeVaultData,
 } from '@/lib/vault-ops';
-import { commitWorkspaceDraft, workspaceScopedData } from '@/lib/workspace';
+import { commitWorkspaceDraft, preserveActiveWorkspace, workspaceScopedData } from '@/lib/workspace';
 import {
   createEncryptedVault,
   decryptVaultData,
@@ -413,7 +413,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
     case 'vault:save': {
       await requireUnlocked();
       const before = structuredClone(cachedData!);
-      await persistData(msg.data);
+      await persistData(msg.data, { adoptActiveWorkspace: msg.switchWorkspace === true });
       if (hasSyncRelevantChange(before, cachedData!)) scheduleAutoSync();
       return;
     }
@@ -1892,10 +1892,20 @@ async function setUnlocked(d: Uint8Array, data: VaultData): Promise<void> {
 }
 
 /** 重新加密并持久化数据；更新内存缓存。 */
-async function persistData(data: VaultData): Promise<void> {
+async function persistData(
+  data: VaultData,
+  opts: { adoptActiveWorkspace?: boolean } = {},
+): Promise<void> {
   const enc = await vaultBackend.load();
   if (!enc) throw new Error('保险箱不存在');
+  // 先按发送方视角把根字段写回它编辑的那个工作区。
   commitWorkspaceDraft(data);
+  // activeWorkspaceId 是设备本地 UI 状态：普通保存沿用后台当前值，只有显式声明工作区
+  // 切换的保存（adoptActiveWorkspace）才允许改。否则 popup / 其它标签页 / 异步回调里
+  // 持有旧快照的一次普通保存，就会把用户刚切换的工作区悄悄拉回去。
+  if (!opts.adoptActiveWorkspace) {
+    preserveActiveWorkspace(data, cachedData?.activeWorkspaceId);
+  }
   normalizeVaultData(data);
   stampSettingsIfChanged(data);
   await vaultBackend.save(await reencryptData(enc, data, dek!));

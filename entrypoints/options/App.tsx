@@ -511,7 +511,9 @@ export default function App() {
     if (!data) return;
     const draft = structuredClone(data);
     mutate(draft);
-    await vault.save(draft);
+    // switchWorkspace：告知后台本次保存显式变更当前工作区（切换/新建/删除），
+    // 普通保存会保留后台已知的 activeWorkspaceId，防止旧快照把工作区拉回去。
+    await vault.save(draft, { switchWorkspace: true });
   };
 
   const changeWorkspace = async (workspaceId: string) => {
@@ -1393,16 +1395,19 @@ function TopBar({
 }) {
   return (
     <header className="flex h-[60px] shrink-0 items-center gap-3.5 border-b border-gray-200 bg-surface px-6">
-      {onBack && (
-        <button
-          onClick={onBack}
-          title="返回"
-          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100"
-        >
-          <ChevronLeft size={16} />
-        </button>
-      )}
-      <h1 className="shrink-0 truncate text-base font-bold">{title}</h1>
+      <div className="flex min-w-0 shrink-0 items-center gap-2">
+        {onBack && (
+          <button
+            onClick={onBack}
+            title="返回"
+            className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100"
+          >
+            <ChevronLeft size={16} />
+          </button>
+        )}
+        <h1 className="shrink-0 truncate text-base font-bold">{title}</h1>
+        <div id="home-board-switcher-slot" className="min-w-0" />
+      </div>
       <div className="flex min-w-0 flex-1 items-center justify-end">{search}</div>
       <button
         onClick={onLock}
@@ -1419,6 +1424,7 @@ function TopBar({
           { value: 'dark', label: <Moon size={16} />, title: '深色' },
         ]}
       />
+      <div id="home-board-actions-slot" className="flex shrink-0 items-center gap-1.5" />
       {right && <div className="flex shrink-0 items-center gap-1.5">{right}</div>}
     </header>
   );
@@ -1615,10 +1621,10 @@ function ProjectView(props: ProjectViewProps) {
               type="button"
               onClick={() => setTagFilter(null)}
               className={cx(
-                'rounded-full px-3 py-1 text-[11px] font-bold',
+                'rounded-full px-3 py-1 text-[11px] font-bold transition-colors',
                 !activeFilter
-                  ? 'bg-gray-800 text-white'
-                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200',
+                  ? 'bg-brand-600 text-white shadow-[0_4px_10px_-6px_rgba(13,148,136,.75)] hover:bg-brand-700'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800',
               )}
             >
               全部 {linkRows.length}

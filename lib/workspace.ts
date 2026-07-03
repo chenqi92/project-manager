@@ -74,10 +74,15 @@ export function ensureVaultWorkspaces(data: VaultData, timestamp = Date.now()): 
   }
 
   const seen = new Set<string>();
+  // 修复重复/缺失 id 时记录 old→new：activeWorkspaceId 指向被改 id 的工作区时要跟随过去，
+  // 否则每次归一化都把用户「跳回」第一个（默认）工作区。
+  const reassigned = new Map<string, string>();
   for (let i = 0; i < data.workspaces.length; i++) {
     const ws = data.workspaces[i]!;
     if (!ws.id || seen.has(ws.id)) {
+      const oldId = ws.id ?? '';
       ws.id = id();
+      reassigned.set(oldId, ws.id);
       changed = true;
     }
     seen.add(ws.id);
@@ -99,12 +104,21 @@ export function ensureVaultWorkspaces(data: VaultData, timestamp = Date.now()): 
       ws.updatedAt = timestamp;
       changed = true;
     }
+    // 工作区最后编辑时间 ≥ 其项目最后编辑时间：日常编辑（root 镜像共享引用）不会 bump
+    // ws.updatedAt，若不提升，另一台设备删除该工作区的墓碑会把这里的后续编辑一并吞掉。
+    let contentAt = ws.updatedAt ?? 0;
+    for (const p of ws.projects) contentAt = Math.max(contentAt, p.updatedAt ?? 0);
+    if (contentAt !== (ws.updatedAt ?? 0)) {
+      ws.updatedAt = contentAt;
+      changed = true;
+    }
   }
 
-  // activeWorkspaceId 必须精确指向某个现存工作区；悬空则归位到第一个（activeWorkspaceUnsafe
-  // 的 fallback 只在读取时兜底，不会修正悬空 id，会掩盖问题）。
+  // activeWorkspaceId 必须精确指向某个现存工作区；指向被重新分配 id 的工作区则跟随新 id，
+  // 真悬空才归位到第一个（activeWorkspaceUnsafe 的 fallback 只在读取时兜底，不修正悬空 id）。
   if (!data.workspaces.some((w) => w.id === data.activeWorkspaceId)) {
-    data.activeWorkspaceId = data.workspaces[0]!.id;
+    data.activeWorkspaceId =
+      reassigned.get(data.activeWorkspaceId ?? '') ?? data.workspaces[0]!.id;
     changed = true;
   }
   return mirrorActiveToLegacy(data) || changed;
@@ -178,6 +192,17 @@ export function switchActiveWorkspace(data: VaultData, workspaceId: string, time
     changed = true;
   }
   return mirrorActiveToLegacy(data) || changed;
+}
+
+/**
+ * 普通保存不允许改当前工作区：activeWorkspaceId 是设备本地 UI 状态，持有旧快照的上下文
+ * （popup / 其它标签页 / 异步回调）保存内容时不得把它回滚。keepId 不存在时不动（交由
+ * ensureVaultWorkspaces 兜底）。返回是否发生了恢复。
+ */
+export function preserveActiveWorkspace(data: VaultData, keepId: string | undefined): boolean {
+  if (!keepId || data.activeWorkspaceId === keepId) return false;
+  if (!(data.workspaces ?? []).some((w) => w.id === keepId)) return false;
+  return switchActiveWorkspace(data, keepId);
 }
 
 export function createWorkspace(data: VaultData, name: string, timestamp = Date.now()): Workspace {
