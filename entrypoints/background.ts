@@ -235,7 +235,9 @@ async function injectCredentialFill(
   const res = await browser.scripting.executeScript({
     target: site ? { tabId, allFrames: true } : { tabId },
     func: fillCredentialsInPage,
-    args: [username, password, submit, site || undefined, tenant || undefined],
+    // executeScript 的 args 必须可 JSON 序列化：undefined 会让整个调用直接报错
+    //（Value is unserializable），缺省一律用空串表示。
+    args: [username, password, submit, site || '', tenant || ''],
   });
   const results = res
     .map((r) => r.result)

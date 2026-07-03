@@ -167,12 +167,14 @@ export default function App() {
     const res = await browser.scripting.executeScript({
       target: site ? { tabId, allFrames: true } : { tabId },
       func: fillCredentialsInPage,
+      // executeScript 的 args 必须可 JSON 序列化：undefined 会让整个调用直接报错
+      //（Value is unserializable），缺省一律用空串表示。
       args: [
         entry.username,
         entry.password,
         data?.settings.autoSubmit === true,
-        site || undefined,
-        entry.tenant || undefined,
+        site || '',
+        entry.tenant || '',
       ],
     });
     const results = res
