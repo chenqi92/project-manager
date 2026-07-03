@@ -14,7 +14,7 @@ import { buildExport, mergeVaults, parseImport } from '@/lib/import-export';
 import type { Msg, MsgResponse } from '@/lib/messaging';
 import { authorizeDrive } from '@/lib/oauth';
 import { vaultBackend } from '@/lib/storage';
-import { hasSyncRelevantChange } from '@/lib/sync-change';
+import { hasSyncRelevantChange, settingsStampFingerprint } from '@/lib/sync-change';
 import { SyncClient } from '@/lib/sync';
 import { generateTotp, parseTotp } from '@/lib/totp';
 import {
@@ -1968,8 +1968,9 @@ function resetLockTimer(): void {
 }
 
 function settingsFingerprint(settings: VaultSettings): string {
-  const { dashboard: _dashboard, updatedAt: _updatedAt, ...rest } = settings;
-  return JSON.stringify(rest);
+  // 与自动同步触发同一套字段口径：设备本地的引导/备份提醒状态不顶高 settings.updatedAt，
+  // 避免这台设备因此在多端合并里整体赢走 settings、抹掉别处配置的集成（如 CNB 令牌）。
+  return settingsStampFingerprint(settings);
 }
 
 function stampSettingsIfChanged(data: VaultData): void {

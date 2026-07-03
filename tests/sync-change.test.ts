@@ -94,4 +94,26 @@ describe('自动同步变更判断', () => {
 
     expect(hasSyncRelevantChange(before, after)).toBe(true);
   });
+
+  it('引导/备份提醒状态（onboarded* / lastBackupAt / backupSnoozeUntil）不触发自动同步', () => {
+    const before = vault([ws('company', '公司')], 'company');
+    const after = structuredClone(before);
+
+    after.settings.onboardedBackup = true;
+    after.settings.onboardedFeatureSwitches = true;
+    after.settings.lastBackupAt = 100;
+    after.settings.backupSnoozeUntil = 200;
+
+    expect(hasSyncRelevantChange(before, after)).toBe(false);
+  });
+
+  it('CNB 集成配置变化会触发自动同步', () => {
+    const before = vault([ws('company', '公司')], 'company');
+    const after = structuredClone(before);
+
+    after.settings.cnb = { token: 'cnb-token', orgs: ['njly2013'] };
+    after.settings.updatedAt = 100;
+
+    expect(hasSyncRelevantChange(before, after)).toBe(true);
+  });
 });

@@ -370,4 +370,56 @@ describe('mergeVaultData', () => {
 
     expect(m.settings.theme).toBe('light');
   });
+
+  it('只在较旧一方配置过的 CNB 令牌不会被较新 settings 整体覆盖掉', () => {
+    const configured = vault([]);
+    const other = vault([]);
+    configured.settings = {
+      ...configured.settings,
+      updatedAt: 100,
+      cnb: { token: 'cnb-token', orgs: ['njly2013'] },
+    };
+    // 另一台设备之后动过任意设置（如主题），settings.updatedAt 更新，但从未配置 CNB。
+    other.settings = { ...other.settings, updatedAt: 200, theme: 'dark' };
+
+    const ab = mergeVaultData(configured, other, NOW);
+    const ba = mergeVaultData(other, configured, NOW);
+
+    expect(ab.settings.theme).toBe('dark');
+    expect(ab.settings.cnb?.token).toBe('cnb-token');
+    expect(ba.settings.cnb?.token).toBe('cnb-token');
+  });
+
+  it('两侧都配置过 CNB 时以 settings 胜方为准', () => {
+    const older = vault([]);
+    const newer = vault([]);
+    older.settings = { ...older.settings, updatedAt: 100, cnb: { token: 'old', orgs: [] } };
+    newer.settings = { ...newer.settings, updatedAt: 200, cnb: { token: 'new', orgs: [] } };
+
+    const m = mergeVaultData(older, newer, NOW);
+
+    expect(m.settings.cnb?.token).toBe('new');
+  });
+
+  it('胜方从未配置同步目标时保留败方的 syncTargets；已存在（含空数组）不回填', () => {
+    const configured = vault([]);
+    const fresh = vault([]);
+    configured.settings = {
+      ...configured.settings,
+      updatedAt: 100,
+      syncTargets: [
+        { id: 't1', type: 'self-hosted', label: '家里', enabled: true, serverUrl: 'https://s', token: 'tok' },
+      ],
+    };
+    fresh.settings = { ...fresh.settings, updatedAt: 200 };
+
+    const m = mergeVaultData(configured, fresh, NOW);
+    expect(m.settings.syncTargets?.map((t) => t.id)).toEqual(['t1']);
+
+    // 明确删空（[] 仍存在）表示删除，按胜方为准、不回填。
+    const cleared = vault([]);
+    cleared.settings = { ...cleared.settings, updatedAt: 300, syncTargets: [] };
+    const m2 = mergeVaultData(configured, cleared, NOW);
+    expect(m2.settings.syncTargets).toEqual([]);
+  });
 });

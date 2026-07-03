@@ -23,9 +23,30 @@ function syncWorkspaces(data: VaultData): Workspace[] | Array<Pick<VaultData, 'p
   return [{ projects: data.projects ?? [] }];
 }
 
-function syncSettings(settings: VaultSettings): Omit<VaultSettings, 'dashboard' | 'updatedAt'> {
-  const { dashboard: _dashboard, updatedAt: _updatedAt, ...rest } = settings;
+function syncSettings(
+  settings: VaultSettings,
+): Omit<
+  VaultSettings,
+  'dashboard' | 'updatedAt' | 'lastBackupAt' | 'backupSnoozeUntil' | 'onboardedBackup' | 'onboardedFeatureSwitches'
+> {
+  // 引导/备份提醒状态由各设备自动写入。若它们也计入「设置变化」，随手点一次
+  // 「稍后再说」就会顶高 settings.updatedAt，让这台设备整体赢走 settings、
+  // 抹掉只在别处配置过的内容（如 CNB 令牌）。
+  const {
+    dashboard: _dashboard,
+    updatedAt: _updatedAt,
+    lastBackupAt: _lastBackupAt,
+    backupSnoozeUntil: _backupSnoozeUntil,
+    onboardedBackup: _onboardedBackup,
+    onboardedFeatureSwitches: _onboardedFeatureSwitches,
+    ...rest
+  } = settings;
   return rest;
+}
+
+/** 决定 settings.updatedAt 是否需要更新的指纹：与自动同步触发用同一套字段口径。 */
+export function settingsStampFingerprint(settings: VaultSettings): string {
+  return stableStringify(syncSettings(settings));
 }
 
 function stableStringify(value: unknown): string {

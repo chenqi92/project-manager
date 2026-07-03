@@ -109,10 +109,24 @@ function mergeSettings(local: VaultSettings, remote: VaultSettings): VaultSettin
   const localAt = local.updatedAt ?? 0;
   const remoteAt = remote.updatedAt ?? 0;
   // 旧数据没有 settings.updatedAt：保持历史行为，本机设置优先，避免升级后被旧远端覆盖。
-  if (localAt === 0 && remoteAt === 0) return local;
-  if (localAt !== remoteAt) return remoteAt > localAt ? remote : local;
-  // 极少数同毫秒冲突用确定性内容排序保证多端最终收敛。
-  return JSON.stringify(local) <= JSON.stringify(remote) ? local : remote;
+  const pickLocal =
+    localAt === 0 && remoteAt === 0
+      ? true
+      : localAt !== remoteAt
+        ? localAt > remoteAt
+        : // 极少数同毫秒冲突用确定性内容排序保证多端最终收敛。
+          JSON.stringify(local) <= JSON.stringify(remote);
+  const winner = pickLocal ? local : remote;
+  const loser = pickLocal ? remote : local;
+
+  // settings 整体取胜会抹掉只在另一台设备配置过的集成配置（CNB 令牌、同步目标）。
+  // 胜方从未配置（undefined）时从败方保留；字段存在（含清空后的对象）不回填，删除能收敛。
+  const merged = { ...winner };
+  if (merged.cnb === undefined && loser.cnb !== undefined) merged.cnb = loser.cnb;
+  if (merged.syncTargets === undefined && loser.syncTargets !== undefined) {
+    merged.syncTargets = loser.syncTargets;
+  }
+  return merged;
 }
 
 function mergeDashboard(a: Workspace, b: Workspace): Workspace['dashboard'] {
