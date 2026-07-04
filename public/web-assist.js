@@ -2038,7 +2038,11 @@
         dismissed = true;
         // 只是本地关闭（后台的待处理捕获还在，弹窗里仍可保存）：
         // 记住这条提示，成功检测的重新展示不再打开它；新捕获（createdAt 不同）不受影响。
-        if (capturePrompt?.id) dismissedPendingKey = `${capturePrompt.id}:${capturePrompt.createdAt || 0}`;
+        if (capturePrompt?.id) {
+          dismissedPendingKey = `${capturePrompt.id}:${capturePrompt.createdAt || 0}`;
+          // 本地记忆会随页面跳转丢失：同时让后台标记这条捕获不再在后续页面重新展示。
+          send({ type: 'capture:muteReprompt', id: capturePrompt.id }).catch(() => {});
+        }
         capturePrompt = null;
         lockedPrompt = false;
         lockedCandidate = null;
@@ -2243,10 +2247,12 @@
       username,
       password: pw.value,
       tenant: tenantForPassword(pw) || undefined,
-      totp: await extractTotpSecretAsync(),
     };
 
     try {
+      // 先把凭据发出去（后台锁定时会静默忽略）：提交后页面随时可能跳转销毁本脚本，
+      // 等快照往返和 TOTP 扫描（含 BarcodeDetector 逐图识别）完成再发会整条丢失。
+      send({ type: 'capture:candidate', ...candidate }).catch(() => {});
       await loadSnapshot();
       if (snapshot?.locked) {
         lockedCandidate = candidate;
@@ -2255,10 +2261,10 @@
         render();
         return;
       }
-      await send({
-        type: 'capture:candidate',
-        ...candidate,
-      });
+      const totp = await extractTotpSecretAsync();
+      if (totp) {
+        await send({ type: 'capture:candidate', ...candidate, totp });
+      }
     } catch {
       // Ignore stale extension contexts or locked vaults.
     }
@@ -2279,10 +2285,11 @@
       username: providerAccountName(authProvider),
       password: '',
       authProvider,
-      totp: await extractTotpSecretAsync(),
     };
 
     try {
+      send({ type: 'capture:candidate', ...candidate }).catch(() => {});
+      armSuccessChecks(120_000);
       await loadSnapshot();
       if (snapshot?.locked) {
         lockedCandidate = candidate;
@@ -2291,11 +2298,10 @@
         render();
         return;
       }
-      await send({
-        type: 'capture:candidate',
-        ...candidate,
-      });
-      armSuccessChecks(120_000);
+      const totp = await extractTotpSecretAsync();
+      if (totp) {
+        await send({ type: 'capture:candidate', ...candidate, totp });
+      }
     } catch {
       // Ignore stale extension contexts or locked vaults.
     }
@@ -2310,10 +2316,18 @@
         title: document.title || '',
         signals: await successSignals(),
       });
-      if (res?.pending && (!res.id || `${res.id}:${res.createdAt || 0}` !== dismissedPendingKey)) {
-        setCapturePrompt(res);
-        render();
+      if (!res?.pending) return;
+      if (res.id && `${res.id}:${res.createdAt || 0}` === dismissedPendingKey) return;
+      // 同一条提示已在展示：不重置浮层，避免清掉用户正在编辑的内容。
+      if (
+        res.id &&
+        capturePrompt?.id === res.id &&
+        (capturePrompt.createdAt || 0) === (res.createdAt || 0)
+      ) {
+        return;
       }
+      setCapturePrompt(res);
+      render();
     } catch {
       // Ignore stale extension contexts or locked vaults.
     }

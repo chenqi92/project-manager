@@ -157,7 +157,8 @@ export type Msg =
       targetWorkspaceId?: string;
     }
   | { type: 'capture:editSave'; id?: string }
-  | { type: 'capture:dismiss'; id?: string };
+  | { type: 'capture:dismiss'; id?: string }
+  | { type: 'capture:muteReprompt'; id?: string };
 
 export interface ExportResult {
   filename: string;

@@ -562,6 +562,8 @@ export interface CapturePending {
   totp?: string;
   tabId?: number;
   createdAt?: number;
+  /** 用户在页面浮层点了「关闭/稍后」：不再随同源后续页面重新展示，弹窗里仍可保存 */
+  repromptMuted?: boolean;
   accountId?: string;
   /** 展示用：匹配到的链接名（update 时） */
   linkName?: string;

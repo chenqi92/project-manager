@@ -356,6 +356,7 @@ async function handle(msg: Msg, sender?: MsgSender): Promise<MsgResponse<unknown
     msg.type === 'capture:save' ||
     msg.type === 'capture:editSave' ||
     msg.type === 'capture:dismiss' ||
+    msg.type === 'capture:muteReprompt' ||
     msg.type === 'ui:openUnlock' ||
     msg.type === 'assist:matches' ||
     msg.type === 'assist:fillUsername' ||
@@ -807,6 +808,9 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
     case 'capture:dismiss':
       await clearPending(msg.id, senderOrigin(sender), sender?.tab?.id);
       return;
+    case 'capture:muteReprompt':
+      await muteRepromptPending(msg.id, senderOrigin(sender), sender?.tab?.id);
+      return;
   }
 }
 
@@ -1187,10 +1191,32 @@ async function recentPendingPrompt(
 ): Promise<CapturePromptResponse | null> {
   await ensurePendingRestored();
   const list = Object.values(pendingCaptures)
-    .filter((p) => p.origin === origin && Date.now() - (p.createdAt ?? 0) < PENDING_REPROMPT_MS)
+    .filter(
+      (p) =>
+        p.origin === origin &&
+        !p.repromptMuted &&
+        Date.now() - (p.createdAt ?? 0) < PENDING_REPROMPT_MS,
+    )
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   const p = (tabId !== undefined ? list.find((x) => x.tabId === tabId) : undefined) ?? list[0];
   return p ? toPendingResponse(p) : null;
+}
+
+/**
+ * 页面浮层被「关闭/稍后」后调用：捕获仍保留（扩展弹窗里还能保存），但不再随
+ * 同源后续页面重新展示。内容脚本的本地关闭记忆在跳转时会丢失，必须由后台记住。
+ */
+async function muteRepromptPending(
+  id?: string,
+  origin?: string | null,
+  tabId?: number,
+): Promise<void> {
+  await ensurePendingRestored();
+  const p = await getPendingForContext(id, origin, tabId);
+  if (!p?.id) return;
+  if (origin && p.origin !== origin) return;
+  pendingCaptures[p.id] = { ...p, repromptMuted: true };
+  await browser.storage.session.set({ [PENDING_KEY]: pendingCaptures });
 }
 
 function captureAllowedForOrigin(data: VaultData, origin: string): boolean {
@@ -1488,6 +1514,12 @@ async function handleCaptureLogin(
           ) {
             matchAccountId = acc.id;
             if ((!totp || acc.totp === totp) && tenantSame) exactSame = true;
+          } else if (!authProvider && password && !acc.username && !username) {
+            // 纯密码登录（页面和已存账号都没有用户名）：按链接归并到无用户名账号，
+            // 否则每次登录都会提示「新建」，密码未变时也无法静默跳过。
+            const same = acc.password === password && (!totp || acc.totp === totp) && tenantSame;
+            if (same || !matchAccountId) matchAccountId = acc.id;
+            if (same) exactSame = true;
           }
         }
       }

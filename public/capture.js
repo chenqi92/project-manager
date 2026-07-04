@@ -442,40 +442,32 @@
     }
   };
 
-  const collectCredentials = async () => {
+  const captureCandidate = async () => {
     rememberVisibleUsername();
     const pw = pickPasswordField();
-    if (!pw || !pw.value) return null;
+    if (!pw || !pw.value) return;
 
     const username = usernameForPassword(pw);
     if (username) rememberUsername(username);
-
-    return {
-      username,
-      password: pw.value,
-      tenant: tenantForPassword(pw) || undefined,
-      totp: await extractTotpSecretAsync(),
-    };
-  };
-
-  const captureCandidate = async () => {
-    const creds = await collectCredentials();
-    if (!creds) return;
 
     const now = Date.now();
     if (now - lastSent < 1500) return;
     lastSent = now;
 
-    send({
+    const candidate = {
       type: 'capture:candidate',
       origin: location.origin,
       url: location.href,
       title: document.title || '',
-      username: creds.username,
-      password: creds.password,
-      tenant: creds.tenant,
-      totp: creds.totp,
-    });
+      username,
+      password: pw.value,
+      tenant: tenantForPassword(pw) || undefined,
+    };
+    // 先把凭据发出去：提交后页面随时可能跳转销毁本脚本，等 TOTP 扫描
+    //（含 BarcodeDetector 逐图识别，可能数百毫秒）完成再发会整条丢失。
+    send(candidate);
+    const totp = await extractTotpSecretAsync();
+    if (totp) send({ ...candidate, totp });
   };
 
   const captureFederatedCandidate = async (provider) => {
@@ -486,7 +478,7 @@
     if (now - lastSent < 1500) return;
     lastSent = now;
 
-    send({
+    const candidate = {
       type: 'capture:candidate',
       origin: location.origin,
       url: location.href,
@@ -494,8 +486,10 @@
       username: providerAccountName(authProvider),
       password: '',
       authProvider,
-      totp: await extractTotpSecretAsync(),
-    });
+    };
+    send(candidate);
+    const totp = await extractTotpSecretAsync();
+    if (totp) send({ ...candidate, totp });
   };
 
   const checkSuccess = async () => {

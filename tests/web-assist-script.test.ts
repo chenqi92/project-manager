@@ -128,6 +128,48 @@ describe('web-assist.js login credential capture', () => {
     expect(latestCaptureCandidate()?.totp).toBeFalsy();
   });
 
+  it('sends the credentials immediately even when QR scanning never finishes', async () => {
+    (window as any).BarcodeDetector = class {
+      detect() {
+        return new Promise(() => {});
+      }
+    };
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+        <canvas></canvas>
+      </form>`;
+
+    await submitAndFlush();
+
+    const candidate = latestCaptureCandidate();
+    expect(candidate?.password).toBe('pw-new');
+    expect(candidate?.totp).toBeFalsy();
+  });
+
+  it('sends a follow-up candidate carrying the TOTP secret after scanning', async () => {
+    (window as any).BarcodeDetector = class {
+      async detect() {
+        return [{ rawValue: 'otpauth://totp/Acme:admin?secret=JBSWY3DPEHPK3PXP&period=30' }];
+      }
+    };
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+        <canvas></canvas>
+      </form>`;
+
+    await submitAndFlush();
+
+    const candidates = messages.filter((m) => m.type === 'capture:candidate');
+    expect(candidates.length).toBe(2);
+    expect(candidates[0].totp).toBeFalsy();
+    expect(candidates[1].password).toBe('pw-new');
+    expect(candidates[1].totp).toContain('otpauth://totp/Acme:admin');
+  });
+
   it('captures federated login clicks without a password field', async () => {
     document.body.innerHTML = `<button type="button">Sign in with Google</button>`;
 
