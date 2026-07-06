@@ -93,10 +93,11 @@ export type Msg =
       submit: boolean;
     }
   // 网页内助手（content script 发起；后台按 sender origin 二次校验）
-  | { type: 'assist:matches' }
-  | { type: 'assist:fillUsername'; accountId: string; submit?: boolean }
-  | { type: 'assist:fill'; accountId: string; submit?: boolean }
-  | { type: 'assist:fillTotp'; accountId: string; submit?: boolean }
+  // url：页面上报的 location.href（含 SPA 路由/hash），后台校验同源后用于 path-prefix/exact-url 匹配
+  | { type: 'assist:matches'; url?: string }
+  | { type: 'assist:fillUsername'; accountId: string; submit?: boolean; url?: string }
+  | { type: 'assist:fill'; accountId: string; submit?: boolean; url?: string }
+  | { type: 'assist:fillTotp'; accountId: string; submit?: boolean; url?: string }
   // 登录捕获
   | {
       type: 'capture:candidate';
@@ -267,7 +268,7 @@ export const api = {
     }),
 
   // 网页内助手
-  assistMatches: () => send<AssistSnapshot>({ type: 'assist:matches' }),
+  assistMatches: (url?: string) => send<AssistSnapshot>({ type: 'assist:matches', url }),
 
   // 登录捕获
   captureManual: (

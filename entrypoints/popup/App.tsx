@@ -31,6 +31,7 @@ import { applyTheme, watchSystemTheme } from '@/lib/theme';
 import { entryMatchesUrl, flatten, matchForUrl, search, type FlatEntry } from '@/lib/search';
 import { getUsage, recordUse } from '@/lib/usage';
 import type { CapturePending, EnvKind } from '@/lib/types';
+import { allWorkspacesData } from '@/lib/workspace';
 import { ENV_KIND_COLORS, ENV_KIND_LABELS, linkUrls, produce } from '@/lib/vault-ops';
 
 const POPUP_RESULT_LIMIT = 30;
@@ -107,7 +108,8 @@ export default function App() {
   };
 
   const matched = useMemo(
-    () => (data && tab?.url ? matchForUrl(data, tab.url) : []),
+    // 跨全部工作区匹配当前网站：工作区只用于展示分组，其它工作区存的账号也要在此可填。
+    () => (data && tab?.url ? matchForUrl(allWorkspacesData(data), tab.url) : []),
     [data, tab],
   );
   const rawResults = useMemo(

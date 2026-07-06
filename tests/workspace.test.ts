@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import {
+  allWorkspaceProjects,
+  allWorkspacesData,
   commitWorkspaceDraft,
   createWorkspace,
   ensureVaultWorkspaces,
@@ -8,8 +10,9 @@ import {
   switchActiveWorkspace,
 } from '../lib/workspace';
 import { mergeVaultData } from '../lib/merge';
+import { matchForUrl } from '../lib/search';
 import type { Project, VaultData, Workspace } from '../lib/types';
-import { newProject } from '../lib/vault-ops';
+import { newAccount, newEnvironment, newLink, newProject } from '../lib/vault-ops';
 
 const kdf = { type: 'pbkdf2' as const, iterations: 1, hash: 'SHA-256' as const };
 
@@ -72,6 +75,47 @@ describe('工作区数据安全', () => {
     expect(messageData.projects).toHaveLength(0);
     switchActiveWorkspace(messageData, 'wsDefault', 103);
     expect(messageData.projects.map((p) => p.name)).toEqual(['A', 'B']);
+  });
+});
+
+describe('跨工作区匹配当前站点', () => {
+  // 一个含单链接单账号的项目：链接主网址为 url。
+  function projectWithLogin(projectName: string, url: string, username: string): Project {
+    return newProject({
+      name: projectName,
+      environments: [
+        newEnvironment({
+          name: '生产',
+          kind: 'prod',
+          links: [newLink({ name: projectName, url, accounts: [newAccount({ username, password: 'pw' })] })],
+        }),
+      ],
+    });
+  }
+
+  it('allWorkspaceProjects 合并全部工作区且不重复计入当前工作区', () => {
+    const a = ws('wsA', '工作区A', []);
+    a.projects = [projectWithLogin('站点A', 'https://a.example.com/', 'ua')];
+    const b = ws('wsB', '工作区B', []);
+    b.projects = [projectWithLogin('站点B', 'https://b.example.com/', 'ub')];
+    // 根 projects 是当前工作区(A)的镜像(同引用)。
+    const data = vault([a, b], 'wsA', a.projects);
+
+    const names = allWorkspaceProjects(data).map((p) => p.name).sort();
+    expect(names).toEqual(['站点A', '站点B']); // A 不因根镜像被重复计入
+  });
+
+  it('非当前工作区存的账号也能匹配当前打开的网站', () => {
+    const a = ws('wsA', '工作区A', []);
+    a.projects = [projectWithLogin('站点A', 'https://a.example.com/', 'ua')];
+    const b = ws('wsB', '工作区B', []);
+    b.projects = [projectWithLogin('站点B', 'https://b.example.com/login', 'ub')];
+    const data = vault([a, b], 'wsA', a.projects); // 当前在 A
+
+    // 旧行为(仅当前工作区)匹配不到 B 的站点；跨工作区视图能匹配到。
+    expect(matchForUrl(data, 'https://b.example.com/login')).toHaveLength(0);
+    const hits = matchForUrl(allWorkspacesData(data), 'https://b.example.com/login');
+    expect(hits.map((h) => h.username)).toEqual(['ub']);
   });
 });
 

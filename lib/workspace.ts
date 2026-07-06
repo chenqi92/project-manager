@@ -181,6 +181,25 @@ export function workspaceScopedData(data: VaultData): VaultData {
   };
 }
 
+/**
+ * 跨全部工作区的项目集合。用于「当前打开网站的凭据匹配 / 登录捕获识别」——工作区只用于展示
+ * 分组，不隔离页面上的自动填充与捕获：任一工作区存的账号都应能在该网站上弹出顶部填充横幅、
+ * 被登录捕获识别为「已存在」。根 projects 是当前工作区的镜像（同引用），故只遍历 workspaces
+ * 即可覆盖全部且不会把当前工作区重复计入。旧数据无 workspaces 时退回根 projects。
+ */
+export function allWorkspaceProjects(data: VaultData): Project[] {
+  const workspaces = data.workspaces ?? [];
+  if (workspaces.length === 0) return data.projects ?? [];
+  return workspaces.flatMap((w) => w.projects ?? []);
+}
+
+/** 只读视图：projects 为全部工作区的合并，供 matchForUrl / flatten / search 跨工作区匹配当前站点。 */
+export function allWorkspacesData(data: VaultData): VaultData {
+  const workspaces = data.workspaces ?? [];
+  if (workspaces.length === 0) return data;
+  return { ...data, projects: allWorkspaceProjects(data) };
+}
+
 export function switchActiveWorkspace(data: VaultData, workspaceId: string, timestamp = Date.now()): boolean {
   // 不用 commitWorkspaceDraft：切换工作区不涉及对 root 的编辑；若把（可能是中间态/别的工作区的）
   // root 写回当前工作区，会清空它的项目（数据丢失 bug 根因）。只需确保结构存在即可。

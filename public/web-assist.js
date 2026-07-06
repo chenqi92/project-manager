@@ -47,6 +47,10 @@
       }
     });
 
+  // 助手消息（匹配/填充）统一带上页面实时完整地址：后台据此做 path-prefix/exact-url 匹配，
+  // 与登录捕获用的 location.href 保持一致，避免「访问不弹提示、保存却能合并」的不一致。
+  const sendAssist = (msg) => send({ ...msg, url: location.href });
+
   const visible = (el) => {
     const r = el.getBoundingClientRect();
     const s = getComputedStyle(el);
@@ -695,16 +699,16 @@
     flowBusy = true;
     try {
       if (surface === 'username') {
-        await send({ type: 'assist:fillUsername', accountId: flow.accountId, submit: true });
+        await sendAssist({ type: 'assist:fillUsername', accountId: flow.accountId, submit: true });
       } else if (surface === 'password') {
-        await send({ type: 'assist:fill', accountId: flow.accountId, submit: true });
+        await sendAssist({ type: 'assist:fill', accountId: flow.accountId, submit: true });
       } else if (surface === 'otp') {
         const hasTotp = snapshot.matches.some((m) => m.accountId === flow.accountId && m.hasTotp);
         if (!hasTotp) {
           clearFlow(); // 没存 TOTP（短信码等）→ 交给用户输入
           return;
         }
-        await send({ type: 'assist:fillTotp', accountId: flow.accountId, submit: true });
+        await sendAssist({ type: 'assist:fillTotp', accountId: flow.accountId, submit: true });
       }
     } catch {
       clearFlow(); // 背景拒绝（来源不匹配等）→ 停止
@@ -754,7 +758,7 @@
     lastAutoTotp = { accountId: match.accountId, at: now };
     autoTotpBusy = true;
     try {
-      await send({ type: 'assist:fillTotp', accountId: match.accountId, submit: false });
+      await sendAssist({ type: 'assist:fillTotp', accountId: match.accountId, submit: false });
       remember(match.accountId);
       render('验证码已填充');
     } catch {
@@ -2171,7 +2175,7 @@
       if (act === 'fill-user' || act === 'continue-user') {
         remember(accountId);
         if (act === 'continue-user') armAutoFlow(accountId); // 点「下一步」即开启自动续填
-        const res = await send({
+        const res = await sendAssist({
           type: 'assist:fillUsername',
           accountId,
           submit: act === 'continue-user',
@@ -2182,7 +2186,7 @@
       if (act === 'fill' || act === 'login') {
         remember(accountId);
         if (act === 'login') armAutoFlow(accountId); // 点「登录」即开启自动续填（后续 OTP 步等自动填）
-        const res = await send({ type: 'assist:fill', accountId, submit: act === 'login' });
+        const res = await sendAssist({ type: 'assist:fill', accountId, submit: act === 'login' });
         const okMsg =
           act === 'login'
             ? '已填充并提交'
@@ -2201,7 +2205,7 @@
       }
       if (act === 'totp') {
         remember(accountId);
-        const res = await send({ type: 'assist:fillTotp', accountId, submit: false });
+        const res = await sendAssist({ type: 'assist:fillTotp', accountId, submit: false });
         render(res?.ok === false ? res.reason || '未能填验证码' : '验证码已填充', res?.ok === false ? 'warn' : 'info');
       }
     } catch (e) {
@@ -2211,7 +2215,7 @@
 
   const loadSnapshot = async () => {
     try {
-      snapshot = await send({ type: 'assist:matches' });
+      snapshot = await sendAssist({ type: 'assist:matches' });
     } catch {
       snapshot = null;
     }

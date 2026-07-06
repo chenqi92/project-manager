@@ -54,7 +54,13 @@ import {
   newProject,
   normalizeVaultData,
 } from '@/lib/vault-ops';
-import { commitWorkspaceDraft, preserveActiveWorkspace, workspaceScopedData } from '@/lib/workspace';
+import {
+  allWorkspaceProjects,
+  allWorkspacesData,
+  commitWorkspaceDraft,
+  preserveActiveWorkspace,
+  workspaceScopedData,
+} from '@/lib/workspace';
 import {
   createEncryptedVault,
   decryptVaultData,
@@ -325,7 +331,7 @@ async function fillActiveTab(): Promise<void> {
   }
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !tab.url) return;
-  const matches = matchForUrl(workspaceScopedData(cachedData), tab.url);
+  const matches = matchForUrl(allWorkspacesData(cachedData), tab.url);
   if (matches.length === 1) {
     const m = matches[0]!;
     await injectCredentialFill(
@@ -708,16 +714,16 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       return;
 
     case 'assist:matches':
-      return assistMatches(sender);
+      return assistMatches(sender, msg.url);
 
     case 'assist:fillUsername':
-      return assistFillUsername(sender, msg.accountId, msg.submit === true);
+      return assistFillUsername(sender, msg.accountId, msg.submit === true, msg.url);
 
     case 'assist:fill':
-      return assistFill(sender, msg.accountId, msg.submit === true);
+      return assistFill(sender, msg.accountId, msg.submit === true, msg.url);
 
     case 'assist:fillTotp':
-      return assistFillTotp(sender, msg.accountId, msg.submit === true);
+      return assistFillTotp(sender, msg.accountId, msg.submit === true, msg.url);
 
     case 'capture:candidate': {
       const trusted = senderOrigin(sender);
@@ -842,7 +848,19 @@ function toAssistEntry(e: ReturnType<typeof matchForUrl>[number]): AssistEntry {
   };
 }
 
-async function assistMatches(sender?: MsgSender): Promise<AssistSnapshot> {
+/**
+ * 助手匹配用的页面 URL：优先采信页面上报的完整 location.href（含 SPA 路由/hash/子路径），
+ * 但必须与消息来源同源才作数——否则退回 sender 元数据（可能只有 origin/）。
+ * 这样「读取（自动填充提示）」和「保存（登录捕获）」两侧看到的是同一个完整地址，
+ * path-prefix / exact-url 链接不会再出现「访问不弹提示、保存却能合并」的不一致。
+ */
+function assistPageUrl(sender?: MsgSender, reportedUrl?: string): string | null {
+  const origin = senderOrigin(sender);
+  if (origin && reportedUrl && getOrigin(reportedUrl) === origin) return reportedUrl;
+  return senderPageUrl(sender);
+}
+
+async function assistMatches(sender?: MsgSender, reportedUrl?: string): Promise<AssistSnapshot> {
   await ensureRestored();
   const origin = senderOrigin(sender) ?? '';
   const enabled =
@@ -850,8 +868,9 @@ async function assistMatches(sender?: MsgSender): Promise<AssistSnapshot> {
   if (!dek || !cachedData) {
     return { locked: true, enabled: false, origin, autoSubmit: false, theme: 'system', matches: [] };
   }
-  const pageUrl = senderPageUrl(sender);
-  const matches = enabled && pageUrl ? matchForUrl(workspaceScopedData(cachedData), pageUrl).map(toAssistEntry) : [];
+  const pageUrl = assistPageUrl(sender, reportedUrl);
+  // 跨全部工作区匹配：工作区只用于展示分组，其它工作区存的账号也要能在该网站弹出顶部横幅。
+  const matches = enabled && pageUrl ? matchForUrl(allWorkspacesData(cachedData), pageUrl).map(toAssistEntry) : [];
   return {
     locked: false,
     enabled,
@@ -864,11 +883,15 @@ async function assistMatches(sender?: MsgSender): Promise<AssistSnapshot> {
   };
 }
 
-async function findAssistEntry(sender: MsgSender | undefined, accountId: string) {
+async function findAssistEntry(
+  sender: MsgSender | undefined,
+  accountId: string,
+  reportedUrl?: string,
+) {
   const data = await requireData();
-  const pageUrl = senderPageUrl(sender);
+  const pageUrl = assistPageUrl(sender, reportedUrl);
   if (!pageUrl) throw new Error('无法确认当前网页来源');
-  const entry = matchForUrl(workspaceScopedData(data), pageUrl).find((e) => e.accountId === accountId);
+  const entry = matchForUrl(allWorkspacesData(data), pageUrl).find((e) => e.accountId === accountId);
   if (!entry) throw new Error('该账号与当前网页来源不匹配，已阻止填充');
   const tabId = sender?.tab?.id;
   if (tabId === undefined) throw new Error('无法定位当前标签页');
@@ -879,8 +902,9 @@ async function assistFillUsername(
   sender: MsgSender | undefined,
   accountId: string,
   submit: boolean,
+  reportedUrl?: string,
 ): Promise<unknown> {
-  const { entry, tabId } = await findAssistEntry(sender, accountId);
+  const { entry, tabId } = await findAssistEntry(sender, accountId, reportedUrl);
   const res = await browser.scripting.executeScript({
     target: { tabId },
     func: fillUsernameInPage,
@@ -893,8 +917,9 @@ async function assistFill(
   sender: MsgSender | undefined,
   accountId: string,
   submit: boolean,
+  reportedUrl?: string,
 ): Promise<unknown> {
-  const { entry, tabId } = await findAssistEntry(sender, accountId);
+  const { entry, tabId } = await findAssistEntry(sender, accountId, reportedUrl);
   return injectCredentialFill(tabId, entry.username, entry.password, submit, entry.url, entry.tenant);
 }
 
@@ -902,8 +927,9 @@ async function assistFillTotp(
   sender: MsgSender | undefined,
   accountId: string,
   submit: boolean,
+  reportedUrl?: string,
 ): Promise<unknown> {
-  const { entry, tabId } = await findAssistEntry(sender, accountId);
+  const { entry, tabId } = await findAssistEntry(sender, accountId, reportedUrl);
   if (!entry.totp) throw new Error('该账号没有 TOTP');
   const cfg = parseTotp(entry.totp);
   if (!cfg) throw new Error('TOTP 密钥无效');
@@ -928,7 +954,8 @@ async function refreshCaptureRegistration(): Promise<void> {
 async function registerCaptureForData(data: VaultData | null): Promise<void> {
   try {
     if (!data) return;
-    const activeData = workspaceScopedData(data);
+    // 注册要覆盖全部工作区的链接 origin，否则其它工作区的站点上内容脚本根本不跑，顶栏无从弹出。
+    const activeData = allWorkspacesData(data);
     await unregisterAssistScripts();
     const perms = await browser.permissions.getAll();
     const granted = perms.origins ?? [];
@@ -1221,8 +1248,8 @@ async function muteRepromptPending(
 
 function captureAllowedForOrigin(data: VaultData, origin: string): boolean {
   if (data.settings.webAssistAllSites === true) return true;
-  const activeData = workspaceScopedData(data);
-  for (const proj of activeData.projects)
+  // 任一工作区存了该 origin 的链接就允许捕获（工作区只用于展示，不隔离捕获）。
+  for (const proj of allWorkspaceProjects(data))
     for (const env of proj.environments)
       for (const link of env.links)
         if (linkUrls(link).some((u) => getOrigin(u) === origin)) return true;
@@ -1231,8 +1258,8 @@ function captureAllowedForOrigin(data: VaultData, origin: string): boolean {
 
 function captureSaveTargets(data: VaultData, pageUrl: string): CaptureSaveTarget[] {
   const out: CaptureSaveTarget[] = [];
-  const activeData = workspaceScopedData(data);
-  for (const proj of activeData.projects)
+  // 跨全部工作区列出匹配当前网址的已有链接：其它工作区的同站链接也能被识别/归并，避免重复新建。
+  for (const proj of allWorkspaceProjects(data))
     for (const env of proj.environments)
       for (const link of env.links)
         if (linkMatchesUrl(link, pageUrl)) {
@@ -1485,8 +1512,8 @@ async function handleCaptureLogin(
   const captureWorkspaces = (cachedData.workspaces ?? []).map((w) => ({ id: w.id, name: w.name }));
   const activeWorkspaceId = cachedData.activeWorkspaceId;
   const cleanPageTitle = cleanCaptureTitle(pageTitle);
-  const activeData = workspaceScopedData(cachedData);
-  for (const proj of activeData.projects) {
+  // 跨全部工作区识别已存账号：密码未变静默跳过、变更提示「更新」，避免在别的工作区重复新建。
+  for (const proj of allWorkspaceProjects(cachedData)) {
     for (const env of proj.environments) {
       for (const link of env.links) {
         if (!linkMatchesUrl(link, url)) continue;
@@ -1614,7 +1641,8 @@ async function applyCapture(
 
   if (targetAccountId) {
     let updated = false;
-    for (const proj of data.projects)
+    // 跨全部工作区查找要更新的账号（更新候选可能来自非当前工作区）。
+    for (const proj of allWorkspaceProjects(data))
       for (const env of proj.environments)
         for (const link of env.links)
           for (const acc of link.accounts)
@@ -1635,7 +1663,7 @@ async function applyCapture(
     let targetEnv: VaultData['projects'][number]['environments'][number] | null = null;
     if (edits.targetLinkId || p.targetLinkId) {
       const targetLinkId = edits.targetLinkId || p.targetLinkId;
-      for (const proj of data.projects)
+      for (const proj of allWorkspaceProjects(data))
         for (const env of proj.environments)
           for (const link of env.links)
             if (link.id === targetLinkId && linkMatchesUrl(link, p.url)) {
@@ -1645,7 +1673,7 @@ async function applyCapture(
             }
       if (!target) throw new Error('找不到要保存到的链接');
     }
-    for (const proj of data.projects)
+    for (const proj of allWorkspaceProjects(data))
       for (const env of proj.environments)
         for (const link of env.links)
           if (!target && linkMatchesUrl(link, p.url)) {
