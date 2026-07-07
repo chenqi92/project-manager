@@ -846,6 +846,7 @@ function toAssistEntry(e: ReturnType<typeof matchForUrl>[number]): AssistEntry {
     linkName: e.linkName,
     accountLabel: e.accountLabel,
     username: e.username,
+    tenant: e.tenant,
     hasTotp: Boolean(e.totp),
   };
 }

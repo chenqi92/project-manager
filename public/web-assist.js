@@ -1485,6 +1485,9 @@
 
   const labelFor = (e) => e.accountLabel || e.username || e.linkName || '账号';
 
+  // 多租户系统：把租户 / 企业 / 域拼进副标题，跟在用户名后面。
+  const tenantSuffix = (e) => (e && e.tenant ? ` · 租户 ${e.tenant}` : '');
+
   const modalThemeClass = () => {
     const setting = snapshot?.theme || 'system';
     const systemDark =
@@ -1902,7 +1905,7 @@
       ? capturePrompt.authProvider
         ? `${capturePrompt.authProvider} 被用于登录 ${hostOf(capturePrompt.origin)}`
         : `${hostOf(capturePrompt.origin)} · ${capturePrompt.username || '无用户名'}`
-      : `${first.username || '无用户名'} · ${first.projectName} / ${first.envName}`;
+      : `${first.username || '无用户名'}${tenantSuffix(first)} · ${first.projectName} / ${first.envName}`;
 
     r.innerHTML = `
       <style>${css}</style>
@@ -1952,7 +1955,7 @@
                         <div class="logo">${esc((e.accountLabel || e.username || '?').slice(0, 1).toUpperCase())}</div>
                         <div class="text">
                           <div class="title">${esc(e.linkName || e.projectName)} · ${esc(labelFor(e))}</div>
-                          <div class="sub">${esc(e.username || '无用户名')} · ${esc(e.envName)}</div>
+                          <div class="sub">${esc(e.username || '无用户名')}${esc(tenantSuffix(e))} · ${esc(e.envName)}</div>
                         </div>
                         ${
                           surface === 'username'

@@ -600,6 +600,8 @@ export interface AssistEntry {
   linkName: string;
   accountLabel: string;
   username: string;
+  /** 租户 / 企业 / 域：多租户系统登录页在用户名之外的第三个字段（可选） */
+  tenant?: string;
   hasTotp: boolean;
 }
 
