@@ -231,8 +231,33 @@ describe('fillCredentialsInPage', () => {
     expect((document.querySelector('input[type=password]') as HTMLInputElement).value).toBe('pw');
   });
 
-  it('页面没有密码框时返回失败', () => {
-    document.body.innerHTML = `<form><input type="text" /></form>`;
+  it('两级登录页：只有账号框、无密码框时填账号并返回成功', () => {
+    document.body.innerHTML = `<form><input type="text" id="u" /></form>`;
+    const r = fillCredentialsInPage('x', 'pw');
+    expect(r.ok).toBe(true);
+    expect((document.querySelector('#u') as HTMLInputElement).value).toBe('x');
+  });
+
+  it('两级登录页 submit：填账号、写自动续填标记、点「下一步」', () => {
+    vi.useFakeTimers();
+    sessionStorage.clear();
+    document.body.innerHTML = `<form><input type="text" id="u" /><button type="button" id="next">下一步</button></form>`;
+    let clicked = false;
+    document.querySelector('#next')!.addEventListener('click', () => (clicked = true));
+    const r = fillCredentialsInPage('alice', 'pw', true, undefined, undefined, 'acc-1');
+    expect(r.ok).toBe(true);
+    expect(r.submitted).toBe(true);
+    expect((document.querySelector('#u') as HTMLInputElement).value).toBe('alice');
+    const flow = JSON.parse(sessionStorage.getItem('pemAutoFlow') || '{}');
+    expect(flow.accountId).toBe('acc-1');
+    expect(flow.lastSurface).toBe('username');
+    vi.advanceTimersByTime(200);
+    expect(clicked).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it('既无密码框也无账号框时返回失败', () => {
+    document.body.innerHTML = `<div>无可填输入</div>`;
     expect(fillCredentialsInPage('x', 'pw').ok).toBe(false);
   });
 

@@ -47,7 +47,11 @@ export function MemoWidget({
   const [scopeProjectId, setScopeProjectId] = useState(ALL_PROJECTS);
   const posRef = useRef(pos);
   posRef.current = pos;
-  const panelRef = useRef<HTMLDivElement>(null);
+  // 当前渲染的那个变体（FAB / 胶囊 / 面板）都挂到同一个 ref，用于按实际尺寸把位置夹回视口。
+  const rootRef = useRef<HTMLElement | null>(null);
+  const setRootRef = (el: HTMLElement | null) => {
+    rootRef.current = el;
+  };
 
   useEffect(() => {
     browser.storage.local
@@ -77,20 +81,22 @@ export function MemoWidget({
     browser.storage.local.set({ [KEY]: { ...s, anchor: 'bottom-right' } }).catch(() => {});
   };
 
-  // 位置以右下角为锚点，展开/收起不会改变同一个锚点；这里只在展开后按实际尺寸夹回视口。
+  // 位置以右下角为锚点。加载后（含收起/隐藏态）按当前变体的实际尺寸把锚点夹回视口，
+  // 避免旧版锚点迁移或视口变化导致「首次显示错位、要先展开再收起才归位」。
   useLayoutEffect(() => {
-    if (collapsed || hidden) return;
-    const el = panelRef.current;
+    if (!loaded) return;
+    const el = rootRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
     const margin = 8;
     const nx = Math.min(Math.max(posRef.current.x, rect.width + margin), window.innerWidth - margin);
     const ny = Math.min(Math.max(posRef.current.y, rect.height + margin), window.innerHeight - margin);
     if (nx !== posRef.current.x || ny !== posRef.current.y) {
       setPos({ x: nx, y: ny });
-      save({ x: nx, y: ny, collapsed: false, hidden: false, anchor: 'bottom-right' });
+      save({ x: nx, y: ny, collapsed, hidden, anchor: 'bottom-right' });
     }
-  }, [collapsed, hidden]);
+  }, [collapsed, hidden, loaded]);
 
   // 面板顶栏拖动：纯移动。
   const startDrag = (e: React.PointerEvent) => {
@@ -99,7 +105,7 @@ export function MemoWidget({
     const sy = e.clientY;
     const ox = posRef.current.x;
     const oy = posRef.current.y;
-    const rect = panelRef.current?.getBoundingClientRect();
+    const rect = rootRef.current?.getBoundingClientRect();
     const minW = rect?.width ?? LEGACY_PANEL.w;
     const minH = rect?.height ?? LEGACY_PANEL.h;
     let last = { x: ox, y: oy };
@@ -215,6 +221,7 @@ export function MemoWidget({
   if (hidden) {
     return (
       <button
+        ref={setRootRef}
         onPointerDown={(e) => startMoveOrTap(e, show)}
         style={{ left: pos.x, top: pos.y, transform: 'translate(-100%, -100%)', touchAction: 'none' }}
         className={cx(
@@ -232,6 +239,7 @@ export function MemoWidget({
   if (collapsed) {
     return (
       <button
+        ref={setRootRef}
         onPointerDown={(e) => startMoveOrTap(e, toggleCollapsed)}
         style={{ left: pos.x, top: pos.y, transform: 'translate(-100%, -100%)', touchAction: 'none' }}
         className={cx(
@@ -260,7 +268,7 @@ export function MemoWidget({
   // 展开态：面板。
   return (
     <div
-      ref={panelRef}
+      ref={setRootRef}
       style={{ left: pos.x, top: pos.y, transform: 'translate(-100%, -100%)' }}
       className="fixed z-40 flex max-h-[72vh] w-[300px] flex-col overflow-hidden rounded-[14px] border border-gray-200 bg-surface shadow-[0_18px_44px_-12px_rgba(20,26,40,.32)]"
     >

@@ -236,6 +236,7 @@ async function injectCredentialFill(
   submit: boolean,
   url: string,
   tenant?: string,
+  accountId?: string,
 ): Promise<ReturnType<typeof fillCredentialsInPage>> {
   const site = siteForFill(url);
   const res = await browser.scripting.executeScript({
@@ -243,7 +244,7 @@ async function injectCredentialFill(
     func: fillCredentialsInPage,
     // executeScript 的 args 必须可 JSON 序列化：undefined 会让整个调用直接报错
     //（Value is unserializable），缺省一律用空串表示。
-    args: [username, password, submit, site || '', tenant || ''],
+    args: [username, password, submit, site || '', tenant || '', accountId || ''],
   });
   const results = res
     .map((r) => r.result)
@@ -341,6 +342,7 @@ async function fillActiveTab(): Promise<void> {
       cachedData.settings.autoSubmit === true,
       m.url,
       m.tenant,
+      m.accountId,
     );
   } else {
     browser.action.openPopup?.().catch(() => {});
@@ -920,7 +922,7 @@ async function assistFill(
   reportedUrl?: string,
 ): Promise<unknown> {
   const { entry, tabId } = await findAssistEntry(sender, accountId, reportedUrl);
-  return injectCredentialFill(tabId, entry.username, entry.password, submit, entry.url, entry.tenant);
+  return injectCredentialFill(tabId, entry.username, entry.password, submit, entry.url, entry.tenant, entry.accountId);
 }
 
 async function assistFillTotp(

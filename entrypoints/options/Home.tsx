@@ -460,7 +460,7 @@ export function Home({
                       style={{ ...glass, touchAction: canEdit ? 'none' : undefined }}
                       tabIndex={privacyMode !== 'off' && !canEdit ? 0 : undefined}
                       className={cx(
-                        'tile-glass relative flex h-full flex-col overflow-hidden',
+                        'group tile-glass relative flex h-full flex-col overflow-hidden',
                         privacyMode !== 'off' && 'privacy-tile',
                         privacyMode === 'soft' && 'privacy-soft',
                         privacyMode === 'strong' && 'privacy-strong',
@@ -469,7 +469,13 @@ export function Home({
                       )}
                     >
                       {showActions && (
-                        <div className="absolute right-1.5 top-1.5 z-20 flex items-center gap-1">
+                        <div
+                          className={cx(
+                            'absolute right-1.5 top-1.5 z-20 flex items-center gap-1 transition-opacity',
+                            // 非编辑态：默认隐藏配置按钮，鼠标移到卡片上（或键盘聚焦）才显现，页面更干净。
+                            !canEdit && 'opacity-0 group-hover:opacity-100 focus-within:opacity-100',
+                          )}
+                        >
                           {showConfig && (
                             <button
                               type="button"

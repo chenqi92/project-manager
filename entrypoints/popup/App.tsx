@@ -177,6 +177,7 @@ export default function App() {
         data?.settings.autoSubmit === true,
         site || '',
         entry.tenant || '',
+        entry.accountId || '',
       ],
     });
     const results = res

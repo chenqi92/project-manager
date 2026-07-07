@@ -122,6 +122,8 @@ export function isSameSite(originA: string, originB: string): boolean {
  * （会被 chrome.scripting.executeScript 序列化后在页面里运行）。
  * 只填值并派发 input/change 事件，不点击提交。
  * tenant：多租户系统登录页的租户 / 企业 / 域字段值（可选，账号存了才会填）。
+ * accountId：用于「先账号后密码」两级登录页：无密码框时填账号并武装自动续填，
+ * 内容脚本在密码步自动填密码并提交（空串表示不武装续填）。
  */
 export function fillCredentialsInPage(
   username: string,
@@ -129,6 +131,7 @@ export function fillCredentialsInPage(
   submit = false,
   site?: string,
   tenant?: string,
+  accountId = '',
 ): FillResult {
   // 跨 frame 注入（allFrames）时的同主域护栏：site 为「允许填充的可注册域(eTLD+1)」。
   // 只在当前 frame 的主机等于该域或其子域时才填，避免被一起注入的无关 iframe
@@ -290,6 +293,72 @@ export function fillCredentialsInPage(
   ).filter(visible);
   const pw = pwFields[0];
   if (!pw) {
+    // 「先账号后密码」两级登录页第一步：本页没有密码框，但有账号框时，先填账号，
+    // submit 时点「下一步/登录」推进到密码步，并写入自动续填标记——内容脚本会在密码步
+    // （同页揭示或跳转新页）自动填密码并提交，避免直接报「没找到密码输入框」。
+    if (username) {
+      const skipRe =
+        /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b|\borg|search|query|keyword|验证码|验证|code|otp|totp)/i;
+      const userCands = Array.from(
+        document.querySelectorAll<HTMLInputElement>(
+          'input[type="text"], input[type="email"], input[type="tel"], input:not([type])',
+        ),
+      ).filter((el) => el.type !== 'password' && visible(el) && !el.disabled && !el.readOnly);
+      const fieldMeta = (el: HTMLInputElement): string =>
+        [el.name, el.id, el.autocomplete, el.placeholder, el.getAttribute('aria-label') ?? '']
+          .join(' ')
+          .toLowerCase();
+      const userEl = userCands.find((el) => !skipRe.test(fieldMeta(el))) ?? userCands[0];
+      if (userEl) {
+        setValue(userEl, username);
+        if (submit) {
+          if (accountId) {
+            // eTLD+1（与内容脚本 siteOf 同口径）：自动续填流程按同主域延续到密码步。
+            const registrableHost = (host: string): string => {
+              const h = (host || '').toLowerCase().replace(/\.$/, '');
+              if (!h || h.includes(':') || /^\d+(\.\d+){3}$/.test(h) || h === 'localhost') return h;
+              const p = h.split('.');
+              if (p.length <= 2) return h;
+              const two = new Set([
+                'com.cn', 'net.cn', 'org.cn', 'gov.cn', 'edu.cn', 'ac.cn',
+                'co.uk', 'org.uk', 'gov.uk', 'ac.uk',
+                'com.hk', 'com.tw', 'com.sg', 'com.au', 'co.nz', 'co.jp', 'com.jp',
+              ]);
+              return two.has(p.slice(-2).join('.')) ? p.slice(-3).join('.') : p.slice(-2).join('.');
+            };
+            try {
+              sessionStorage.setItem(
+                'pemAutoFlow',
+                JSON.stringify({
+                  accountId,
+                  site: registrableHost(location.hostname),
+                  ts: Date.now(),
+                  step: 1,
+                  lastSurface: 'username',
+                  lastActionAt: Date.now(),
+                }),
+              );
+            } catch {
+              /* 忽略隐私模式下的 sessionStorage 失败 */
+            }
+          }
+          setTimeout(() => {
+            const scope = userEl.form ?? document;
+            const target = submitTarget(scope);
+            if (target) target.click();
+            else if (userEl.form && typeof userEl.form.requestSubmit === 'function')
+              userEl.form.requestSubmit();
+            else
+              userEl.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }),
+              );
+          }, 180);
+          return { ok: true, submitted: true, reason: '已填账号，正在进入密码步' };
+        }
+        userEl.focus();
+        return { ok: true, reason: '已填账号，请继续到密码输入步' };
+      }
+    }
     // 顶层文档没有密码框：登录表单很可能在跨域 iframe 里（如阿里云 passport.aliyun.com），
     // 注入到顶层 frame 看不到它。检测一下并给出可操作的提示，而不是笼统的「没找到」。
     const loginFrameOrigin = Array.from(document.querySelectorAll('iframe'))
