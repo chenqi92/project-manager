@@ -1096,6 +1096,8 @@ export default function App() {
                   onEnableNetwork={() => update((d) => void (d.settings.weatherEnabled = true))}
                   jsonViewerEnabled={data.settings.jsonViewerEnabled === true}
                   onSetJsonViewer={setJsonViewer}
+                  data={data}
+                  onSave={vault.save}
                 />
               )}
               {page === 'cnb' && <CnbPage data={data} onSave={vault.save} onCopy={copy} />}

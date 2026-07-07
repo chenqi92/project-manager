@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { Braces, Copy, KeyRound, Plus, RefreshCw, Trash2, Type, Zap } from 'lucide-react';
+import { Braces, Copy, FolderGit2, KeyRound, Plus, RefreshCw, Trash2, Zap } from 'lucide-react';
 import { Button, Modal, Segmented, Toggle, cx } from '@/components/ui';
 import { requestHost } from '@/lib/feeds';
+import type { VaultData } from '@/lib/types';
 import { JsonTreeView, parseJson } from './JsonView';
+import { CnbPage } from './CnbPage';
 
-type Tab = 'pw' | 'json' | 'api' | 'reader';
+type Tab = 'pw' | 'json' | 'api' | 'cnb';
 
 /** 网页 JSON 自动格式化开关：返回错误信息（null 表示成功）。 */
 export type SetJsonViewer = (next: boolean) => Promise<string | null>;
@@ -17,6 +19,8 @@ export function ToolsModal({
   onEnableNetwork,
   jsonViewerEnabled,
   onSetJsonViewer,
+  data,
+  onSave,
 }: {
   onClose: () => void;
   onCopy: (text: string, what: string) => void;
@@ -25,6 +29,8 @@ export function ToolsModal({
   onEnableNetwork: () => void;
   jsonViewerEnabled: boolean;
   onSetJsonViewer: SetJsonViewer;
+  data: VaultData;
+  onSave: (next: VaultData) => Promise<void>;
 }) {
   const [tab, setTab] = useState<Tab>('pw');
 
@@ -34,9 +40,9 @@ export function ToolsModal({
         <ToolNav active={tab === 'pw'} onClick={() => setTab('pw')} icon={<KeyRound size={16} />} label="密码工具" />
         <ToolNav active={tab === 'json'} onClick={() => setTab('json')} icon={<Braces size={16} />} label="JSON 格式化" />
         <ToolNav active={tab === 'api'} onClick={() => setTab('api')} icon={<Zap size={16} />} label="接口测试" />
-        <ToolNav active={tab === 'reader'} onClick={() => setTab('reader')} icon={<Type size={16} />} label="网站重排" />
+        <ToolNav active={tab === 'cnb'} onClick={() => setTab('cnb')} icon={<FolderGit2 size={16} />} label="代码仓库 · CNB" />
         <div className="mt-1.5 rounded-[11px] border border-gray-200 bg-surface p-3 text-[11px] leading-relaxed text-gray-400">
-          密码工具 / JSON 格式化纯本地；接口测试 / 网站重排需联网，须先在「设置 → 联网功能」开启。
+          密码工具 / JSON 格式化纯本地；接口测试需先在「设置 → 联网功能」开启；代码仓库（CNB）需填访问令牌并授权 api.cnb.cool。
         </div>
       </div>
       <div className="min-w-0 flex-1">
@@ -51,9 +57,7 @@ export function ToolsModal({
         {tab === 'api' && (
           <ApiTester networkEnabled={networkEnabled} onEnableNetwork={onEnableNetwork} onCopy={onCopy} />
         )}
-        {tab === 'reader' && (
-          <WebReader networkEnabled={networkEnabled} onEnableNetwork={onEnableNetwork} />
-        )}
+        {tab === 'cnb' && <CnbPage embedded data={data} onSave={onSave} onCopy={onCopy} />}
       </div>
     </div>
   );
@@ -649,86 +653,3 @@ function ApiTester({
   );
 }
 
-// ============================ 网站重排（阅读视图）============================
-
-function WebReader({
-  networkEnabled,
-  onEnableNetwork,
-}: {
-  networkEnabled: boolean;
-  onEnableNetwork: () => void;
-}) {
-  const [url, setUrl] = useState('');
-  const [result, setResult] = useState<{ title: string; blocks: { tag: string; text: string }[] } | null>(null);
-  const [err, setErr] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const run = async () => {
-    setErr('');
-    setResult(null);
-    if (!url.trim()) return setErr('请输入网址');
-    if (!(await requestHost(url))) return setErr('未授权访问该地址');
-    setBusy(true);
-    try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      const html = await r.text();
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      doc
-        .querySelectorAll('script,style,nav,header,footer,aside,noscript,svg,form,iframe')
-        .forEach((n) => n.remove());
-      const root = doc.querySelector('article') || doc.querySelector('main') || doc.body;
-      const title = doc.querySelector('h1')?.textContent?.trim() || doc.title || '阅读视图';
-      const blocks = Array.from(root?.querySelectorAll('h2,h3,p,li,pre') ?? [])
-        .map((n) => ({ tag: n.tagName.toLowerCase(), text: (n.textContent ?? '').trim() }))
-        .filter((b) => b.text.length > 6)
-        .slice(0, 300);
-      setResult({ title, blocks });
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!networkEnabled) return <NetGate onEnable={onEnableNetwork} what="网站重排" />;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2.5">
-        <input
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="粘贴网页地址…"
-          className="h-[42px] min-w-0 flex-1 rounded-[11px] border-[1.5px] border-gray-200 bg-surface px-3.5 font-mono text-[12.5px] text-gray-800 outline-none focus:border-brand-500"
-        />
-        <Button disabled={busy} onClick={run}>
-          {busy ? '整理中…' : '整理排版'}
-        </Button>
-      </div>
-      {err && <p className="text-[12px] text-danger">{err}</p>}
-      {result && (
-        <div className="rounded-[14px] border border-gray-200 bg-surface px-7 py-8">
-          <div className="mb-1 text-[11px] font-bold tracking-[.08em] text-brand-600">阅读视图</div>
-          <h1 className="mb-4 text-[22px] font-bold leading-snug">{result.title}</h1>
-          <div className="space-y-3">
-            {result.blocks.map((b, i) =>
-              b.tag === 'h2' || b.tag === 'h3' ? (
-                <h2 key={i} className="pt-1 text-[16px] font-bold">
-                  {b.text}
-                </h2>
-              ) : b.tag === 'pre' ? (
-                <pre key={i} className="overflow-auto rounded-lg bg-gray-50 p-3 font-mono text-[12px] text-gray-700">
-                  {b.text}
-                </pre>
-              ) : (
-                <p key={i} className="text-[13.5px] leading-relaxed text-gray-700">
-                  {b.tag === 'li' ? `· ${b.text}` : b.text}
-                </p>
-              ),
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}

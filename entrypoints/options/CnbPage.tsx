@@ -58,10 +58,13 @@ export function CnbPage({
   data,
   onSave,
   onCopy,
+  embedded,
 }: {
   data: VaultData;
   onSave: (next: VaultData) => Promise<void>;
   onCopy: (text: string, what: string) => void;
+  /** 嵌入模式：去掉整页外壳（滚动/内边距/背景由父容器提供），用于工具面板内。 */
+  embedded?: boolean;
 }) {
   const cfg = data.settings.cnb ?? {};
   const orgs = useMemo(() => cfg.orgs ?? [], [cfg.orgs]);
@@ -149,7 +152,7 @@ export function CnbPage({
   const totalAll = allRepos.length;
 
   return (
-    <div className="flex-1 overflow-auto bg-gray-50 p-6">
+    <div className={embedded ? '' : 'flex-1 overflow-auto bg-gray-50 p-6'}>
       {/* 连接设置 */}
       <ConnectPanel
         data={data}
