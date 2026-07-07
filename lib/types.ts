@@ -403,6 +403,8 @@ export interface VaultSettings {
   webAssist?: boolean;
   /** 全站登录捕获：需用户额外授予 http(s) 全站权限，用于新网站登录后提示保存 */
   webAssistAllSites?: boolean;
+  /** 网页 JSON 自动格式化：访问返回 JSON 的接口时把响应渲染成可折叠的树；需 http(s) 全站权限，默认关闭 */
+  jsonViewerEnabled?: boolean;
   /** 保存/更新提示面板位置：右上角或居中 */
   capturePromptPlacement?: 'top-right' | 'center';
   /** 主题；undefined 视为跟随系统 */

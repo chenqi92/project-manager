@@ -59,6 +59,8 @@ export function Settings({
   const [views, setViews] = useState<SyncTargetView[]>([]);
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistMsg, setAssistMsg] = useState<{ tone: 'info' | 'error'; text: string } | null>(null);
+  const [jvBusy, setJvBusy] = useState(false);
+  const [jvMsg, setJvMsg] = useState<{ tone: 'info' | 'error'; text: string } | null>(null);
   useEffect(() => {
     api.syncTargets().then((r) => setViews(r.targets)).catch(() => {});
   }, []);
@@ -75,6 +77,7 @@ export function Settings({
   const autoFlow = data.settings.autoFlow !== false;
   const webAssist = data.settings.webAssist !== false;
   const webAssistAllSites = data.settings.webAssistAllSites === true;
+  const jsonViewer = data.settings.jsonViewerEnabled === true;
   const lockN = data.settings.autoLockMinutes ?? 10;
   const capturePlacement = data.settings.capturePromptPlacement ?? 'top-right';
 
@@ -100,6 +103,29 @@ export function Settings({
       setAssistMsg({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
     } finally {
       setAssistBusy(false);
+    }
+  };
+
+  const setJsonViewer = async (next: boolean) => {
+    setJvMsg(null);
+    if (!next) {
+      await setSetting((d) => void (d.settings.jsonViewerEnabled = false));
+      setJvMsg({ tone: 'info', text: '已关闭网页 JSON 自动格式化。' });
+      return;
+    }
+    setJvBusy(true);
+    try {
+      const granted = await browser.permissions.request({ origins: ['https://*/*', 'http://*/*'] });
+      if (!granted) {
+        setJvMsg({ tone: 'error', text: '未获得全站访问权限，已保持关闭。' });
+        return;
+      }
+      await setSetting((d) => void (d.settings.jsonViewerEnabled = true));
+      setJvMsg({ tone: 'info', text: '已开启网页 JSON 自动格式化。新打开或刷新的页面生效。' });
+    } catch (e) {
+      setJvMsg({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setJvBusy(false);
     }
   };
 
@@ -255,6 +281,17 @@ export function Settings({
             {assistMsg && (
               <div className="pb-3.5">
                 <Banner tone={assistMsg.tone}>{assistMsg.text}</Banner>
+              </div>
+            )}
+            <SettingsRow
+              title="网页 JSON 自动格式化"
+              desc="在浏览器直接打开返回 JSON 的接口时，自动渲染成可折叠、可复制、可提取字段的树；需全站访问权限（默认关闭）"
+            >
+              <Toggle checked={jsonViewer} disabled={jvBusy} onChange={(v) => void setJsonViewer(v)} />
+            </SettingsRow>
+            {jvMsg && (
+              <div className="pb-3.5">
+                <Banner tone={jvMsg.tone}>{jvMsg.text}</Banner>
               </div>
             )}
             <BiometricRow refresh={refresh} />

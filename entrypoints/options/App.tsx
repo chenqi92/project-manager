@@ -372,6 +372,22 @@ export default function App() {
     }
   };
 
+  // 网页 JSON 自动格式化开关：开启需 http(s) 全站权限。返回错误信息（null 表示成功）。
+  const setJsonViewer = async (next: boolean): Promise<string | null> => {
+    if (!next) {
+      await update((d) => void (d.settings.jsonViewerEnabled = false));
+      return null;
+    }
+    try {
+      const granted = await browser.permissions.request({ origins: ['https://*/*', 'http://*/*'] });
+      if (!granted) return '未获得全站访问权限，已保持关闭。';
+      await update((d) => void (d.settings.jsonViewerEnabled = true));
+      return null;
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  };
+
   const activeData = data ? workspaceScopedData(data) : null;
   const workspaces = data?.workspaces ?? [];
   const activeWorkspace =
@@ -1078,6 +1094,8 @@ export default function App() {
                   embedded
                   networkEnabled={data.settings.weatherEnabled === true}
                   onEnableNetwork={() => update((d) => void (d.settings.weatherEnabled = true))}
+                  jsonViewerEnabled={data.settings.jsonViewerEnabled === true}
+                  onSetJsonViewer={setJsonViewer}
                 />
               )}
               {page === 'cnb' && <CnbPage data={data} onSave={vault.save} onCopy={copy} />}

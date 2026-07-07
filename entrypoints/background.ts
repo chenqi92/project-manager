@@ -478,6 +478,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       await vaultBackend.clear();
       await browser.storage.local.remove(SYNC_STATE_KEY);
       await unregisterAssistScripts();
+      await browser.scripting.unregisterContentScripts({ ids: ['json-viewer'] }).catch(() => {});
       return getStatus();
 
     case 'activity':
@@ -962,6 +963,8 @@ async function registerCaptureForData(data: VaultData | null): Promise<void> {
     await unregisterAssistScripts();
     const perms = await browser.permissions.getAll();
     const granted = perms.origins ?? [];
+    // JSON 自动格式化独立于登录捕获：按设置 + 全站权限单独注册，早退时不受下面 origin 为空影响。
+    await registerJsonViewer(data, granted);
     const knownOrigins = captureMatchPatterns(activeData).filter((pattern) =>
       hasOriginPermission(pattern, granted),
     );
@@ -1341,6 +1344,41 @@ function captureLinkNameFrom(origin: string, url: string, pageTitle?: string): s
 async function unregisterAssistScripts(): Promise<void> {
   await browser.scripting.unregisterContentScripts({ ids: ['capture'] }).catch(() => {});
   await browser.scripting.unregisterContentScripts({ ids: ['web-assist'] }).catch(() => {});
+}
+
+/**
+ * 网页 JSON 自动格式化内容脚本：仅在设置开启 + 已授予 http(s) 全站权限时注册。
+ * 与登录捕获脚本相互独立，用 update/register 而非每次先注销再注册，避免每次保存都短暂失效。
+ */
+async function registerJsonViewer(data: VaultData, granted: string[]): Promise<void> {
+  try {
+    const origins: string[] = [];
+    if (data.settings.jsonViewerEnabled === true) {
+      if (hasOriginPermission('https://*/*', granted)) origins.push('https://*/*');
+      if (hasOriginPermission('http://*/*', granted)) origins.push('http://*/*');
+    }
+    const existing = await browser.scripting
+      .getRegisteredContentScripts({ ids: ['json-viewer'] })
+      .catch(() => []);
+    const isRegistered = existing.some((s) => s.id === 'json-viewer');
+    if (origins.length === 0) {
+      if (isRegistered) {
+        await browser.scripting.unregisterContentScripts({ ids: ['json-viewer'] }).catch(() => {});
+      }
+      return;
+    }
+    type CsDef = Parameters<typeof browser.scripting.registerContentScripts>[0][number];
+    const def: CsDef = {
+      id: 'json-viewer',
+      js: ['json-viewer.js'],
+      matches: origins,
+      runAt: 'document_end',
+    };
+    if (isRegistered) await browser.scripting.updateContentScripts([def]);
+    else await browser.scripting.registerContentScripts([def]);
+  } catch (e) {
+    console.warn('registerJsonViewer failed:', e);
+  }
 }
 
 function captureLinkName(p: CapturePending): string {
