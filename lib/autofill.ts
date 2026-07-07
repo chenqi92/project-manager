@@ -249,41 +249,60 @@ export function fillCredentialsInPage(
   const submitTarget = (formScope: ParentNode): HTMLElement | null => {
     const usable = (el: Element | null): el is HTMLElement =>
       !!el && visible(el) && !(el as HTMLButtonElement).disabled;
+    const loginRe = /(登\s*录|登\s*陆|sign\s*in|log\s*in|^\s*login\s*$|提交|确\s*定|continue|继续|下一步|next)/i;
+    const negRe = /(注册|sign\s*up|register|忘记|忘記|forgot|找回|reset|重置|取消|cancel|扫码|二维码|第三方|其它|其他|切换|change)/i;
+    // 类名/ID 惯用的「登录/下一步按钮」名，给纯图标按钮（无文字）兜底：有些站点（如群晖 DSM）
+    // 的登录按钮是 <div role="button" class="login-btn">，禁用时靠 aria-label，一旦填了账号被启用
+    // 连 aria-label 都去掉，变成完全无文字——只能靠类名识别。
+    const loginClassRe = /(login-?btn|btn-?login|loginbtn|signin-?btn|btn-?signin|login-?submit|submit-?login|next-?btn|btn-?next)/i;
+    const negClassRe = /(register|sign-?up|signup|forgot|reset|cancel|qrcode|third)/i;
+    const scan = (scope: ParentNode): { best: HTMLElement | null; score: number } => {
+      let best: HTMLElement | null = null;
+      let bestScore = 0;
+      for (const el of scope.querySelectorAll<HTMLElement>(
+        'button, input[type="button"], [role="button"], a',
+      )) {
+        if (!usable(el)) continue;
+        const meta = `${el.className} ${el.id}`;
+        if (negClassRe.test(meta)) continue;
+        const text = (
+          (el as HTMLInputElement).value ||
+          el.textContent ||
+          el.getAttribute('aria-label') ||
+          el.getAttribute('title') ||
+          ''
+        )
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (text.length > 24 || (text && negRe.test(text))) continue;
+        let score = 0;
+        if (text && loginRe.test(text)) score += 5;
+        if (/(login|signin|sign-in|submit|primary|btn-login|loginbtn)/i.test(meta)) score += 3;
+        // 无文字但类名/ID 明确是登录按钮：按强匹配对待（群晖等图标按钮启用后无 aria-label）。
+        if (!text && loginClassRe.test(meta)) score += 5;
+        if (el.tagName === 'BUTTON') score += 1;
+        if (score > bestScore) {
+          bestScore = score;
+          best = el;
+        }
+      }
+      return { best, score: bestScore };
+    };
     const strict =
       Array.from(
         formScope.querySelectorAll<HTMLElement>(
           'button[type="submit"], input[type="submit"], button:not([type])',
         ),
       ).find(usable) ?? null;
-    const loginRe = /(登\s*录|登\s*陆|sign\s*in|log\s*in|^\s*login\s*$|提交|确\s*定|continue|继续|下一步|next)/i;
-    const negRe = /(注册|sign\s*up|register|忘记|忘記|forgot|找回|reset|重置|取消|cancel|扫码|二维码|第三方|其它|其他|切换|change)/i;
-    let best: HTMLElement | null = null;
-    let bestScore = 0;
-    for (const el of formScope.querySelectorAll<HTMLElement>(
-      'button, input[type="button"], [role="button"], a',
-    )) {
-      if (!usable(el)) continue;
-      const text = (
-        (el as HTMLInputElement).value ||
-        el.textContent ||
-        el.getAttribute('aria-label') ||
-        ''
-      )
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (!text || text.length > 24 || negRe.test(text)) continue;
-      let score = 0;
-      if (loginRe.test(text)) score += 5;
-      if (/(login|signin|sign-in|submit|primary|btn-login|loginbtn)/i.test(`${el.className} ${el.id}`))
-        score += 3;
-      if (el.tagName === 'BUTTON') score += 1;
-      if (score > bestScore) {
-        bestScore = score;
-        best = el;
-      }
+    // 先在给定作用域（通常是表单）里找明确的登录按钮；找不到时扩大到整个文档再找一次——
+    // 群晖 DSM 等把登录按钮放在 <form> 之外，只按表单作用域永远看不到它。
+    let { best, score } = scan(formScope);
+    if (score < 5 && formScope !== document) {
+      const wider = scan(document);
+      if (wider.score > score) ({ best, score } = wider);
     }
-    // 文案够明确（含「登录」类词）才点该按钮；否则退回严格提交按钮（可能为 null）。
-    return bestScore >= 5 ? best : strict;
+    // 文案够明确（含「登录」类词）或类名明确才点该按钮；否则退回严格提交按钮（可能为 null）。
+    return score >= 5 ? best : strict;
   };
 
   const pwFields = Array.from(
@@ -600,35 +619,55 @@ export function fillUsernameInPage(username: string, submit = false): FillResult
   function stepButton(scope: ParentNode): HTMLElement | null {
     const usable = (x: Element | null): x is HTMLElement =>
       !!x && visible(x) && !(x as HTMLButtonElement).disabled;
+    const yes = /(登\s*录|登\s*陆|sign\s*in|log\s*in|^\s*login\s*$|提交|确\s*定|continue|继续|下一步|next)/i;
+    const no = /(注册|sign\s*up|register|忘记|忘記|forgot|找回|reset|重置|取消|cancel|扫码|二维码|第三方|其它|其他|切换|change)/i;
+    const yesClass = /(login-?btn|btn-?login|loginbtn|signin-?btn|btn-?signin|login-?submit|submit-?login|next-?btn|btn-?next)/i;
+    const noClass = /(register|sign-?up|signup|forgot|reset|cancel|qrcode|third)/i;
+    const scan = (root: ParentNode): { best: HTMLElement | null; score: number } => {
+      let best: HTMLElement | null = null;
+      let bestScore = 0;
+      for (const x of root.querySelectorAll<HTMLElement>(
+        'button, input[type="button"], [role="button"], a',
+      )) {
+        if (!usable(x)) continue;
+        const meta = `${x.className} ${x.id}`;
+        if (noClass.test(meta)) continue;
+        const t = (
+          (x as HTMLInputElement).value ||
+          x.textContent ||
+          x.getAttribute('aria-label') ||
+          x.getAttribute('title') ||
+          ''
+        )
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (t.length > 24 || (t && no.test(t))) continue;
+        let s = 0;
+        if (t && yes.test(t)) s += 5;
+        if (/(login|signin|sign-in|submit|primary|next|btn-login|loginbtn)/i.test(meta)) s += 3;
+        // 无文字但类名/ID 明确是登录/下一步按钮：按强匹配对待（群晖等图标按钮启用后无 aria-label）。
+        if (!t && yesClass.test(meta)) s += 5;
+        if (x.tagName === 'BUTTON') s += 1;
+        if (s > bestScore) {
+          bestScore = s;
+          best = x;
+        }
+      }
+      return { best, score: bestScore };
+    };
     const strict =
       Array.from(
         scope.querySelectorAll<HTMLElement>(
           'button[type="submit"], input[type="submit"], button:not([type])',
         ),
       ).find(usable) ?? null;
-    const yes = /(登\s*录|登\s*陆|sign\s*in|log\s*in|^\s*login\s*$|提交|确\s*定|continue|继续|下一步|next)/i;
-    const no = /(注册|sign\s*up|register|忘记|忘記|forgot|找回|reset|重置|取消|cancel|扫码|二维码|第三方|其它|其他|切换|change)/i;
-    let best: HTMLElement | null = null;
-    let bestScore = 0;
-    for (const x of scope.querySelectorAll<HTMLElement>(
-      'button, input[type="button"], [role="button"], a',
-    )) {
-      if (!usable(x)) continue;
-      const t = ((x as HTMLInputElement).value || x.textContent || x.getAttribute('aria-label') || '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (!t || t.length > 24 || no.test(t)) continue;
-      let s = 0;
-      if (yes.test(t)) s += 5;
-      if (/(login|signin|sign-in|submit|primary|next|btn-login|loginbtn)/i.test(`${x.className} ${x.id}`))
-        s += 3;
-      if (x.tagName === 'BUTTON') s += 1;
-      if (s > bestScore) {
-        bestScore = s;
-        best = x;
-      }
+    // 表单作用域里找不到明确按钮时，扩大到整个文档再找一次（群晖 DSM 等把按钮放在 <form> 之外）。
+    let { best, score } = scan(scope);
+    if (score < 5 && scope !== document) {
+      const wider = scan(document);
+      if (wider.score > score) ({ best, score } = wider);
     }
-    return bestScore >= 5 ? best : strict;
+    return score >= 5 ? best : strict;
   }
 }
 
@@ -731,34 +770,54 @@ export function fillTotpInPage(code: string, submit = false): FillResult {
   function stepButton(scope: ParentNode): HTMLElement | null {
     const usable = (x: Element | null): x is HTMLElement =>
       !!x && visible(x) && !(x as HTMLButtonElement).disabled;
+    const yes = /(登\s*录|登\s*陆|sign\s*in|log\s*in|^\s*login\s*$|提交|确\s*定|continue|继续|下一步|next)/i;
+    const no = /(注册|sign\s*up|register|忘记|忘記|forgot|找回|reset|重置|取消|cancel|扫码|二维码|第三方|其它|其他|切换|change)/i;
+    const yesClass = /(login-?btn|btn-?login|loginbtn|signin-?btn|btn-?signin|login-?submit|submit-?login|next-?btn|btn-?next)/i;
+    const noClass = /(register|sign-?up|signup|forgot|reset|cancel|qrcode|third)/i;
+    const scan = (root: ParentNode): { best: HTMLElement | null; score: number } => {
+      let best: HTMLElement | null = null;
+      let bestScore = 0;
+      for (const x of root.querySelectorAll<HTMLElement>(
+        'button, input[type="button"], [role="button"], a',
+      )) {
+        if (!usable(x)) continue;
+        const meta = `${x.className} ${x.id}`;
+        if (noClass.test(meta)) continue;
+        const t = (
+          (x as HTMLInputElement).value ||
+          x.textContent ||
+          x.getAttribute('aria-label') ||
+          x.getAttribute('title') ||
+          ''
+        )
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (t.length > 24 || (t && no.test(t))) continue;
+        let s = 0;
+        if (t && yes.test(t)) s += 5;
+        if (/(login|signin|sign-in|submit|primary|next|btn-login|loginbtn)/i.test(meta)) s += 3;
+        // 无文字但类名/ID 明确是登录/下一步按钮：按强匹配对待（群晖等图标按钮启用后无 aria-label）。
+        if (!t && yesClass.test(meta)) s += 5;
+        if (x.tagName === 'BUTTON') s += 1;
+        if (s > bestScore) {
+          bestScore = s;
+          best = x;
+        }
+      }
+      return { best, score: bestScore };
+    };
     const strict =
       Array.from(
         scope.querySelectorAll<HTMLElement>(
           'button[type="submit"], input[type="submit"], button:not([type])',
         ),
       ).find(usable) ?? null;
-    const yes = /(登\s*录|登\s*陆|sign\s*in|log\s*in|^\s*login\s*$|提交|确\s*定|continue|继续|下一步|next)/i;
-    const no = /(注册|sign\s*up|register|忘记|忘記|forgot|找回|reset|重置|取消|cancel|扫码|二维码|第三方|其它|其他|切换|change)/i;
-    let best: HTMLElement | null = null;
-    let bestScore = 0;
-    for (const x of scope.querySelectorAll<HTMLElement>(
-      'button, input[type="button"], [role="button"], a',
-    )) {
-      if (!usable(x)) continue;
-      const t = ((x as HTMLInputElement).value || x.textContent || x.getAttribute('aria-label') || '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (!t || t.length > 24 || no.test(t)) continue;
-      let s = 0;
-      if (yes.test(t)) s += 5;
-      if (/(login|signin|sign-in|submit|primary|next|btn-login|loginbtn)/i.test(`${x.className} ${x.id}`))
-        s += 3;
-      if (x.tagName === 'BUTTON') s += 1;
-      if (s > bestScore) {
-        bestScore = s;
-        best = x;
-      }
+    // 表单作用域里找不到明确按钮时，扩大到整个文档再找一次（群晖 DSM 等把按钮放在 <form> 之外）。
+    let { best, score } = scan(scope);
+    if (score < 5 && scope !== document) {
+      const wider = scan(document);
+      if (wider.score > score) ({ best, score } = wider);
     }
-    return bestScore >= 5 ? best : strict;
+    return score >= 5 ? best : strict;
   }
 }

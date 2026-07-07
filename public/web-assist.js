@@ -660,6 +660,7 @@
   };
 
   let flowBusy = false;
+  let flowRetryTimer = 0;
   // 检测到新的一步就自动填充并前进。各处「快照刷新 / DOM 变动」后调用。
   const maybeAutoContinue = async () => {
     if (flowBusy) return;
@@ -677,7 +678,14 @@
       clearFlow();
       return;
     }
-    if (Date.now() - Number(flow.lastActionAt || 0) < FLOW_MIN_GAP_MS) return;
+    const sinceAction = Date.now() - Number(flow.lastActionAt || 0);
+    if (sinceAction < FLOW_MIN_GAP_MS) {
+      // 距上一步动作太近：下一步（如密码框）可能已经出现但落在最小间隔内被跳过。
+      // 安排一次补检，避免 DOM 恰好在门槛前静止、之后再无触发导致停在这一步不前进。
+      clearTimeout(flowRetryTimer);
+      flowRetryTimer = setTimeout(() => void maybeAutoContinue(), FLOW_MIN_GAP_MS - sinceAction + 60);
+      return;
+    }
 
     if (hasSuccessHint()) {
       clearFlow(); // 出现「退出登录/注销」等 → 已登录，结束流程（避免误填登录后页面的输入框）

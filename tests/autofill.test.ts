@@ -256,6 +256,55 @@ describe('fillCredentialsInPage', () => {
     vi.useRealTimers();
   });
 
+  it('两级登录 submit：下一步按钮在 <form> 外、且无文字（仅 class=login-btn 图标）也能点到前进', () => {
+    vi.useFakeTimers();
+    sessionStorage.clear();
+    // 群晖 DSM 结构：表单只含账号框，登录按钮是表单外、无文字、启用后连 aria-label 都没有的图标 div。
+    document.body.innerHTML = `
+      <form><input type="text" name="username" /></form>
+      <div role="button" class="login-btn"></div>`;
+    let clicked = false;
+    document.querySelector('.login-btn')!.addEventListener('click', () => (clicked = true));
+    const r = fillCredentialsInPage('alice', 'pw', true, undefined, undefined, 'acc-1');
+    expect(r.ok).toBe(true);
+    expect(r.submitted).toBe(true);
+    expect((document.querySelector('input[name=username]') as HTMLInputElement).value).toBe('alice');
+    const flow = JSON.parse(sessionStorage.getItem('pemAutoFlow') || '{}');
+    expect(flow.accountId).toBe('acc-1');
+    vi.advanceTimersByTime(200);
+    expect(clicked).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it('普通提交：登录按钮是 <form> 外的图标 div 也能点到（不退回无效的 requestSubmit）', async () => {
+    vi.useFakeTimers();
+    try {
+      sessionStorage.removeItem('pemAutoSubmitAt');
+      document.body.innerHTML = `
+        <form>
+          <input type="text" name="username" />
+          <input type="password" name="password" />
+        </form>
+        <div role="button" class="login-btn" aria-label="登录"></div>`;
+      const form = document.querySelector('form')!;
+      let clicked = false;
+      let nativeSubmit = false;
+      document.querySelector('.login-btn')!.addEventListener('click', () => (clicked = true));
+      form.addEventListener('submit', (e) => {
+        nativeSubmit = true;
+        e.preventDefault();
+      });
+      const r = fillCredentialsInPage('alice', 'pw', true);
+      expect(r.submitted).toBe(true);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(clicked).toBe(true);
+      expect(nativeSubmit).toBe(false);
+    } finally {
+      sessionStorage.removeItem('pemAutoSubmitAt');
+      vi.useRealTimers();
+    }
+  });
+
   it('既无密码框也无账号框时返回失败', () => {
     document.body.innerHTML = `<div>无可填输入</div>`;
     expect(fillCredentialsInPage('x', 'pw').ok).toBe(false);
@@ -529,6 +578,30 @@ describe('fillUsernameInPage', () => {
       expect(r.ok).toBe(true);
       expect((document.querySelector('input[name=account]') as HTMLInputElement).value).toBe('alice');
 
+      await vi.advanceTimersByTimeAsync(200);
+      expect(clicked).toBe(true);
+      expect(nativeSubmit).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('多步第一步：下一步按钮在 <form> 外、无文字（class=login-btn）也能点到前进（群晖 DSM）', async () => {
+    vi.useFakeTimers();
+    try {
+      document.body.innerHTML = `
+        <form><input type="text" name="username" autocomplete="username" placeholder="用户帐号" /></form>
+        <div role="button" class="login-btn"></div>`;
+      let clicked = false;
+      let nativeSubmit = false;
+      document.querySelector('.login-btn')!.addEventListener('click', () => (clicked = true));
+      document.querySelector('form')!.addEventListener('submit', (e) => {
+        nativeSubmit = true;
+        e.preventDefault();
+      });
+      const r = fillUsernameInPage('alice', true);
+      expect(r.ok).toBe(true);
+      expect((document.querySelector('input[name=username]') as HTMLInputElement).value).toBe('alice');
       await vi.advanceTimersByTimeAsync(200);
       expect(clicked).toBe(true);
       expect(nativeSubmit).toBe(false);
