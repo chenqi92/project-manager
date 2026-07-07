@@ -710,6 +710,10 @@
         await sendAssist({ type: 'assist:fillUsername', accountId: flow.accountId, submit: true });
       } else if (surface === 'password') {
         await sendAssist({ type: 'assist:fill', accountId: flow.accountId, submit: true });
+        // 密码是多数登录的最后一步：账号没存 TOTP 时，提交密码即完成本次登录，
+        // 立刻清掉流程，避免它残留到登录成功 / 注销回到登录页后再次自动登录（死循环）。
+        const expectsOtp = snapshot.matches.some((m) => m.accountId === flow.accountId && m.hasTotp);
+        if (!expectsOtp) clearFlow();
       } else if (surface === 'otp') {
         const hasTotp = snapshot.matches.some((m) => m.accountId === flow.accountId && m.hasTotp);
         if (!hasTotp) {
@@ -717,6 +721,7 @@
           return;
         }
         await sendAssist({ type: 'assist:fillTotp', accountId: flow.accountId, submit: true });
+        clearFlow(); // OTP 是最后一步，提交后结束流程，避免残留触发再次自动登录
       }
     } catch {
       clearFlow(); // 背景拒绝（来源不匹配等）→ 停止
@@ -2196,7 +2201,14 @@
       }
       if (act === 'fill' || act === 'login') {
         remember(accountId);
-        if (act === 'login') armAutoFlow(accountId); // 点「登录」即开启自动续填（后续 OTP 步等自动填）
+        if (act === 'login') {
+          // 直接点「登录」= 一次用户主动发起的登录。先清掉任何遗留流程，仅当后续确实还有
+          // 一步要自动续填（账号存了 TOTP → 密码后还有 OTP 步）才重新武装；纯密码单步登录
+          // 武装了也无步可续，反而会把流程残留到注销回登录页后再次自动登录（死循环）。
+          clearFlow();
+          if (snapshot?.matches?.some((m) => m.accountId === accountId && m.hasTotp))
+            armAutoFlow(accountId);
+        }
         const res = await sendAssist({ type: 'assist:fill', accountId, submit: act === 'login' });
         const okMsg =
           act === 'login'

@@ -198,6 +198,58 @@ describe('web-assist.js login credential capture', () => {
     expect(candidate?.totp).toBeFalsy();
   });
 
+  it('clears the auto-flow after submitting the password step so logout does not re-login', async () => {
+    snapshotMatches = [
+      {
+        accountId: 'acc-1',
+        projectName: 'Project',
+        envName: 'Default',
+        envKind: 'prod',
+        linkName: 'Example',
+        accountLabel: 'Admin',
+        username: 'admin',
+        hasTotp: false,
+      },
+    ];
+    // 模拟：用户上一步点了「下一步」武装了流程（lastSurface=username），现在到了密码步。
+    sessionStorage.setItem(
+      'pemAutoFlow',
+      JSON.stringify({
+        accountId: 'acc-1',
+        site: location.hostname,
+        ts: Date.now(),
+        step: 1,
+        lastSurface: 'username',
+        lastActionAt: Date.now() - 2000,
+      }),
+    );
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" />
+      </form>`;
+
+    await focusAndFlush('input[type="password"]');
+
+    // 密码步被自动续填并提交
+    expect(messages.find((m) => m.type === 'assist:fill' && m.submit === true)).toMatchObject({
+      accountId: 'acc-1',
+      submit: true,
+    });
+    // 关键：账号没存 TOTP，提交密码即完成登录 → 流程被清除，不再残留
+    expect(sessionStorage.getItem('pemAutoFlow')).toBeNull();
+
+    // 模拟注销后回到登录页：流程已清 → 不应再自动提交（避免死循环）
+    messages = [];
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" />
+      </form>`;
+    await focusAndFlush('input[type="password"]');
+    expect(messages.find((m) => m.type === 'assist:fill' && m.submit === true)).toBeUndefined();
+  });
+
   it('auto fills TOTP when a single matched account owns the OTP field', async () => {
     snapshotMatches = [
       {
