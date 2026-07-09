@@ -415,6 +415,60 @@ interface HeaderRow {
 let headerRowSeq = 1;
 const newHeaderRow = (): HeaderRow => ({ id: headerRowSeq++, key: '', value: '' });
 
+// 常见请求头名（key 输入框 datalist 提示，类 Postman）
+const HEADER_NAMES = [
+  'Accept',
+  'Accept-Encoding',
+  'Accept-Language',
+  'Authorization',
+  'Cache-Control',
+  'Connection',
+  'Content-Type',
+  'Cookie',
+  'Origin',
+  'Pragma',
+  'Referer',
+  'User-Agent',
+  'X-Api-Key',
+  'X-CSRF-Token',
+  'X-Requested-With',
+];
+
+// 常见请求头对应候选值（键用小写匹配，value 输入框按当前 key 给提示）
+const HEADER_VALUES: Record<string, string[]> = {
+  accept: ['application/json', '*/*', 'text/html', 'application/xml', 'text/plain'],
+  'content-type': [
+    'application/json',
+    'application/x-www-form-urlencoded',
+    'multipart/form-data',
+    'text/plain',
+    'application/xml',
+    'text/xml',
+  ],
+  authorization: ['Bearer ', 'Basic '],
+  'cache-control': ['no-cache', 'no-store', 'max-age=0'],
+  'accept-encoding': ['gzip, deflate, br', 'gzip', 'identity'],
+  'accept-language': ['zh-CN,zh;q=0.9', 'en-US,en;q=0.9', '*'],
+  connection: ['keep-alive', 'close'],
+  pragma: ['no-cache'],
+  'x-requested-with': ['XMLHttpRequest'],
+};
+
+// 一键填入的常用请求头预设
+const HEADER_PRESETS: Array<{ label: string; key: string; value: string }> = [
+  { label: 'Content-Type: JSON', key: 'Content-Type', value: 'application/json' },
+  { label: 'Content-Type: 表单', key: 'Content-Type', value: 'application/x-www-form-urlencoded' },
+  { label: 'Accept: JSON', key: 'Accept', value: 'application/json' },
+  { label: 'Authorization: Bearer', key: 'Authorization', value: 'Bearer ' },
+  { label: 'X-Requested-With', key: 'X-Requested-With', value: 'XMLHttpRequest' },
+];
+
+const HDR_NAMES_LIST = 'pem-hdr-names';
+const valueListId = (key: string): string | undefined => {
+  const k = key.trim().toLowerCase();
+  return HEADER_VALUES[k] ? `pem-hdrval-${k}` : undefined;
+};
+
 interface ApiResp {
   status: number;
   statusText: string;
@@ -451,6 +505,13 @@ function ApiTester({
   const addHeader = () => setHeaders((rows) => [...rows, newHeaderRow()]);
   const removeHeader = (id: number) =>
     setHeaders((rows) => (rows.length <= 1 ? [newHeaderRow()] : rows.filter((r) => r.id !== id)));
+  // 预设一键填入：优先复用第一行空行，否则新增一行。
+  const addPreset = (key: string, value: string) =>
+    setHeaders((rows) => {
+      const empty = rows.find((r) => !r.key.trim() && !r.value.trim());
+      if (empty) return rows.map((r) => (r.id === empty.id ? { ...r, key, value } : r));
+      return [...rows, { ...newHeaderRow(), key, value }];
+    });
 
   const send = async () => {
     setErr('');
@@ -526,6 +587,20 @@ function ApiTester({
 
       {/* 请求头 */}
       <div className="mb-3 rounded-[11px] border border-gray-200 bg-gray-50 p-3">
+        {/* 常用请求头名 / 按 key 提供候选值（类 Postman 自动补全） */}
+        <datalist id={HDR_NAMES_LIST}>
+          {HEADER_NAMES.map((n) => (
+            <option key={n} value={n} />
+          ))}
+        </datalist>
+        {Object.entries(HEADER_VALUES).map(([k, vals]) => (
+          <datalist key={k} id={`pem-hdrval-${k}`}>
+            {vals.map((v) => (
+              <option key={v} value={v} />
+            ))}
+          </datalist>
+        ))}
+
         <div className="mb-2 flex items-center justify-between">
           <span className="text-[12px] font-bold text-gray-600">请求头 Headers</span>
           <button
@@ -535,18 +610,32 @@ function ApiTester({
             <Plus size={13} /> 添加
           </button>
         </div>
+        <div className="mb-2.5 flex flex-wrap gap-1.5">
+          {HEADER_PRESETS.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => addPreset(p.key, p.value)}
+              title={`${p.key}: ${p.value}`}
+              className="rounded-full border border-gray-200 bg-surface px-2.5 py-1 text-[11px] font-medium text-gray-600 transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
+            >
+              + {p.label}
+            </button>
+          ))}
+        </div>
         <div className="space-y-2">
           {headers.map((row) => (
             <div key={row.id} className="flex items-center gap-2">
               <input
                 value={row.key}
                 onChange={(e) => setHeader(row.id, { key: e.target.value })}
+                list={HDR_NAMES_LIST}
                 placeholder="Header 名，如 Authorization"
                 className="h-9 w-[42%] min-w-0 rounded-[9px] border border-gray-200 bg-surface px-3 font-mono text-[12px] text-gray-800 outline-none focus:border-brand-500"
               />
               <input
                 value={row.value}
                 onChange={(e) => setHeader(row.id, { value: e.target.value })}
+                list={valueListId(row.key)}
                 placeholder="值，如 Bearer xxx"
                 className="h-9 min-w-0 flex-1 rounded-[9px] border border-gray-200 bg-surface px-3 font-mono text-[12px] text-gray-800 outline-none focus:border-brand-500"
               />

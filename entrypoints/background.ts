@@ -14,6 +14,7 @@ import { buildExport, mergeVaults, parseImport } from '@/lib/import-export';
 import type { Msg, MsgResponse } from '@/lib/messaging';
 import { authorizeDrive } from '@/lib/oauth';
 import { vaultBackend } from '@/lib/storage';
+import { siteNameFromTitle } from '@/lib/site-name';
 import { hasSyncRelevantChange, settingsStampFingerprint } from '@/lib/sync-change';
 import { SyncClient } from '@/lib/sync';
 import { generateTotp, parseTotp } from '@/lib/totp';
@@ -87,7 +88,6 @@ let dek: Uint8Array | null = null;
 let cachedData: VaultData | null = null;
 let cachedSettingsFingerprint: string | null = null;
 let autoLockMinutes = 15;
-let lockTimer: ReturnType<typeof setTimeout> | null = null;
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let clipboardOffscreenReady = false;
 let pendingCaptures: Record<string, CapturePending> = {};
@@ -126,7 +126,12 @@ export default defineBackground(() => {
   browser.runtime.setUninstallURL?.('https://envmanager.yzs.ai/uninstall.html').catch(() => {});
 
   browser.idle.onStateChanged.addListener((state) => {
-    if (autoLockMinutes > 0 && state !== 'active') lock();
+    if (state === 'active') return;
+    // 本事件可能刚唤醒被回收的 service worker：模块变量还是默认值 15，
+    // 必须先从会话恢复真实设置再决定，否则「永不锁定」也会被默认值误锁。
+    void ensureRestored().then(() => {
+      if (autoLockMinutes > 0) lock();
+    });
   });
 
   // 右键菜单：在任意页面/链接上保存到保险箱。
@@ -482,7 +487,8 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       return getStatus();
 
     case 'activity':
-      resetLockTimer();
+      // 自动锁定由系统空闲检测驱动（chrome.idle，从最后一次键鼠输入起算），
+      // 不再有「解锁后固定时长」的定时器需要重置。保留消息避免旧 UI 调用报错。
       return;
 
     case 'clipboard:clearLater':
@@ -1397,6 +1403,11 @@ function captureHostName(p: CapturePending): string {
   }
 }
 
+/** 新建项目的默认名：网页标题里的站点名优先，取不到（无标题/纯「登录」类）退回 host。 */
+function captureProjectName(p: CapturePending): string {
+  return siteNameFromTitle(p.pageTitle) || captureHostName(p);
+}
+
 function loginSuccessLooksLikely(
   candidate: LoginCaptureCandidate,
   currentUrl: string,
@@ -1487,6 +1498,8 @@ interface CapturePromptResponse {
   targetLinkId?: string;
   totp?: string;
   tenant?: string;
+  /** 新建项目的建议名：标题提取的站点名，取不到为 host（浮层占位与留空保存共用）。 */
+  suggestedProjectName?: string;
 }
 
 function toPendingResponse(saved: CapturePending): CapturePromptResponse {
@@ -1509,6 +1522,7 @@ function toPendingResponse(saved: CapturePending): CapturePromptResponse {
     targetLinkId: saved.targetLinkId,
     totp: saved.totp,
     tenant: saved.tenant,
+    suggestedProjectName: captureProjectName(saved),
   };
 }
 
@@ -1733,7 +1747,7 @@ async function applyCapture(
         targetProject = targetProjects.find((proj) => proj.id === edits.targetProjectId) ?? null;
         if (!targetProject) throw new Error('找不到要保存到的项目');
       } else {
-        targetProject = newProject({ name: edits.newProjectName?.trim() || captureHostName(p) });
+        targetProject = newProject({ name: edits.newProjectName?.trim() || captureProjectName(p) });
         targetProjects.push(targetProject);
       }
 
@@ -1984,7 +1998,6 @@ async function setUnlocked(d: Uint8Array, data: VaultData): Promise<void> {
   autoLockMinutes = data.settings.autoLockMinutes ?? 15;
   await browser.storage.session.set({ [SESSION_DEK]: toB64(d) });
   applyAutoLock();
-  resetLockTimer();
   // 一次性迁移旧的单一自托管同步配置 → syncTargets。
   let changed = migrateSyncSettings(data);
   changed = normalizeVaultData(data) || changed;
@@ -2014,7 +2027,6 @@ async function persistData(
   cachedSettingsFingerprint = settingsFingerprint(data.settings);
   autoLockMinutes = data.settings.autoLockMinutes ?? 15;
   applyAutoLock();
-  resetLockTimer();
   await registerCaptureForData(data);
 }
 
@@ -2025,10 +2037,6 @@ function lock(): void {
   cachedSettingsFingerprint = null;
   pendingCaptures = {};
   loginCandidates = {};
-  if (lockTimer) {
-    clearTimeout(lockTimer);
-    lockTimer = null;
-  }
   browser.storage.session.remove(SESSION_DEK).catch(() => {});
   browser.storage.session.remove(PENDING_KEY).catch(() => {});
   browser.storage.session.remove(LOGIN_CANDIDATES_KEY).catch(() => {});
@@ -2075,11 +2083,6 @@ function applyAutoLock(): void {
   }
 }
 
-function resetLockTimer(): void {
-  if (lockTimer) clearTimeout(lockTimer);
-  if (autoLockMinutes > 0) lockTimer = setTimeout(lock, autoLockMinutes * 60_000);
-}
-
 function settingsFingerprint(settings: VaultSettings): string {
   // 与自动同步触发同一套字段口径：设备本地的引导/备份提醒状态不顶高 settings.updatedAt，
   // 避免这台设备因此在多端合并里整体赢走 settings、抹掉别处配置的集成（如 CNB 令牌）。
@@ -2099,7 +2102,6 @@ async function adoptSyncedVault(enc: NonNullable<Awaited<ReturnType<typeof vault
   cachedSettingsFingerprint = settingsFingerprint(cachedData.settings);
   autoLockMinutes = cachedData.settings.autoLockMinutes ?? 15;
   applyAutoLock();
-  resetLockTimer();
   if (normalizeVaultData(cachedData)) {
     await persistData(cachedData);
     return;

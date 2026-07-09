@@ -372,6 +372,12 @@
 
   const extractBase32Secret = (raw) => {
     const text = cleanCandidateText(raw);
+    // data:/blob: 资源（滑块验证码拼图、内嵌图片等）的 base64 里必然出现 16+ 位
+    // A-Z2-7 连续串，且可能随机撞上 2fa/mfa 等上下文词（CAPTCHA 排除词在 base64 里
+    // 反而永远不会出现）→ 按 URI 前缀整类排除；真实密钥不会以资源地址形式展示。
+    if (/^(?:data|blob):/i.test(text)) return '';
+    // 展示给人手动抄写的密钥都是短文本；超长文本只会是脚本或编码载荷。
+    if (text.length > 2048) return '';
     if (CAPTCHA_CONTEXT_RE.test(text)) return '';
     if (
       !TOTP_SETUP_CONTEXT_RE.test(text) &&
@@ -728,7 +734,7 @@
     } finally {
       flowBusy = false;
     }
-    render();
+    if (!capturePrompt) render(); // 捕获弹窗编辑中不重建 DOM（同 scheduleRefresh）
   };
 
   const sortMatches = (surface) => {
@@ -794,6 +800,18 @@
     host.style.justifyContent = 'center';
     host.style.pointerEvents = 'none';
     root = host.attachShadow({ mode: 'closed' });
+    // 浮层内的键鼠事件会被重定位到宿主元素继续冒泡进页面：大屏/地图类站点常有全局
+    // keydown（快捷键 preventDefault）、mousedown/click（点击聚焦画布）处理器，会抢走
+    // 焦点或吞掉输入。在 shadow root 上截断冒泡，浮层交互不影响页面，页面也收不到。
+    for (const type of [
+      'keydown', 'keyup', 'keypress', 'beforeinput', 'input', 'change',
+      'compositionstart', 'compositionupdate', 'compositionend',
+      'paste', 'copy', 'cut',
+      'click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup',
+      'contextmenu', 'wheel', 'touchstart', 'touchend',
+    ]) {
+      root.addEventListener(type, (e) => e.stopPropagation());
+    }
     document.documentElement.appendChild(host);
     return root;
   };
@@ -1185,6 +1203,8 @@
       padding: 0 11px;
       font-family: inherit;
       font-size: 13px;
+      /* all: initial 会把 UA 的 input cursor: text 重置为 auto，悬停 placeholder 时指针不显示 */
+      cursor: text;
     }
     .field select option { color: #111827; background: #fff; }
     .field.wide { grid-column: 1 / -1; }
@@ -1552,6 +1572,11 @@
 
   const NEW_PROJECT_CHOICE = 'new-project';
 
+  // 新建项目的默认名：background 从网页标题提取的站点名（如「5G移巡天穹」），
+  // 无标题或纯「登录」类标题时退回网站 host（占位提示与留空保存取同一值）。
+  const suggestedProjectName = () =>
+    capturePrompt?.suggestedProjectName || hostOf(capturePrompt?.origin || '');
+
   const defaultCaptureTargetChoice = (prompt = capturePrompt) => {
     if (!prompt || prompt.kind !== 'new') return '';
     if (prompt.targetLinkId) return `link:${prompt.targetLinkId}`;
@@ -1568,7 +1593,7 @@
     const choice = captureDraft?.targetChoice || defaultCaptureTargetChoice();
     if (choice.startsWith('link:')) return { targetLinkId: choice.slice(5) };
     if (choice.startsWith('project:')) return { ...ws, targetProjectId: choice.slice(8) };
-    return { ...ws, newProjectName: captureDraft?.newProjectName || hostOf(capturePrompt.origin) };
+    return { ...ws, newProjectName: captureDraft?.newProjectName || suggestedProjectName() };
   };
 
   const targetOption = (value, title, sub, selected) => `
@@ -1590,7 +1615,7 @@
       const p = projectTargets.find((x) => x.projectId === targetChoice.slice(8));
       if (p) return { title: p.projectName, sub: `新建 ${hostOf(capturePrompt.origin)}` };
     }
-    return { title: '+ 新建项目', sub: hostOf(capturePrompt.origin) };
+    return { title: '+ 新建项目', sub: suggestedProjectName() };
   };
 
   const captureTargetSelect = (targets, projectTargets, targetChoice) => {
@@ -1636,7 +1661,7 @@
                     : ''
                 }
                 <div class="target-section">新项目</div>
-                ${targetOption(NEW_PROJECT_CHOICE, '+ 新建项目', hostOf(capturePrompt.origin), targetChoice === NEW_PROJECT_CHOICE)}
+                ${targetOption(NEW_PROJECT_CHOICE, '+ 新建项目', suggestedProjectName(), targetChoice === NEW_PROJECT_CHOICE)}
               </div>`
             : ''
         }
@@ -1782,7 +1807,7 @@
         ? `${selectedTarget.projectName} / ${selectedTarget.envName} / ${selectedTarget.linkName}`
         : selectedProject
           ? `${selectedProject.projectName} / 新建 ${hostOf(capturePrompt.origin)}`
-          : `${(draft.newProjectName || hostOf(capturePrompt.origin)).trim()} / 默认`;
+          : `${(draft.newProjectName || suggestedProjectName()).trim()} / 默认`;
       r.innerHTML = `
         <style>${css}</style>
         <div class="modal capture-modal ${themeClass}">
@@ -1841,7 +1866,7 @@
                       targetChoice === NEW_PROJECT_CHOICE
                         ? `<div class="field wide">
                             <label>新项目名称</label>
-                            <input data-field="newProjectName" value="${esc(draft.newProjectName || '')}" placeholder="${esc(hostOf(capturePrompt.origin))}" />
+                            <input data-field="newProjectName" value="${esc(draft.newProjectName || '')}" placeholder="${esc(suggestedProjectName())}" />
                           </div>`
                         : ''
                     }`
@@ -2249,7 +2274,10 @@
     refreshTimer = setTimeout(async () => {
       await loadSnapshot();
       const retried = await retryLockedCandidate();
-      if (!retried) render();
+      // 捕获弹窗打开期间禁止被动重渲染（focusin / 页面 DOM 变动 / 窗口焦点都走到这里）：
+      // render() 整体重建 innerHTML，会销毁正在编辑的输入框，焦点随之丢失、无法输入。
+      // 新捕获到来由 confirmCaptureSuccess 按 id+createdAt 判断后主动 render。
+      if (!retried && !capturePrompt) render();
       await maybeAutoContinue();
       void maybeAutoFillFocusedTotp();
     }, 120);
@@ -2417,7 +2445,22 @@
     /* 扩展上下文失效时忽略 */
   }
 
-  document.addEventListener('submit', soonCapture, true);
+  // 浮层（shadow DOM）里的事件会被重定位成宿主元素出现在 document 的捕获阶段监听里，
+  // shadow 内部的 stopPropagation 拦不住捕获阶段：这里按 composedPath 显式排除。
+  // 尤其 focusin → scheduleRefresh 曾在点击弹窗输入框 120ms 后重建 DOM，把焦点打丢。
+  const fromAssistUi = (e) => {
+    if (!host) return false;
+    if (e.target === host) return true;
+    const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+    return path.includes(host);
+  };
+  document.addEventListener(
+    'submit',
+    (e) => {
+      if (!fromAssistUi(e)) soonCapture();
+    },
+    true,
+  );
   document.addEventListener(
     'click',
     (e) => {
@@ -2440,13 +2483,31 @@
   document.addEventListener(
     'keydown',
     (e) => {
-      if (e.key === 'Enter') soonCapture();
+      if (e.key === 'Enter' && !fromAssistUi(e)) soonCapture();
     },
     true,
   );
-  document.addEventListener('focusin', scheduleRefresh, true);
-  document.addEventListener('input', rememberVisibleUsername, true);
-  document.addEventListener('change', rememberVisibleUsername, true);
+  document.addEventListener(
+    'focusin',
+    (e) => {
+      if (!fromAssistUi(e)) scheduleRefresh();
+    },
+    true,
+  );
+  document.addEventListener(
+    'input',
+    (e) => {
+      if (!fromAssistUi(e)) rememberVisibleUsername();
+    },
+    true,
+  );
+  document.addEventListener(
+    'change',
+    (e) => {
+      if (!fromAssistUi(e)) rememberVisibleUsername();
+    },
+    true,
+  );
   window.addEventListener('focus', scheduleRefresh);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) scheduleRefresh();
@@ -2474,9 +2535,9 @@
   // 自动提交后若是整页刷新回到登录页（原生表单提交，之后没有 DOM 变动触发重渲染），
   // 用两次延迟检查兜底：跨过 1.5s 判定窗口后若仍在登录页，就标记该来源改为只填充。
   setTimeout(() => {
-    if (guardAutoSubmitLoop()) render();
+    if (guardAutoSubmitLoop() && !capturePrompt) render();
   }, 1800);
   setTimeout(() => {
-    if (guardAutoSubmitLoop()) render();
+    if (guardAutoSubmitLoop() && !capturePrompt) render();
   }, 3600);
 })();

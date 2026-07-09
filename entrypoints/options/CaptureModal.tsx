@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Banner, Button, Input, Label, Modal, Select } from '@/components/ui';
+import { siteNameFromTitle } from '@/lib/site-name';
 import type { EnvKind, VaultData } from '@/lib/types';
 import {
   ENV_KIND_LABELS,
@@ -68,6 +69,10 @@ export function CaptureModal({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // 新建项目的默认名：与登录捕获浮层一致 —— 标题里的站点名优先，退回 host。
+  const suggestedProjectName =
+    siteNameFromTitle(initialTitle) || hostOf(initialUrl) || '未命名项目';
+
   const project = data.projects.find((p) => p.id === projectId);
 
   // 切换项目时，默认选中其第一个环境（没有则新建）。
@@ -84,7 +89,7 @@ export function CaptureModal({
         let proj =
           projectId === NEW ? undefined : d.projects.find((p) => p.id === projectId);
         if (!proj) {
-          proj = newProject({ name: newProjectName.trim() || '未命名项目' });
+          proj = newProject({ name: newProjectName.trim() || suggestedProjectName });
           d.projects.push(proj);
         }
         let env = envId === NEW ? undefined : proj.environments.find((e) => e.id === envId);
@@ -138,7 +143,7 @@ export function CaptureModal({
                 className="mt-1.5"
                 value={newProjectName}
                 onChange={(e) => setNewProjectName(e.target.value)}
-                placeholder="新项目名称"
+                placeholder={suggestedProjectName}
               />
             )}
           </div>

@@ -1,7 +1,7 @@
 {
   "name": "project-env-manager",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.6",
   "type": "module",
   "description": "Securely store and auto-fill login credentials across your projects, environments and platforms. Master-password, end-to-end encrypted locally; optional self-hosted sync stores ciphertext only.",
   "scripts": {
