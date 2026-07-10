@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import {
+  Bell,
+  BellOff,
   Copy,
   ExternalLink,
   Eye,
@@ -161,6 +163,26 @@ export default function App() {
   const pageOrigin = tab?.url ? getOrigin(tab.url) : null;
   // 只有 http(s) 网页能注入内容脚本读取输入；chrome:// / chrome-extension:// / file:// 等一律不行。
   const canCapture = !!pageOrigin;
+  // 当前站点在按站点静默名单里：网页浮层不再自动弹填充/保存提示。
+  const siteMuted =
+    !!pageOrigin && (data?.settings.assistMutedOrigins ?? []).includes(pageOrigin);
+
+  async function toggleSiteMute() {
+    if (!data || !pageOrigin) return;
+    try {
+      await vault.save(
+        produce(data, (d) => {
+          const list = d.settings.assistMutedOrigins ?? [];
+          d.settings.assistMutedOrigins = siteMuted
+            ? list.filter((o) => o !== pageOrigin)
+            : [...list, pageOrigin];
+        }),
+      );
+      flash(siteMuted ? '已恢复此网站的自动提示' : '此网站不再自动弹出提示');
+    } catch (e) {
+      flash(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   // 注入填充：site 非空时按「所有 frame + 同主域护栏」注入，使登录表单在同主域跨域 iframe
   // （如阿里云 passport.aliyun.com）里也能被填；site 为空时退回只填顶层 frame。聚合各 frame 结果。
@@ -714,9 +736,27 @@ export default function App() {
                 <Plus size={15} /> 保存当前页
               </Button>
             )}
+            {pageOrigin && data && (
+              <Button
+                variant="subtle"
+                className="h-9 min-w-0 whitespace-nowrap px-2 text-[13px]"
+                onClick={toggleSiteMute}
+                title={
+                  siteMuted
+                    ? '此网站当前不弹自动提示，点击恢复'
+                    : '在此网站不再自动弹出填充和保存提示（弹窗里仍可手动填充/捕获）'
+                }
+              >
+                {siteMuted ? <Bell size={15} /> : <BellOff size={15} />}
+                {siteMuted ? '恢复本站提示' : '关闭本站提示'}
+              </Button>
+            )}
             <Button
               variant="ghost"
-              className="col-span-2 h-9 min-w-0 whitespace-nowrap px-2 text-[13px]"
+              className={cx(
+                'h-9 min-w-0 whitespace-nowrap px-2 text-[13px]',
+                pageOrigin && data ? '' : 'col-span-2',
+              )}
               onClick={() => browser.runtime.openOptionsPage()}
             >
               管理全部

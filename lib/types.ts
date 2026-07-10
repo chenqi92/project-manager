@@ -403,6 +403,8 @@ export interface VaultSettings {
   webAssist?: boolean;
   /** 全站登录捕获：需用户额外授予 http(s) 全站权限，用于新网站登录后提示保存 */
   webAssistAllSites?: boolean;
+  /** 按站点静默名单（origin 列表）：这些网站不再自动弹出填充/保存提示，扩展弹窗仍可手动填充/捕获 */
+  assistMutedOrigins?: string[];
   /** 网页 JSON 自动格式化：访问返回 JSON 的接口时把响应渲染成可折叠的树；需 http(s) 全站权限，默认关闭 */
   jsonViewerEnabled?: boolean;
   /** 保存/更新提示面板位置：右上角或居中 */
@@ -610,6 +612,8 @@ export interface AssistEntry {
 export interface AssistSnapshot {
   locked: boolean;
   enabled: boolean;
+  /** 该站点在按站点静默名单里：页面浮层不再自动弹出任何提示 */
+  muted?: boolean;
   origin: string;
   autoSubmit: boolean;
   /** 多步登录自动续填：点首步后自动把后续步骤（密码 / TOTP）填完并前进；undefined 视为开启 */

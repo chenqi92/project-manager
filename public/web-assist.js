@@ -62,9 +62,12 @@
       (el) => el.value !== undefined && visible(el),
     );
 
-  const LOGIN_PAGE_RE = /(login|signin|sign-in|auth|sso|oauth|cas|signup|sign-up|register|registration|create.?account|登录|登陆|认证|注册|创建账号|创建账户)/i;
-  const LOGIN_ACTION_RE = /(login|sign in|signin|sign up|signup|register|create.?account|next|continue|submit|登录|登陆|注册|创建账号|创建账户|下一步|继续|确定|提交)/i;
-  const SEARCH_CONTEXT_RE = /(search|query|keyword|filter|搜索|查询|筛选|过滤|重置|列表|创建时间|用户管理|部门|状态)/i;
+  // auth(?!ors?\b) 放过 author/authors（博客、后台作者管理页）；cas 加词边界避免命中 cascade。
+  const LOGIN_PAGE_RE = /(login|signin|sign-in|auth(?!ors?\b)|sso|oauth|openid|\bcas\b|passport|signup|sign-up|register|registration|create.?account|登录|登陆|认证|注册|创建账号|创建账户)/i;
+  // 只保留明确的登录/注册动作词。确定/提交/下一步/next/continue/submit 这类词任何
+  // CRUD 表单都有，曾把后台管理表单整体判成登录上下文（保存/填充提示误弹的主因之一）。
+  const LOGIN_ACTION_RE = /(login|log in|sign in|signin|sign up|signup|register|create.?account|登录|登陆|注册|创建账号|创建账户)/i;
+  const SEARCH_CONTEXT_RE = /(search|query|keyword|filter|搜索|查询|筛选|过滤|重置|列表|创建时间|用户管理|部门|状态|新增|新建|添加|编辑|删除|导出|导入|批量|操作)/i;
   const FEDERATED_ACTION_RE = /(sign\s*in|log\s*in|login|continue|connect|authorize|auth|sso|oauth|登录|登陆|继续|授权|绑定|关联)/i;
   const FEDERATED_PROVIDERS = [
     ['Google', /\bgoogle\b|谷歌/i],
@@ -98,7 +101,10 @@
       .toLowerCase();
 
   const fieldContextText = (el) => {
-    const parts = [fieldText(el), document.title || '', location.href || ''];
+    // 不再混入 document.title / location.href：后台管理系统的标题（「XX 管理平台」）和
+    // URL（/admin/auth/users、?status=…）会让整页所有输入框的上下文都命中登录词，
+    // 是表单被误判成登录的最大来源。页面级信号单独走 pageLoginContext()。
+    const parts = [fieldText(el)];
     let cur = el;
     for (let i = 0; i < 4 && cur; i++) {
       cur = cur.parentElement;
@@ -109,9 +115,19 @@
     return parts.join(' ').toLowerCase();
   };
 
+  // 页面级登录上下文：只看标题、主机名、路径末段和 hash 路由末段。
+  // 不看完整 URL —— 中间路径 / 查询串常带 auth、state 等误导词。
+  const pageLoginContext = () => {
+    const segs = (location.pathname || '').split('/').filter(Boolean);
+    const hashSegs = (location.hash || '').split(/[/?]/).filter(Boolean);
+    return LOGIN_PAGE_RE.test(
+      `${document.title || ''} ${location.hostname || ''} ${segs[segs.length - 1] || ''} ${hashSegs[hashSegs.length - 1] || ''}`,
+    );
+  };
+
   const looksLikeSearchFilter = (el) => {
     const text = fieldContextText(el);
-    if (LOGIN_PAGE_RE.test(text) || LOGIN_ACTION_RE.test(text)) return false;
+    if (LOGIN_PAGE_RE.test(text) || LOGIN_ACTION_RE.test(text) || pageLoginContext()) return false;
     if (el.type === 'search') return true;
     return SEARCH_CONTEXT_RE.test(text);
   };
@@ -135,13 +151,23 @@
       );
     });
 
-  const loginUsernameFields = () =>
-    usernameFields().filter((el) => {
+  const fieldLoginContext = (el) => {
+    const text = fieldContextText(el);
+    return LOGIN_PAGE_RE.test(text) || LOGIN_ACTION_RE.test(text) || pageLoginContext();
+  };
+
+  const loginUsernameFields = () => {
+    const fields = usernameFields().filter((el) => {
       if (el.autocomplete === 'username' || el.autocomplete === 'email' || el.type === 'email') return true;
       const text = fieldContextText(el);
       if (SEARCH_CONTEXT_RE.test(text) && !LOGIN_PAGE_RE.test(text)) return false;
-      return LOGIN_PAGE_RE.test(text) || LOGIN_ACTION_RE.test(text);
+      return fieldLoginContext(el);
     });
+    // 已登录页面（有退出/注销入口）上的邮箱/用户名输入框多是资料、成员管理表单，
+    // 不是登录第一步；除非该字段周边有明确的登录/注册文案。
+    if (fields.length && pageLoggedIn()) return fields.filter(fieldLoginContext);
+    return fields;
+  };
 
   const actionText = (el) => {
     const parts = [
@@ -277,9 +303,21 @@
     return likelyUsername || username || readRememberedUsername(USERNAME_CAPTURE_CACHE_MS);
   };
 
+  // OTP 识别拆成三层：强词直接算；code/token/verify 这类泛词（会命中邀请码、API token、
+  // author 等）必须同时长得像短验证码输入框；明确的非 OTP「码」类字段整体排除。
+  const OTP_STRONG_RE = /(otp|totp|\bmfa\b|\b2fa\b|one.?time|authenticator|验证码|校验码|动态码|动态口令|短信码|(verification|security|auth|sms|email)[\s_-]?code)/i;
+  const OTP_WEAK_RE = /(code\b|token\b|verif|验证|口令)/i;
+  const OTP_EXCLUDE_RE = /(invite|referr|promo|coupon|discount|gift|redeem|activation|serial|zip|postal|country|barcode|qrcode|邀请|推荐|优惠|折扣|兑换|激活|序列|卡密|区号|邮编|提取码|访问码|条码|二维码)/i;
+  const otpNumericish = (el) =>
+    el.inputMode === 'numeric' ||
+    el.type === 'tel' ||
+    el.type === 'number' ||
+    (Number(el.maxLength) > 0 && Number(el.maxLength) <= 8);
+
   const otpFields = () =>
     Array.from(document.querySelectorAll('input:not([type="password"]):not([type="hidden"])')).filter((el) => {
       if (!visible(el)) return false;
+      if (el.autocomplete === 'one-time-code') return true;
       const text = [
         el.name,
         el.id,
@@ -290,10 +328,9 @@
       ]
         .join(' ')
         .toLowerCase();
-      return (
-        el.autocomplete === 'one-time-code' ||
-        /(otp|totp|mfa|2fa|code|token|verify|verification|auth|验证码|验证|动态码)/i.test(text)
-      );
+      if (OTP_EXCLUDE_RE.test(text)) return false;
+      if (OTP_STRONG_RE.test(text)) return true;
+      return OTP_WEAK_RE.test(text) && otpNumericish(el);
     });
 
   const passwordFieldText = (el) =>
@@ -310,8 +347,45 @@
       .join(' ')
       .toLowerCase();
 
+  // 修改/设置自己密码的上下文：即使已登录也要捕获（这是合法的「更新密码」场景）。
+  const CHANGE_PW_CONTEXT_RE = /(修改密码|更改密码|重置密码|设置密码|找回密码|忘记密码|新密码|change.?password|reset.?password|update.?password|set.?password|new.?password|forgot)/i;
+  // 管理后台替别人建号/改资料的表单：密码框不当作本人登录凭据。
+  // 「创建账号/账户」不在此列——那是 LOGIN_PAGE_RE 里的注册场景。
+  const NON_LOGIN_FORM_RE = /((新增|新建|添加|编辑|修改|邀请|创建)\s*(用户|成员|员工|人员|管理员)|(新增|新建|添加|编辑|修改|邀请)\s*(账号|账户)|用户管理|成员管理|账号管理|人员管理|(add|create|new|edit|invite)\s+(a\s+)?(user|member|employee|admin)|user\s+management)/i;
+
+  // 密码框所在的表单 / 弹窗容器（管理后台的建号表单常在 dialog 里而不在 form 里）。
+  const passwordFormScope = (el) =>
+    el.form ||
+    (el.closest &&
+      el.closest('[role="dialog"], dialog, .modal, .el-dialog, .ant-modal, .arco-modal, .layui-layer')) ||
+    null;
+
+  // 密码框是否属于「本人登录/注册/改密」而非后台 CRUD 表单：
+  // 1. 改密上下文直接放行；2. 建号/资料类表单、含 textarea 或控件过多的表单排除；
+  // 3. 字段周边有登录/注册文案放行；4. 其余按「页面是否已登录」判断——
+  //    未登录页面上的密码框几乎都是登录/注册，已登录页面上的多是后台内部表单。
+  const passwordLooksLoginRelated = (el) => {
+    const ctx = fieldContextText(el);
+    if (CHANGE_PW_CONTEXT_RE.test(ctx)) return true;
+    const scope = passwordFormScope(el);
+    if (scope) {
+      if (NON_LOGIN_FORM_RE.test(`${ctx} ${(scope.textContent || '').slice(0, 600)}`)) return false;
+      if (scope.querySelector('textarea')) return false;
+      const controls = Array.from(scope.querySelectorAll('input, select')).filter(
+        (c) => c.type !== 'hidden' && visible(c),
+      );
+      if (controls.length > 8) return false;
+    } else if (NON_LOGIN_FORM_RE.test(ctx)) {
+      return false;
+    }
+    if (LOGIN_PAGE_RE.test(ctx) || LOGIN_ACTION_RE.test(ctx) || pageLoginContext()) return true;
+    return !pageLoggedIn();
+  };
+
+  const loginPasswordFields = () => passwordFields().filter(passwordLooksLoginRelated);
+
   const pickPasswordField = () => {
-    const fields = passwordFields().filter((el) => el.value);
+    const fields = loginPasswordFields().filter((el) => el.value);
     if (!fields.length) return null;
     const negRe = /(confirm|confirmation|repeat|retype|again|确认|重复|再次|二次|校验)/i;
     const oldRe = /(old|current|原密码|旧密码|当前密码)/i;
@@ -477,6 +551,18 @@
         return /(logout|log out|signout|sign out|退出|注销|登出)/i.test(text);
       });
 
+  // hasSuccessHint 要扫最多 220 个按钮（含布局读取），surfaceKind 每次渲染都会间接
+  // 用到它 → 加 2 秒缓存（与 pageTotpSetupContext 同款）。
+  let loggedInHint = false;
+  let loggedInHintAt = 0;
+  const pageLoggedIn = () => {
+    const now = Date.now();
+    if (now - loggedInHintAt < 2000) return loggedInHint;
+    loggedInHintAt = now;
+    loggedInHint = hasSuccessHint();
+    return loggedInHint;
+  };
+
   const successSignals = async () => {
     const pws = passwordFields();
     return {
@@ -489,7 +575,8 @@
   };
 
   const surfaceKind = () => {
-    if (passwordFields().length > 0) return 'password';
+    // 只有「像本人登录」的密码框才算登录页面：后台建号/资料表单的密码框不再触发横幅。
+    if (loginPasswordFields().length > 0) return 'password';
     if (otpFields().length > 0) return 'otp';
     if (loginUsernameFields().length > 0) return 'username';
     return 'none';
@@ -672,7 +759,7 @@
     if (flowBusy) return;
     const flow = readFlow();
     if (!flow) return;
-    if (dismissed) {
+    if (dismissed || snapshot?.muted) {
       clearFlow();
       return;
     }
@@ -766,7 +853,8 @@
   };
 
   const maybeAutoFillFocusedTotp = async () => {
-    if (autoTotpBusy || dismissed || capturePrompt || snapshot?.locked || !snapshot?.enabled) return;
+    if (autoTotpBusy || dismissed || capturePrompt || snapshot?.locked || snapshot?.muted || !snapshot?.enabled)
+      return;
     if (surfaceKind() !== 'otp') return;
     const field = focusedOtpField();
     if (!field || String(field.value || '').trim().length >= 6) return;
@@ -1332,6 +1420,13 @@
       color: var(--pem-modal-text);
       border: 1px solid var(--pem-modal-border);
     }
+    .modal-foot .mute-site {
+      margin-right: auto;
+      background: transparent;
+      border-color: transparent;
+      opacity: .72;
+    }
+    .modal-foot .mute-site:hover { opacity: 1; }
     .capture-modal {
       border-radius: 16px;
       box-shadow: 0 18px 48px rgba(0, 0, 0, .32), 0 0 0 1px rgba(255, 255, 255, .06) inset;
@@ -1702,6 +1797,8 @@
 
   const render = (message, tone = 'info') => {
     guardAutoSubmitLoop();
+    // 站点被静默：不弹任何浮层（横幅 / 锁定提示 / 保存提示）。扩展弹窗仍可手动填充/捕获。
+    if (snapshot?.muted) return destroy();
     const surface = surfaceKind();
     sortMatches(surface);
     // 横幅的「登录」默认就点真正的登录按钮（无验证码直接登录；有滑动验证码/二次校验原地弹出，
@@ -1899,6 +1996,7 @@
             }
           </div>
           <div class="modal-foot">
+            <button class="secondary mute-site" data-act="mute-site" title="加入静默名单：在此网站不再自动弹出填充和保存提示（扩展弹窗仍可手动操作）">此网站不再提示</button>
             <button class="secondary" data-act="edit-capture">编辑</button>
             <button class="primary" data-act="confirm-capture" ${mode === 'update' && !selected ? 'disabled' : ''}>${mode === 'update' ? '更新' : '保存'}</button>
           </div>
@@ -1979,7 +2077,8 @@
                        matchCount > 1
                          ? `<button class="secondary" data-act="more">更多 ${matchCount}</button>`
                          : ''
-                     }`
+                     }
+                     <button class="secondary" data-act="mute-site" title="加入静默名单：在此网站不再自动弹出填充和保存提示（扩展弹窗仍可手动操作）">不再提示</button>`
               }
               <button class="icon" data-act="close" aria-label="关闭">×</button>
             </div>
@@ -2100,6 +2199,19 @@
         await send({ type: 'ui:openUnlock' });
         startUnlockPolling();
         render('已弹出解锁窗口，解锁后回到本页会自动填充');
+        return;
+      }
+      if (act === 'mute-site') {
+        // 后台把当前 origin 加入静默名单并清掉该站点的候选/待处理捕获。
+        await send({ type: 'assist:muteSite' });
+        dismissed = true;
+        capturePrompt = null;
+        lockedPrompt = false;
+        lockedCandidate = null;
+        targetDropdownOpen = false;
+        clearFlow();
+        await loadSnapshot();
+        destroy();
         return;
       }
       if (act === 'more') {
@@ -2310,6 +2422,7 @@
       send({ type: 'capture:candidate', ...candidate }).catch(() => {});
       await loadSnapshot();
       if (snapshot?.locked) {
+        if (snapshot.muted) return; // 静默站点连「解锁后保存」的锁定提示也不弹
         lockedCandidate = candidate;
         lockedPrompt = true;
         dismissed = false;
@@ -2347,6 +2460,7 @@
       armSuccessChecks(120_000);
       await loadSnapshot();
       if (snapshot?.locked) {
+        if (snapshot.muted) return; // 静默站点连「解锁后保存」的锁定提示也不弹
         lockedCandidate = candidate;
         lockedPrompt = true;
         dismissed = false;
@@ -2468,7 +2582,8 @@
       if (path.includes(host)) return;
       // shadow DOM 里的点击会被重定位到宿主：用 composedPath 拿到真实目标。
       const t = path[0] && path[0].nodeType === 1 ? path[0] : e.target;
-      const federated = federatedLoginAction(t);
+      // 已登录页面上的「绑定 GitHub / 关联微信」是账号绑定而不是登录，跳过第三方登录捕获。
+      const federated = pageLoggedIn() ? null : federatedLoginAction(t);
       if (federated) {
         rememberVisibleUsername();
         // 第三方授权（跳转 / 弹窗）耗时远超普通提交，把成功检测窗口拉长。

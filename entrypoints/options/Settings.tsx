@@ -23,6 +23,14 @@ import { enrollBiometricCredential, isPlatformAuthAvailable } from '@/lib/webaut
 const LOCK_OPTS = [0, 1, 5, 10, 15, 30, 60];
 const lockLabel = (n: number) => (n <= 0 ? '永不（直到浏览器关闭/关机）' : `${n} 分钟`);
 
+function hostOfOrigin(origin: string): string {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return origin;
+  }
+}
+
 const PROVIDER_TAG: Record<SyncTargetType, { tag: string; bg: string; color: string }> = {
   'self-hosted': { tag: 'SH', bg: '#eef1f4', color: '#5b6472' },
   webdav: { tag: 'WD', bg: '#e3f5f1', color: '#0d9488' },
@@ -73,6 +81,14 @@ export function Settings({
   const setSetting = (fn: (d: VaultData) => void) => onSave(produce(data, fn));
 
   const memoOn = data.settings.floatingMemoHidden !== true;
+  const mutedSites = data.settings.assistMutedOrigins ?? [];
+  const unmuteSite = (origin: string) =>
+    setSetting(
+      (d) =>
+        void (d.settings.assistMutedOrigins = (d.settings.assistMutedOrigins ?? []).filter(
+          (o) => o !== origin,
+        )),
+    );
   const autoSubmit = data.settings.autoSubmit === true;
   const autoFlow = data.settings.autoFlow !== false;
   const webAssist = data.settings.webAssist !== false;
@@ -251,6 +267,32 @@ export function Settings({
                 }
               />
             </SettingsRow>
+            {mutedSites.length > 0 && (
+              <SettingsRow
+                title="已静默的网站"
+                desc="这些网站不再自动弹出填充/保存提示（可在网页浮层或扩展弹窗里加入）；移除后恢复提示"
+              >
+                <div className="flex max-w-[280px] flex-col items-end gap-1.5">
+                  {mutedSites.map((origin) => (
+                    <div
+                      key={origin}
+                      className="flex items-center gap-1.5 rounded-lg bg-gray-100 py-1 pl-2.5 pr-1.5 text-[12px] text-gray-700"
+                    >
+                      <span className="max-w-[210px] truncate" title={origin}>
+                        {hostOfOrigin(origin)}
+                      </span>
+                      <button
+                        onClick={() => void unmuteSite(origin)}
+                        className="rounded p-0.5 text-gray-400 hover:text-red-500"
+                        title="移除并恢复该网站的提示"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </SettingsRow>
+            )}
             <SettingsRow
               title="保存提示位置"
               desc="登录后保存/更新面板显示在右上角或页面中间"

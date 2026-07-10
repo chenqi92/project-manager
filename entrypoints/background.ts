@@ -82,6 +82,10 @@ const LOGIN_CANDIDATES_KEY = 'loginCaptureCandidates';
 const LOGIN_CANDIDATE_TTL_MS = 5 * 60_000;
 const AUTO_FILLS_KEY = 'recentAutoFills';
 const AUTO_FILL_TTL_MS = 30 * 60_000;
+// 按站点静默名单在 storage.local 的镜像：锁定时（解不开 vault 设置）也要能判断
+// 「该站点不弹提示」，否则静默站点在锁定状态下仍会弹「已锁定」浮层。
+// 注：内容脚本的动态注册本就把链接 origin 明文留在浏览器 profile 里，镜像不额外扩大暴露面。
+const MUTED_MIRROR_KEY = 'assistMutedOrigins';
 
 // 全部仅存在于内存（SW 重启后从 session 恢复，浏览器关闭即丢失）。
 let dek: Uint8Array | null = null;
@@ -372,6 +376,7 @@ async function handle(msg: Msg, sender?: MsgSender): Promise<MsgResponse<unknown
     msg.type === 'capture:muteReprompt' ||
     msg.type === 'ui:openUnlock' ||
     msg.type === 'assist:matches' ||
+    msg.type === 'assist:muteSite' ||
     msg.type === 'assist:fillUsername' ||
     msg.type === 'assist:fill' ||
     msg.type === 'assist:fillTotp';
@@ -482,6 +487,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       lock();
       await vaultBackend.clear();
       await browser.storage.local.remove(SYNC_STATE_KEY);
+      await browser.storage.local.remove(MUTED_MIRROR_KEY);
       await unregisterAssistScripts();
       await browser.scripting.unregisterContentScripts({ ids: ['json-viewer'] }).catch(() => {});
       return getStatus();
@@ -725,6 +731,14 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
     case 'assist:matches':
       return assistMatches(sender, msg.url);
 
+    case 'assist:muteSite': {
+      // 只信任 sender 的真实来源：页面只能静默它自己。
+      const trusted = senderOrigin(sender);
+      if (!trusted) throw new Error('无法确认当前网页来源');
+      await muteAssistSite(trusted);
+      return;
+    }
+
     case 'assist:fillUsername':
       return assistFillUsername(sender, msg.accountId, msg.submit === true, msg.url);
 
@@ -876,14 +890,19 @@ async function assistMatches(sender?: MsgSender, reportedUrl?: string): Promise<
   const enabled =
     cachedData?.settings.webAssist !== false || cachedData?.settings.webAssistAllSites === true;
   if (!dek || !cachedData) {
-    return { locked: true, enabled: false, origin, autoSubmit: false, theme: 'system', matches: [] };
+    // 锁定时读不到 vault 设置，用 storage.local 镜像判断静默，避免静默站点仍弹「已锁定」浮层。
+    const muted = origin ? await assistSiteMutedWhileLocked(origin) : false;
+    return { locked: true, enabled: false, muted, origin, autoSubmit: false, theme: 'system', matches: [] };
   }
+  const muted = origin ? assistSiteMuted(cachedData, origin) : false;
   const pageUrl = assistPageUrl(sender, reportedUrl);
   // 跨全部工作区匹配：工作区只用于展示分组，其它工作区存的账号也要能在该网站弹出顶部横幅。
-  const matches = enabled && pageUrl ? matchForUrl(allWorkspacesData(cachedData), pageUrl).map(toAssistEntry) : [];
+  const matches =
+    enabled && !muted && pageUrl ? matchForUrl(allWorkspacesData(cachedData), pageUrl).map(toAssistEntry) : [];
   return {
     locked: false,
     enabled,
+    muted,
     origin,
     autoSubmit: cachedData.settings.autoSubmit === true,
     autoFlow: cachedData.settings.autoFlow !== false,
@@ -964,6 +983,8 @@ async function refreshCaptureRegistration(): Promise<void> {
 async function registerCaptureForData(data: VaultData | null): Promise<void> {
   try {
     if (!data) return;
+    // 静默名单镜像与脚本注册同步刷新：解锁 / 保存 / 采纳同步数据都会走到这里。
+    await syncMutedOriginsMirror(data);
     // 注册要覆盖全部工作区的链接 origin，否则其它工作区的站点上内容脚本根本不跑，顶栏无从弹出。
     const activeData = allWorkspacesData(data);
     await unregisterAssistScripts();
@@ -1059,6 +1080,7 @@ async function handleCaptureSuccessCheck(
 ): Promise<CapturePromptResponse | null> {
   await ensureRestored();
   if (!dek || !cachedData) return null;
+  if (assistSiteMuted(cachedData, origin)) return null;
   await ensureLoginCandidatesRestored();
   pruneLoginCandidates();
   const candidate =
@@ -1258,7 +1280,57 @@ async function muteRepromptPending(
   await browser.storage.session.set({ [PENDING_KEY]: pendingCaptures });
 }
 
+function assistSiteMuted(data: VaultData, origin: string): boolean {
+  return (data.settings.assistMutedOrigins ?? []).includes(origin);
+}
+
+/** 锁定时读 storage.local 镜像判断站点是否被静默（vault 设置此时不可读）。 */
+async function assistSiteMutedWhileLocked(origin: string): Promise<boolean> {
+  try {
+    const s = await browser.storage.local.get(MUTED_MIRROR_KEY);
+    const list = s[MUTED_MIRROR_KEY] as string[] | undefined;
+    return Array.isArray(list) && list.includes(origin);
+  } catch {
+    return false;
+  }
+}
+
+async function syncMutedOriginsMirror(data: VaultData): Promise<void> {
+  try {
+    const list = data.settings.assistMutedOrigins ?? [];
+    if (list.length > 0) await browser.storage.local.set({ [MUTED_MIRROR_KEY]: list });
+    else await browser.storage.local.remove(MUTED_MIRROR_KEY);
+  } catch {
+    /* 镜像失败只影响锁定态的静默判断，不阻塞保存 */
+  }
+}
+
+/** 页面浮层点「此网站不再提示」：加入静默名单并清掉该站点的候选与待处理捕获。 */
+async function muteAssistSite(origin: string): Promise<void> {
+  await requireUnlocked();
+  if (!assistSiteMuted(cachedData!, origin)) {
+    const data = structuredClone(cachedData!);
+    data.settings.assistMutedOrigins = [...(data.settings.assistMutedOrigins ?? []), origin];
+    await persistData(data);
+    scheduleAutoSync();
+  }
+  await ensureLoginCandidatesRestored();
+  let candidatesChanged = false;
+  for (const [key, c] of Object.entries(loginCandidates)) {
+    if (c.origin === origin) {
+      delete loginCandidates[key];
+      candidatesChanged = true;
+    }
+  }
+  if (candidatesChanged) await saveLoginCandidates();
+  await ensurePendingRestored();
+  for (const p of Object.values(pendingCaptures)) {
+    if (p.origin === origin) await clearPending(p.id);
+  }
+}
+
 function captureAllowedForOrigin(data: VaultData, origin: string): boolean {
+  if (assistSiteMuted(data, origin)) return false;
   if (data.settings.webAssistAllSites === true) return true;
   // 任一工作区存了该 origin 的链接就允许捕获（工作区只用于展示，不隔离捕获）。
   for (const proj of allWorkspaceProjects(data))
@@ -1545,6 +1617,8 @@ async function handleCaptureLogin(
   const totp = normalizeCapturedTotp(rawTotp);
   const tenant = cleanTenant(rawTenant);
   if (!dek || !cachedData || (!password && !authProvider && !totp)) return null; // 锁定时忽略
+  // 静默站点不弹保存/更新提示；popup 手动捕获（allowUnknownOrigin）是用户主动发起，不受限。
+  if (!opts.allowUnknownOrigin && assistSiteMuted(cachedData, origin)) return null;
 
   // 自动填充抑制：提交的密码与扩展刚在该页面填充的完全一致（用户没改动），
   // 就不弹保存/更新提示——用户名匹配交给页面启发式时常有误差（掩码手机号 / 租户框等），

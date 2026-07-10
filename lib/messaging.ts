@@ -95,6 +95,8 @@ export type Msg =
   // 网页内助手（content script 发起；后台按 sender origin 二次校验）
   // url：页面上报的 location.href（含 SPA 路由/hash），后台校验同源后用于 path-prefix/exact-url 匹配
   | { type: 'assist:matches'; url?: string }
+  // 页面浮层点「此网站不再提示」：把 sender origin 加进按站点静默名单（只能静默自己）
+  | { type: 'assist:muteSite' }
   | { type: 'assist:fillUsername'; accountId: string; submit?: boolean; url?: string }
   | { type: 'assist:fill'; accountId: string; submit?: boolean; url?: string }
   | { type: 'assist:fillTotp'; accountId: string; submit?: boolean; url?: string }

@@ -19,9 +19,12 @@
   const passwordFields = () =>
     Array.from(document.querySelectorAll('input[type="password"]')).filter(visible);
 
-  const LOGIN_PAGE_RE = /(login|signin|sign-in|auth|sso|oauth|cas|signup|sign-up|register|registration|create.?account|登录|登陆|认证|注册|创建账号|创建账户)/i;
-  const LOGIN_ACTION_RE = /(login|sign in|signin|sign up|signup|register|create.?account|next|continue|submit|登录|登陆|注册|创建账号|创建账户|下一步|继续|确定|提交)/i;
-  const SEARCH_CONTEXT_RE = /(search|query|keyword|filter|搜索|查询|筛选|过滤|重置|列表|创建时间|用户管理|部门|状态)/i;
+  // auth(?!ors?\b) 放过 author/authors（博客、后台作者管理页）；cas 加词边界避免命中 cascade。
+  const LOGIN_PAGE_RE = /(login|signin|sign-in|auth(?!ors?\b)|sso|oauth|openid|\bcas\b|passport|signup|sign-up|register|registration|create.?account|登录|登陆|认证|注册|创建账号|创建账户)/i;
+  // 只保留明确的登录/注册动作词。确定/提交/下一步/next/continue/submit 这类词任何
+  // CRUD 表单都有，曾把后台管理表单整体判成登录上下文（保存提示误弹的主因之一）。
+  const LOGIN_ACTION_RE = /(login|log in|sign in|signin|sign up|signup|register|create.?account|登录|登陆|注册|创建账号|创建账户)/i;
+  const SEARCH_CONTEXT_RE = /(search|query|keyword|filter|搜索|查询|筛选|过滤|重置|列表|创建时间|用户管理|部门|状态|新增|新建|添加|编辑|删除|导出|导入|批量|操作)/i;
   const FEDERATED_ACTION_RE = /(sign\s*in|log\s*in|login|continue|connect|authorize|auth|sso|oauth|登录|登陆|继续|授权|绑定|关联)/i;
   const FEDERATED_PROVIDERS = [
     ['Google', /\bgoogle\b|谷歌/i],
@@ -55,7 +58,10 @@
       .toLowerCase();
 
   const fieldContextText = (el) => {
-    const parts = [fieldText(el), document.title || '', location.href || ''];
+    // 不再混入 document.title / location.href：后台管理系统的标题（「XX 管理平台」）和
+    // URL（/admin/auth/users、?status=…）会让整页所有输入框的上下文都命中登录词，
+    // 是表单被误判成登录的最大来源。页面级信号单独走 pageLoginContext()。
+    const parts = [fieldText(el)];
     let cur = el;
     for (let i = 0; i < 4 && cur; i++) {
       cur = cur.parentElement;
@@ -66,9 +72,19 @@
     return parts.join(' ').toLowerCase();
   };
 
+  // 页面级登录上下文：只看标题、主机名、路径末段和 hash 路由末段。
+  // 不看完整 URL —— 中间路径 / 查询串常带 auth、state 等误导词。
+  const pageLoginContext = () => {
+    const segs = (location.pathname || '').split('/').filter(Boolean);
+    const hashSegs = (location.hash || '').split(/[/?]/).filter(Boolean);
+    return LOGIN_PAGE_RE.test(
+      `${document.title || ''} ${location.hostname || ''} ${segs[segs.length - 1] || ''} ${hashSegs[hashSegs.length - 1] || ''}`,
+    );
+  };
+
   const looksLikeSearchFilter = (el) => {
     const text = fieldContextText(el);
-    if (LOGIN_PAGE_RE.test(text) || LOGIN_ACTION_RE.test(text)) return false;
+    if (LOGIN_PAGE_RE.test(text) || LOGIN_ACTION_RE.test(text) || pageLoginContext()) return false;
     if (el.type === 'search') return true;
     return SEARCH_CONTEXT_RE.test(text);
   };
@@ -226,9 +242,21 @@
     return likelyUsername || username || readRememberedUsername(USERNAME_CAPTURE_CACHE_MS);
   };
 
+  // OTP 识别拆成三层：强词直接算；code/token/verify 这类泛词（会命中邀请码、API token、
+  // author 等）必须同时长得像短验证码输入框；明确的非 OTP「码」类字段整体排除。
+  const OTP_STRONG_RE = /(otp|totp|\bmfa\b|\b2fa\b|one.?time|authenticator|验证码|校验码|动态码|动态口令|短信码|(verification|security|auth|sms|email)[\s_-]?code)/i;
+  const OTP_WEAK_RE = /(code\b|token\b|verif|验证|口令)/i;
+  const OTP_EXCLUDE_RE = /(invite|referr|promo|coupon|discount|gift|redeem|activation|serial|zip|postal|country|barcode|qrcode|邀请|推荐|优惠|折扣|兑换|激活|序列|卡密|区号|邮编|提取码|访问码|条码|二维码)/i;
+  const otpNumericish = (el) =>
+    el.inputMode === 'numeric' ||
+    el.type === 'tel' ||
+    el.type === 'number' ||
+    (Number(el.maxLength) > 0 && Number(el.maxLength) <= 8);
+
   const otpFields = () =>
     Array.from(document.querySelectorAll('input:not([type="password"]):not([type="hidden"])')).filter((el) => {
       if (!visible(el)) return false;
+      if (el.autocomplete === 'one-time-code') return true;
       const text = [
         el.name,
         el.id,
@@ -239,10 +267,9 @@
       ]
         .join(' ')
         .toLowerCase();
-      return (
-        el.autocomplete === 'one-time-code' ||
-        /(otp|totp|mfa|2fa|code|token|verify|verification|auth|验证码|验证|动态码)/i.test(text)
-      );
+      if (OTP_EXCLUDE_RE.test(text)) return false;
+      if (OTP_STRONG_RE.test(text)) return true;
+      return OTP_WEAK_RE.test(text) && otpNumericish(el);
     });
 
   const passwordFieldText = (el) =>
@@ -259,8 +286,43 @@
       .join(' ')
       .toLowerCase();
 
+  // 修改/设置自己密码的上下文：即使已登录也要捕获（这是合法的「更新密码」场景）。
+  const CHANGE_PW_CONTEXT_RE = /(修改密码|更改密码|重置密码|设置密码|找回密码|忘记密码|新密码|change.?password|reset.?password|update.?password|set.?password|new.?password|forgot)/i;
+  // 管理后台替别人建号/改资料的表单：密码框不当作本人登录凭据。
+  // 「创建账号/账户」不在此列——那是 LOGIN_PAGE_RE 里的注册场景。
+  const NON_LOGIN_FORM_RE = /((新增|新建|添加|编辑|修改|邀请|创建)\s*(用户|成员|员工|人员|管理员)|(新增|新建|添加|编辑|修改|邀请)\s*(账号|账户)|用户管理|成员管理|账号管理|人员管理|(add|create|new|edit|invite)\s+(a\s+)?(user|member|employee|admin)|user\s+management)/i;
+
+  // 密码框所在的表单 / 弹窗容器（管理后台的建号表单常在 dialog 里而不在 form 里）。
+  const passwordFormScope = (el) =>
+    el.form ||
+    (el.closest &&
+      el.closest('[role="dialog"], dialog, .modal, .el-dialog, .ant-modal, .arco-modal, .layui-layer')) ||
+    null;
+
+  // 密码框是否属于「本人登录/注册/改密」而非后台 CRUD 表单：
+  // 1. 改密上下文直接放行；2. 建号/资料类表单、含 textarea 或控件过多的表单排除；
+  // 3. 字段周边有登录/注册文案放行；4. 其余按「页面是否已登录」判断——
+  //    未登录页面上的密码框几乎都是登录/注册，已登录页面上的多是后台内部表单。
+  const passwordLooksLoginRelated = (el) => {
+    const ctx = fieldContextText(el);
+    if (CHANGE_PW_CONTEXT_RE.test(ctx)) return true;
+    const scope = passwordFormScope(el);
+    if (scope) {
+      if (NON_LOGIN_FORM_RE.test(`${ctx} ${(scope.textContent || '').slice(0, 600)}`)) return false;
+      if (scope.querySelector('textarea')) return false;
+      const controls = Array.from(scope.querySelectorAll('input, select')).filter(
+        (c) => c.type !== 'hidden' && visible(c),
+      );
+      if (controls.length > 8) return false;
+    } else if (NON_LOGIN_FORM_RE.test(ctx)) {
+      return false;
+    }
+    if (LOGIN_PAGE_RE.test(ctx) || LOGIN_ACTION_RE.test(ctx) || pageLoginContext()) return true;
+    return !pageLoggedIn();
+  };
+
   const pickPasswordField = () => {
-    const fields = passwordFields().filter((el) => el.value);
+    const fields = passwordFields().filter((el) => el.value && passwordLooksLoginRelated(el));
     if (!fields.length) return null;
     const negRe = /(confirm|confirmation|repeat|retype|again|确认|重复|再次|二次|校验)/i;
     const oldRe = /(old|current|原密码|旧密码|当前密码)/i;
@@ -420,6 +482,17 @@
         return /(logout|log out|signout|sign out|退出|注销|登出)/i.test(text);
       });
 
+  // hasSuccessHint 要扫最多 220 个按钮（含布局读取），点击/回车都会走到 → 加 2 秒缓存。
+  let loggedInHint = false;
+  let loggedInHintAt = 0;
+  const pageLoggedIn = () => {
+    const now = Date.now();
+    if (now - loggedInHintAt < 2000) return loggedInHint;
+    loggedInHintAt = now;
+    loggedInHint = hasSuccessHint();
+    return loggedInHint;
+  };
+
   const successSignals = async () => {
     const pws = passwordFields();
     return {
@@ -561,7 +634,8 @@
       // shadow DOM 里的点击会被重定位到宿主：用 composedPath 拿到真实目标。
       const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
       const t = path[0] && path[0].nodeType === 1 ? path[0] : e.target;
-      const federated = federatedLoginAction(t);
+      // 已登录页面上的「绑定 GitHub / 关联微信」是账号绑定而不是登录，跳过第三方登录捕获。
+      const federated = pageLoggedIn() ? null : federatedLoginAction(t);
       if (federated) {
         loginAction(federated.provider);
         return;
