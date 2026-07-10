@@ -210,6 +210,76 @@ describe('capture.js login credential capture', () => {
     });
   });
 
+  it('does not capture from an admin create-user dialog on a logged-in page', async () => {
+    document.body.innerHTML = `
+      <button type="button">退出登录</button>
+      <div role="dialog">
+        <h3>新增用户</h3>
+        <form>
+          <input type="text" name="username" value="new-user" />
+          <input type="password" name="password" value="init-pw" />
+          <button type="submit">确定</button>
+        </form>
+      </div>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()).toBeUndefined();
+  });
+
+  it('does not capture when clicking buttons on a logged-in page with a plain password field', async () => {
+    document.body.innerHTML = `
+      <a href="/logout">退出登录</a>
+      <form>
+        <input type="text" name="smtpHost" value="mail.example.com" />
+        <input type="password" name="smtpPassword" value="smtp-pw" />
+        <button type="button">保存配置</button>
+      </form>`;
+
+    await clickAndFlush('button');
+
+    expect(latestCaptureCandidate()).toBeUndefined();
+  });
+
+  it('still captures from a change-password form while logged in', async () => {
+    document.body.innerHTML = `
+      <a href="/logout">退出登录</a>
+      <form>
+        <h3>修改密码</h3>
+        <input type="password" name="old" placeholder="原密码" value="old-pw" />
+        <input type="password" name="new" placeholder="新密码" value="new-pw" />
+        <input type="password" name="confirm" placeholder="确认密码" value="new-pw" />
+        <button type="submit">确定</button>
+      </form>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.password).toBe('new-pw');
+  });
+
+  it('still captures a login form that sits on a page with generic admin words in the URL', async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+        <button type="submit">登录</button>
+      </form>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.password).toBe('pw-new');
+  });
+
+  it('skips federated capture for bind-account buttons on a logged-in page', async () => {
+    document.body.innerHTML = `
+      <a href="/logout">退出登录</a>
+      <button type="button">绑定 GitHub 账号</button>`;
+
+    await clickAndFlush('button');
+
+    expect(latestCaptureCandidate()).toBeUndefined();
+  });
+
   it('captures a numeric org-code tenant field (type=number, English name only)', async () => {
     document.body.innerHTML = `
       <form>

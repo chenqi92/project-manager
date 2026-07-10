@@ -7,10 +7,12 @@ const script = readFileSync(resolve(process.cwd(), 'public/web-assist.js'), 'utf
 let messages: any[] = [];
 let now = 2_000_000;
 let snapshotMatches: any[] = [];
+let snapshotMuted = false;
 
 const assistSnapshot = () => ({
   locked: false,
   enabled: true,
+  muted: snapshotMuted,
   origin: location.origin,
   autoSubmit: false,
   theme: 'system',
@@ -64,6 +66,7 @@ beforeEach(() => {
   now += 5_000;
   messages = [];
   snapshotMatches = [];
+  snapshotMuted = false;
   document.body.innerHTML = '';
   sessionStorage.clear();
   (window as any).BarcodeDetector = undefined;
@@ -271,5 +274,123 @@ describe('web-assist.js login credential capture', () => {
       accountId: 'acc-1',
       submit: false,
     });
+  });
+
+  it('does not auto-fill TOTP into an invite-code field', async () => {
+    snapshotMatches = [demoMatch({ hasTotp: true })];
+    document.body.innerHTML = `<input name="invite_code" placeholder="邀请码" maxlength="6" />`;
+
+    await focusAndFlush('input');
+
+    expect(messages.find((msg) => msg.type === 'assist:fillTotp')).toBeUndefined();
+  });
+
+  it('does not treat an author field as an OTP field', async () => {
+    snapshotMatches = [demoMatch({ hasTotp: true })];
+    document.body.innerHTML = `<input name="author" />`;
+
+    await focusAndFlush('input');
+
+    expect(messages.find((msg) => msg.type === 'assist:fillTotp')).toBeUndefined();
+  });
+});
+
+const demoMatch = (extra: Record<string, unknown> = {}) => ({
+  accountId: 'acc-1',
+  projectName: 'Project',
+  envName: 'Default',
+  envKind: 'prod',
+  linkName: 'Example',
+  accountLabel: 'Admin',
+  username: 'admin',
+  hasTotp: false,
+  ...extra,
+});
+
+describe('web-assist.js banner heuristics and per-site mute', () => {
+  it('shows the banner on a login-looking form', async () => {
+    snapshotMatches = [demoMatch()];
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" />
+        <input type="password" name="password" />
+        <button type="submit">登录</button>
+      </form>`;
+
+    await focusAndFlush('input[name="username"]');
+
+    expect(document.getElementById('pem-web-assist')).toBeTruthy();
+  });
+
+  it('does not show the banner for an admin create-user dialog on a logged-in page', async () => {
+    snapshotMatches = [demoMatch()];
+    document.body.innerHTML = `
+      <a href="/logout">退出登录</a>
+      <div role="dialog">
+        <h3>新增用户</h3>
+        <form>
+          <input type="text" name="username" />
+          <input type="password" name="password" />
+          <button type="submit">确定</button>
+        </form>
+      </div>`;
+
+    await focusAndFlush('input[name="username"]');
+
+    expect(document.getElementById('pem-web-assist')).toBeNull();
+  });
+
+  it('suppresses every overlay when the snapshot says the site is muted', async () => {
+    snapshotMuted = true;
+    snapshotMatches = [demoMatch()];
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="username" />
+        <input type="password" name="password" value="pw-1" />
+        <button type="submit">登录</button>
+      </form>`;
+
+    await focusAndFlush('input[name="username"]');
+
+    expect(document.getElementById('pem-web-assist')).toBeNull();
+  });
+
+  it('mute button sends assist:muteSite and removes the overlay', async () => {
+    // 先让上一条测试可能遗留的浮层被销毁，确保本测试会重新 attachShadow。
+    document.body.innerHTML = `<input name="plain" />`;
+    await focusAndFlush('input[name="plain"]');
+
+    const roots: ShadowRoot[] = [];
+    const origAttach = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init: ShadowRootInit) {
+      const root = origAttach.call(this, init);
+      roots.push(root);
+      return root;
+    };
+    try {
+      snapshotMatches = [demoMatch()];
+      document.body.innerHTML = `
+        <form>
+          <input type="text" name="username" />
+          <input type="password" name="password" />
+          <button type="submit">登录</button>
+        </form>`;
+      await focusAndFlush('input[name="username"]');
+      expect(document.getElementById('pem-web-assist')).toBeTruthy();
+
+      const muteBtn = roots
+        .map((r) => r.querySelector('[data-act="mute-site"]'))
+        .find(Boolean) as HTMLElement | undefined;
+      expect(muteBtn).toBeTruthy();
+      muteBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(messages.find((msg) => msg.type === 'assist:muteSite')).toBeTruthy();
+      expect(document.getElementById('pem-web-assist')).toBeNull();
+    } finally {
+      Element.prototype.attachShadow = origAttach;
+    }
   });
 });

@@ -246,6 +246,73 @@ describe('登录捕获：提示的重新展示与关闭', () => {
   });
 });
 
+describe('按站点静默（assist:muteSite）', () => {
+  it('静默后清掉候选与待处理捕获，新登录不再提示，快照带 muted 且镜像写入 storage.local', async () => {
+    await setupVault();
+
+    // 先制造一条待处理捕获
+    await candidate('pw-1', 'admin');
+    now += 2_000;
+    const res = await successCheck(HOME_URL);
+    expect(res?.pending).toBe(true);
+
+    // 页面浮层点「此网站不再提示」
+    await sendMsg({ type: 'assist:muteSite' }, pageSender(HOME_URL));
+
+    // 已有的待处理捕获被清掉，弹窗兜底也取不到
+    expect(await sendMsg({ type: 'capture:pending' })).toBeNull();
+    expect(await successCheck(`${ORIGIN}/settings`)).toBeNull();
+
+    // 之后的登录提交被直接忽略
+    now += 30_000;
+    await candidate('pw-2', 'admin');
+    now += 2_000;
+    expect(await successCheck(HOME_URL)).toBeNull();
+
+    // 快照带 muted 且不返回匹配（浮层据此不再弹任何提示）
+    const snap = await sendMsg<{ muted?: boolean; matches: unknown[] }>(
+      { type: 'assist:matches', url: HOME_URL },
+      pageSender(HOME_URL),
+    );
+    expect(snap.muted).toBe(true);
+    expect(snap.matches).toHaveLength(0);
+
+    // origin 记入 vault 设置（随同步走），storage.local 留镜像（锁定时判断用）
+    const data = await sendMsg<{ settings: { assistMutedOrigins?: string[] } }>({
+      type: 'vault:get',
+    });
+    expect(data.settings.assistMutedOrigins).toContain(ORIGIN);
+    expect(localStore.get('assistMutedOrigins')).toEqual([ORIGIN]);
+  });
+
+  it('锁定后静默站点的快照仍返回 muted（读 storage.local 镜像）', async () => {
+    await setupVault();
+    await sendMsg({ type: 'assist:muteSite' }, pageSender(HOME_URL));
+    await sendMsg({ type: 'vault:lock' });
+
+    const snap = await sendMsg<{ locked: boolean; muted?: boolean }>(
+      { type: 'assist:matches', url: HOME_URL },
+      pageSender(HOME_URL),
+    );
+    expect(snap.locked).toBe(true);
+    expect(snap.muted).toBe(true);
+  });
+
+  it('popup 手动捕获是用户主动发起，不受静默限制', async () => {
+    await setupVault();
+    await sendMsg({ type: 'assist:muteSite' }, pageSender(HOME_URL));
+
+    const res = await sendMsg<{ pending?: boolean } | null>({
+      type: 'capture:manual',
+      url: LOGIN_URL,
+      title: '登录',
+      username: 'admin',
+      password: 'pw-1',
+    });
+    expect(res?.pending).toBe(true);
+  });
+});
+
 describe('登录捕获：只有密码框的表单', () => {
   it('首次登录能以空用户名保存', async () => {
     await setupVault();

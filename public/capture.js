@@ -292,11 +292,12 @@
   // 「创建账号/账户」不在此列——那是 LOGIN_PAGE_RE 里的注册场景。
   const NON_LOGIN_FORM_RE = /((新增|新建|添加|编辑|修改|邀请|创建)\s*(用户|成员|员工|人员|管理员)|(新增|新建|添加|编辑|修改|邀请)\s*(账号|账户)|用户管理|成员管理|账号管理|人员管理|(add|create|new|edit|invite)\s+(a\s+)?(user|member|employee|admin)|user\s+management)/i;
 
-  // 密码框所在的表单 / 弹窗容器（管理后台的建号表单常在 dialog 里而不在 form 里）。
+  // 密码框所在的弹窗容器 / 表单。优先弹窗：管理后台的「新增用户」标题通常在
+  // dialog 里、form 外，取 form 作用域会漏掉这个关键判据。
   const passwordFormScope = (el) =>
-    el.form ||
     (el.closest &&
       el.closest('[role="dialog"], dialog, .modal, .el-dialog, .ant-modal, .arco-modal, .layui-layer')) ||
+    el.form ||
     null;
 
   // 密码框是否属于「本人登录/注册/改密」而非后台 CRUD 表单：
