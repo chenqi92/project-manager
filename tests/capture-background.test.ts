@@ -92,6 +92,11 @@ const LOGIN_URL = `${ORIGIN}/login`;
 const HOME_URL = `${ORIGIN}/home`;
 const TAB = { id: 5 };
 const pageSender = (url: string) => ({ url, origin: ORIGIN, tab: TAB });
+const senderFor = (url: string, tabId: number) => ({
+  url,
+  origin: new URL(url).origin,
+  tab: { id: tabId },
+});
 
 async function sendMsg<T = unknown>(msg: Record<string, unknown>, sender?: unknown): Promise<T> {
   const res = await onMessageHandler!(msg, sender);
@@ -108,7 +113,7 @@ const cleanSignals = {
 };
 const loginPageSignals = { ...cleanSignals, visiblePasswordFields: 1 };
 
-async function candidate(password: string, username = '') {
+async function candidate(password: string, username = '', tenant?: string) {
   await sendMsg(
     {
       type: 'capture:candidate',
@@ -117,25 +122,46 @@ async function candidate(password: string, username = '') {
       title: '登录',
       username,
       password,
+      tenant,
     },
     pageSender(LOGIN_URL),
   );
 }
 
-async function successCheck(url: string, signals = cleanSignals) {
+async function federatedCandidate(provider = 'Google', tabId = TAB.id) {
+  await sendMsg(
+    {
+      type: 'capture:candidate',
+      origin: ORIGIN,
+      url: LOGIN_URL,
+      title: '登录',
+      username: `${provider} 登录`,
+      password: '',
+      authProvider: provider,
+    },
+    senderFor(LOGIN_URL, tabId),
+  );
+}
+
+async function successCheckInTab(url: string, tabId: number, signals = cleanSignals) {
   return sendMsg<{
     pending?: boolean;
     id?: string;
     kind?: string;
     username?: string;
     accountId?: string;
+    authProvider?: string;
   } | null>(
-    { type: 'capture:successCheck', origin: ORIGIN, url, title: '首页', signals },
-    pageSender(url),
+    { type: 'capture:successCheck', origin: new URL(url).origin, url, title: '首页', signals },
+    senderFor(url, tabId),
   );
 }
 
-async function setupVault(withAccount?: { username: string; password: string }) {
+async function successCheck(url: string, signals = cleanSignals) {
+  return successCheckInTab(url, TAB.id, signals);
+}
+
+async function setupVault(withAccount?: { username: string; password: string; tenant?: string }) {
   const { emptyVaultData } = await import('@/lib/vault-core');
   const { newAccount, newEnvironment, newLink, newProject } = await import('@/lib/vault-ops');
   await sendMsg({
@@ -154,7 +180,7 @@ async function setupVault(withAccount?: { username: string; password: string }) 
 
 async function vaultAccounts() {
   const data = await sendMsg<{
-    projects: { environments: { links: { accounts: { username: string; password: string }[] }[] }[] }[];
+    projects: { environments: { links: { accounts: { username: string; password: string; tenant?: string }[] }[] }[] }[];
   }>({ type: 'vault:get' });
   return data.projects.flatMap((p) =>
     p.environments.flatMap((e) => e.links.flatMap((l) => l.accounts)),
@@ -356,5 +382,103 @@ describe('登录捕获：只有密码框的表单', () => {
     const accounts = await vaultAccounts();
     expect(accounts).toHaveLength(1);
     expect(accounts[0]!.password).toBe('only-pw-2');
+  });
+});
+
+describe('登录捕获：租户保存与更新回填', () => {
+  it('把页面捕获到的 tenantName 值持久化到账号', async () => {
+    await setupVault();
+
+    await candidate('pw-1', 'admin', '飞睿得研发部');
+    now += 2_000;
+    const res = await successCheck(HOME_URL);
+    expect(res?.pending).toBe(true);
+
+    await sendMsg({ type: 'capture:save', id: res!.id }, pageSender(HOME_URL));
+
+    expect((await vaultAccounts())[0]?.tenant).toBe('飞睿得研发部');
+  });
+
+  it('更新候选包含已保存租户，供页面采集为空时回填', async () => {
+    await setupVault({ username: 'admin', password: 'old-pw', tenant: '飞睿得研发部' });
+
+    await candidate('new-pw', 'admin');
+    now += 2_000;
+    const res = await sendMsg<{
+      pending?: boolean;
+      id?: string;
+      updateCandidates?: { username: string; tenant?: string }[];
+    }>(
+      { type: 'capture:successCheck', origin: ORIGIN, url: HOME_URL, title: '首页', signals: cleanSignals },
+      pageSender(HOME_URL),
+    );
+
+    expect(res?.pending).toBe(true);
+    expect(res?.updateCandidates?.[0]).toMatchObject({
+      username: 'admin',
+      tenant: '飞睿得研发部',
+    });
+  });
+});
+
+describe('登录捕获：第三方授权完成时机', () => {
+  it('授权回调前不弹保存，回到站点后才创建并持续重现提示', async () => {
+    await setupVault();
+
+    await federatedCandidate('Google');
+    now += 3_000;
+
+    // 仍停在发起登录的页面：即使已经没有密码框，也不能把等待时间当成授权成功。
+    expect(await successCheck(LOGIN_URL)).toBeNull();
+
+    const callbackUrl = `${ORIGIN}/auth/callback?code=ok`;
+    const completed = await successCheck(callbackUrl);
+    expect(completed).toMatchObject({ pending: true, authProvider: 'Google' });
+
+    // 回调后站内继续跳转时，同一条提示仍会恢复，不随导航消失。
+    now += 1_000;
+    const restored = await successCheck(HOME_URL);
+    expect(restored?.id).toBe(completed?.id);
+  });
+
+  it('观察到同标签页 IdP 导航后，即使最终回到原登录地址也只在回调后提示', async () => {
+    await setupVault();
+    await federatedCandidate('Google');
+
+    now += 2_000;
+    expect(await successCheck(LOGIN_URL)).toBeNull();
+
+    const authorizeUrl =
+      `https://accounts.google.com/o/oauth2/v2/auth?client_id=abc` +
+      `&redirect_uri=${encodeURIComponent(LOGIN_URL)}&response_type=code`;
+    await sendMsg({ type: 'capture:oauthNav', url: authorizeUrl }, senderFor(authorizeUrl, TAB.id));
+
+    now += 650;
+    const completed = await successCheck(LOGIN_URL);
+    expect(completed).toMatchObject({ pending: true, authProvider: 'Google' });
+  });
+
+  it('弹窗式 OAuth 候选按标签页隔离，回调完成后由发起页接管提示', async () => {
+    await setupVault();
+    await federatedCandidate('Google', 5);
+
+    const popupTabId = 9;
+    const callbackUrl = `${ORIGIN}/auth/callback`;
+    const authorizeUrl =
+      `https://accounts.google.com/o/oauth2/v2/auth?client_id=abc` +
+      `&redirect_uri=${encodeURIComponent(callbackUrl)}&response_type=code`;
+    now += 1_000;
+    await sendMsg({ type: 'capture:oauthNav', url: authorizeUrl }, senderFor(authorizeUrl, popupTabId));
+
+    // 授权弹窗尚未回调时，发起页不能跨 tab 消费弹窗候选，也不能按超时误判成功。
+    now += 2_000;
+    expect(await successCheckInTab(LOGIN_URL, 5)).toBeNull();
+
+    const popupCompleted = await successCheckInTab(callbackUrl, popupTabId);
+    expect(popupCompleted).toMatchObject({ pending: true, authProvider: 'Google' });
+
+    // 弹窗回调建立 pending 后，仍停在原地址的发起页可以接管同一条提示。
+    const openerRestored = await successCheckInTab(LOGIN_URL, 5);
+    expect(openerRestored?.id).toBe(popupCompleted?.id);
   });
 });

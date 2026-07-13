@@ -113,6 +113,52 @@ describe('web-assist.js login credential capture', () => {
     expect(candidate?.tenant).toBe('acme');
   });
 
+  it('captures tenantName from native and custom dropdown controls', async () => {
+    document.body.innerHTML = `
+      <form>
+        <select name="tenantName">
+          <option value="tenant-1" selected>飞睿得研发部</option>
+        </select>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+    expect(latestCaptureCandidate()?.tenant).toBe('飞睿得研发部');
+
+    now += 2_000;
+    messages = [];
+    document.body.innerHTML = `
+      <form>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label">租户</label>
+          <div class="ant-select">
+            <div class="ant-select-selector" role="combobox">
+              <span class="ant-select-selection-item">测试平台</span>
+            </div>
+          </div>
+        </div>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+    expect(latestCaptureCandidate()?.tenant).toBe('测试平台');
+  });
+
+  it('captures a hidden tenantName value', async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="hidden" name="tenantName" value="飞睿得研发部" />
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.tenant).toBe('飞睿得研发部');
+  });
+
   it('does not send plain base32 login QR tokens as TOTP', async () => {
     (window as any).BarcodeDetector = class {
       async detect() {

@@ -526,7 +526,10 @@ export default function App() {
             >
               {pending.updateCandidates.map((c) => (
                 <option key={c.accountId} value={c.accountId}>
-                  {(c.accountLabel || c.linkName || '已保存账号') + ' · ' + (c.username || '无用户名')}
+                  {(c.accountLabel || c.linkName || '已保存账号') +
+                    ' · ' +
+                    (c.username || '无用户名') +
+                    (c.tenant ? ` · 租户 ${c.tenant}` : '')}
                 </option>
               ))}
             </select>
@@ -881,27 +884,129 @@ function collectLoginInputInPage(): CaptureInputResult {
     ),
   ).filter((el) => el.type !== 'password' && el.value && visible(el));
 
-  // 租户 / 企业 / 域字段单独收集，不当作用户名。
-  const tenantRe = /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b|\borg)/i;
-  const isTenantField = (el: HTMLElement): boolean =>
-    tenantRe.test(
-      [
-        (el as HTMLInputElement).name ?? '',
-        el.id,
-        (el as HTMLInputElement).autocomplete ?? '',
-        (el as HTMLInputElement).placeholder ?? '',
-        el.getAttribute('aria-label') ?? '',
-        el.getAttribute('title') ?? '',
-        el.closest('label')?.textContent ?? '',
-      ]
-        .join(' ')
-        .toLowerCase(),
+  // 租户 / 企业 / 域字段单独收集，不当作用户名。兼容 tenantName / tenantId、
+  // 隐藏字段、原生 select 和常见组件库的自定义下拉。
+  const tenantRe = /(tenant|租户|企业|公司|单位|机构|组织|部门|团队|工作区|商户|院校|学校|域名|域账号|登录域|domain|realm|company|corp\b|enterprise|institution|organization|organisation|department|dept\b|workspace|merchant|unit\b|team\b|school|agency|\borg)/i;
+  const tenantNameRe = /((tenant|company|enterprise|organization|organisation|institution|department|dept|workspace|merchant|unit|team|school|agency|domain|realm|org)[\s_.:-]*(name|label)|租户名称|企业名称|公司名称|单位名称|机构名称|组织名称|部门名称|商户名称)/i;
+  const customSelectRoot =
+    '.ant-select, .el-select, .el-cascader, .n-select, .n-cascader, .n-base-selection, .ivu-select, .arco-select, .semi-select, .t-select, .p-select, .p-dropdown, .v-select, .q-select, .select2-container, .react-select__control, [data-slot="select-trigger"]';
+  const customSelectQuery = `${customSelectRoot}, [role="combobox"], [aria-haspopup="listbox"]`;
+  const cleanTenantText = (value: unknown): string => String(value ?? '').replace(/\s+/g, ' ').trim();
+  const isTenantPlaceholder = (value: string): boolean =>
+    /^(请选择|请选)(\s|$|租户|企业|公司|单位|机构|组织|部门|团队|工作区|商户)|^(选择|select|choose|please\s+select)(\s|$)/i.test(
+      cleanTenantText(value),
     );
-  // 单位 / 租户为下拉框的系统：取选中项的 value。
-  const tenantSelect = Array.from(scope.querySelectorAll('select')).find(
-    (el) => el.value && visible(el) && isTenantField(el),
-  );
-  const tenant = allCandidates.find(isTenantField)?.value || tenantSelect?.value || undefined;
+
+  const tenantFieldText = (el: HTMLElement): string => {
+    const input = el as HTMLInputElement;
+    const parts = [
+      input.name ?? '',
+      el.id,
+      input.autocomplete ?? '',
+      input.placeholder ?? '',
+      el.getAttribute('aria-label') ?? '',
+      el.getAttribute('title') ?? '',
+      el.getAttribute('data-field') ?? '',
+      el.getAttribute('data-name') ?? '',
+      el.getAttribute('data-testid') ?? '',
+      typeof el.className === 'string' ? el.className : '',
+      el.closest('label')?.textContent ?? '',
+    ];
+    for (const label of Array.from(input.labels ?? [])) parts.push(label.textContent ?? '');
+    if (el.id) {
+      const explicit = Array.from(document.querySelectorAll<HTMLLabelElement>('label[for]')).find(
+        (label) => label.htmlFor === el.id,
+      );
+      if (explicit) parts.push(explicit.textContent ?? '');
+    }
+    for (const id of (el.getAttribute('aria-labelledby') ?? '').split(/\s+/).filter(Boolean)) {
+      parts.push(document.getElementById(id)?.textContent ?? '');
+    }
+    const item = el.closest(
+      '.form-item, .form-group, .field, .ant-form-item, .el-form-item, .n-form-item, .ivu-form-item, .arco-form-item',
+    );
+    const itemLabel = item?.querySelector<HTMLElement>(
+      'label, .ant-form-item-label, .el-form-item__label, .n-form-item-label, .ivu-form-item-label, .arco-form-item-label',
+    );
+    if (itemLabel) parts.push(itemLabel.textContent ?? '');
+    return parts.join(' ').toLowerCase();
+  };
+  const isTenantField = (el: HTMLElement): boolean =>
+    tenantRe.test(tenantFieldText(el));
+
+  const readTenantControl = (el: HTMLElement): string => {
+    if (el instanceof HTMLSelectElement) {
+      const optionText = cleanTenantText(el.selectedOptions[0]?.textContent);
+      const value = cleanTenantText(el.value);
+      const picked = tenantNameRe.test(tenantFieldText(el)) ? optionText || value : value || optionText;
+      return isTenantPlaceholder(picked) ? '' : picked;
+    }
+    if (el instanceof HTMLInputElement && cleanTenantText(el.value)) {
+      const value = cleanTenantText(el.value);
+      return isTenantPlaceholder(value) ? '' : value;
+    }
+    for (const attr of ['aria-valuetext', 'data-label', 'data-value']) {
+      const value = cleanTenantText(el.getAttribute(attr));
+      if (value && !isTenantPlaceholder(value)) return value;
+    }
+    const selected = el.querySelector<HTMLElement>(
+      '.ant-select-selection-item, .el-select__selected-item, .el-cascader__search-input + span, .n-base-selection-label, .ivu-select-selected-value, .arco-select-view-value, .semi-select-selection-text, .p-select-label, .p-dropdown-label, .v-select__selection-text, .q-field__native, .select2-selection__rendered, .react-select__single-value, [data-slot="select-value"], [aria-selected="true"]',
+    );
+    const selectedText = cleanTenantText(selected?.getAttribute('title') ?? selected?.textContent);
+    if (selectedText && !isTenantPlaceholder(selectedText)) return selectedText;
+    const inner = Array.from(el.querySelectorAll<HTMLInputElement>('input')).find((input) =>
+      Boolean(cleanTenantText(input.value)),
+    );
+    const innerValue = cleanTenantText(inner?.value);
+    if (innerValue && !isTenantPlaceholder(innerValue)) return innerValue;
+    const text = cleanTenantText(el.textContent);
+    return text && text.length <= 120 && !isTenantPlaceholder(text) ? text : '';
+  };
+
+  const customSelectControls = (root: ParentNode): HTMLElement[] => {
+    const seen = new Set<HTMLElement>();
+    const result: HTMLElement[] = [];
+    for (const node of root.querySelectorAll<HTMLElement>(customSelectQuery)) {
+      const control = node.closest<HTMLElement>(customSelectRoot) ?? node;
+      if (seen.has(control)) continue;
+      seen.add(control);
+      result.push(control);
+    }
+    return result;
+  };
+
+  let tenant = allCandidates.find(isTenantField)?.value || '';
+  if (!tenant) {
+    const tenantSelect = Array.from(scope.querySelectorAll<HTMLSelectElement>('select')).find(
+      (el) => visible(el) && isTenantField(el) && readTenantControl(el),
+    );
+    tenant = tenantSelect ? readTenantControl(tenantSelect) : '';
+  }
+  if (!tenant) {
+    const custom = customSelectControls(scope).find(
+      (el) => visible(el) && isTenantField(el) && readTenantControl(el),
+    );
+    tenant = custom ? readTenantControl(custom) : '';
+  }
+  if (!tenant) {
+    tenant =
+      Array.from(scope.querySelectorAll<HTMLInputElement>('input[type="hidden"]')).find(
+        (el) => el.value && isTenantField(el),
+      )?.value ?? '';
+  }
+  if (!tenant) {
+    const dropdowns = [
+      ...Array.from(scope.querySelectorAll<HTMLSelectElement>('select')),
+      ...customSelectControls(scope),
+    ].filter(
+      (el, index, all) =>
+        all.indexOf(el) === index &&
+        visible(el) &&
+        Boolean(el.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING) &&
+        Boolean(readTenantControl(el)),
+    );
+    tenant = dropdowns.length === 1 ? readTenantControl(dropdowns[0]!) : '';
+  }
   const candidates = allCandidates.filter((el) => !isTenantField(el));
 
   let username = '';
@@ -916,7 +1021,7 @@ function collectLoginInputInPage(): CaptureInputResult {
     url: location.href,
     username,
     password: pw.value,
-    tenant,
+    tenant: tenant || undefined,
   };
 }
 

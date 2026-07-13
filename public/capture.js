@@ -187,26 +187,128 @@
     if (picked) rememberUsername(picked.value);
   };
 
-  // 租户 / 企业 / 域字段：多租户登录页在用户名之外的第三个输入框。
-  // 识别出来单独捕获，且不再被误当成用户名。
-  const TENANT_RE = /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b|\borg)/i;
-  const isTenantField = (el) =>
-    TENANT_RE.test(`${fieldText(el)} ${(el.closest && el.closest('label')?.textContent) || ''}`);
+  // 租户 / 企业 / 域字段：兼容 tenantName / tenantId、隐藏字段、原生 select，
+  // 以及 Ant Design / Element / Naive UI 等组件库渲染的自定义下拉。
+  const TENANT_RE = /(tenant|租户|企业|公司|单位|机构|组织|部门|团队|工作区|商户|院校|学校|域名|域账号|登录域|domain|realm|company|corp\b|enterprise|institution|organization|organisation|department|dept\b|workspace|merchant|unit\b|team\b|school|agency|\borg)/i;
+  const TENANT_NAME_RE = /((tenant|company|enterprise|organization|organisation|institution|department|dept|workspace|merchant|unit|team|school|agency|domain|realm|org)[\s_.:-]*(name|label)|租户名称|企业名称|公司名称|单位名称|机构名称|组织名称|部门名称|商户名称)/i;
+  const CUSTOM_SELECT_ROOT =
+    '.ant-select, .el-select, .el-cascader, .n-select, .n-cascader, .n-base-selection, .ivu-select, .arco-select, .semi-select, .t-select, .p-select, .p-dropdown, .v-select, .q-select, .select2-container, .react-select__control, [data-slot="select-trigger"]';
+  const CUSTOM_SELECT_QUERY = `${CUSTOM_SELECT_ROOT}, [role="combobox"], [aria-haspopup="listbox"]`;
+  const cleanTenantText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const isTenantPlaceholder = (value) =>
+    /^(请选择|请选)(\s|$|租户|企业|公司|单位|机构|组织|部门|团队|工作区|商户)|^(选择|select|choose|please\s+select)(\s|$)/i.test(
+      cleanTenantText(value),
+    );
+
+  const tenantFieldText = (el) => {
+    const parts = [
+      fieldText(el),
+      el.getAttribute?.('data-field') || '',
+      el.getAttribute?.('data-name') || '',
+      el.getAttribute?.('data-testid') || '',
+      typeof el.className === 'string' ? el.className : '',
+      el.closest?.('label')?.textContent || '',
+    ];
+    for (const label of Array.from(el.labels || [])) parts.push(label.textContent || '');
+    if (el.id) {
+      const explicit = Array.from(document.querySelectorAll('label[for]')).find(
+        (label) => label.htmlFor === el.id,
+      );
+      if (explicit) parts.push(explicit.textContent || '');
+    }
+    for (const id of (el.getAttribute?.('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
+      parts.push(document.getElementById(id)?.textContent || '');
+    }
+    const item = el.closest?.(
+      '.form-item, .form-group, .field, .ant-form-item, .el-form-item, .n-form-item, .ivu-form-item, .arco-form-item',
+    );
+    const itemLabel = item?.querySelector?.(
+      'label, .ant-form-item-label, .el-form-item__label, .n-form-item-label, .ivu-form-item-label, .arco-form-item-label',
+    );
+    if (itemLabel) parts.push(itemLabel.textContent || '');
+    return parts.join(' ').toLowerCase();
+  };
+
+  const isTenantField = (el) => TENANT_RE.test(tenantFieldText(el));
+
+  const readTenantControl = (el) => {
+    if (!el) return '';
+    if (el.tagName === 'SELECT') {
+      const option = el.selectedOptions?.[0];
+      const optionText = cleanTenantText(option?.textContent);
+      const value = cleanTenantText(el.value);
+      const picked = TENANT_NAME_RE.test(tenantFieldText(el)) ? optionText || value : value || optionText;
+      return isTenantPlaceholder(picked) ? '' : picked;
+    }
+    if ('value' in el && cleanTenantText(el.value)) {
+      const value = cleanTenantText(el.value);
+      return isTenantPlaceholder(value) ? '' : value;
+    }
+    for (const attr of ['aria-valuetext', 'data-label', 'data-value']) {
+      const value = cleanTenantText(el.getAttribute?.(attr));
+      if (value && !isTenantPlaceholder(value)) return value;
+    }
+    const selected = el.querySelector?.(
+      '.ant-select-selection-item, .el-select__selected-item, .el-cascader__search-input + span, .n-base-selection-label, .ivu-select-selected-value, .arco-select-view-value, .semi-select-selection-text, .p-select-label, .p-dropdown-label, .v-select__selection-text, .q-field__native, .select2-selection__rendered, .react-select__single-value, [data-slot="select-value"], [aria-selected="true"]',
+    );
+    const selectedText = cleanTenantText(selected?.getAttribute?.('title') || selected?.textContent);
+    if (selectedText && !isTenantPlaceholder(selectedText)) return selectedText;
+    const inner = Array.from(el.querySelectorAll?.('input') || []).find((input) => cleanTenantText(input.value));
+    const innerValue = cleanTenantText(inner?.value);
+    if (innerValue && !isTenantPlaceholder(innerValue)) return innerValue;
+    const text = cleanTenantText(el.textContent);
+    return text && text.length <= 120 && !isTenantPlaceholder(text) ? text : '';
+  };
+
+  const customSelectControls = (scope) => {
+    const seen = new Set();
+    const out = [];
+    for (const node of scope.querySelectorAll(CUSTOM_SELECT_QUERY)) {
+      const root = node.closest?.(CUSTOM_SELECT_ROOT) || node;
+      if (seen.has(root)) continue;
+      seen.add(root);
+      out.push(root);
+    }
+    return out;
+  };
+
+  const beforePassword = (el, pw) =>
+    !!(el.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING);
 
   const tenantForPassword = (pw) => {
     const scope = pw.form || document;
-    // 租户编码常是数字输入框（type=number / inputmode=numeric），一并纳入。
-    const input = Array.from(
-      scope.querySelectorAll(
-        'input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[inputmode="numeric"], input:not([type])',
-      ),
-    ).find((el) => el.type !== 'password' && el.value && visible(el) && isTenantField(el));
-    if (input) return input.value;
-    // 单位 / 租户为下拉框的系统：取选中项的 value。
-    const select = Array.from(scope.querySelectorAll('select')).find(
-      (el) => el.value && visible(el) && isTenantField(el),
+    const scopes = scope === document ? [scope] : [scope, document];
+    for (const current of scopes) {
+      // 显式语义字段优先；document 级兜底只接受明确标记，避免抓到页面其它筛选器。
+      const input = Array.from(
+        current.querySelectorAll(
+          'input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[inputmode="numeric"], input:not([type])',
+        ),
+      ).find((el) => el.type !== 'password' && el.value && visible(el) && isTenantField(el));
+      if (input) return readTenantControl(input);
+      const select = Array.from(current.querySelectorAll('select')).find(
+        (el) => visible(el) && isTenantField(el) && readTenantControl(el),
+      );
+      if (select) return readTenantControl(select);
+      const custom = customSelectControls(current).find(
+        (el) => visible(el) && isTenantField(el) && readTenantControl(el),
+      );
+      if (custom) return readTenantControl(custom);
+      const hidden = Array.from(current.querySelectorAll('input[type="hidden"]')).find(
+        (el) => el.value && isTenantField(el),
+      );
+      if (hidden) return readTenantControl(hidden);
+      if (current !== scope) break;
+    }
+
+    // 有些站点的租户选择器没有 name/label，只能根据登录表单里唯一的已选下拉兜底。
+    const dropdowns = [
+      ...Array.from(scope.querySelectorAll('select')),
+      ...customSelectControls(scope),
+    ].filter((el, index, all) =>
+      all.indexOf(el) === index && visible(el) && beforePassword(el, pw) && readTenantControl(el),
     );
-    return select ? select.value : '';
+    return dropdowns.length === 1 ? readTenantControl(dropdowns[0]) : '';
   };
 
   const captureUsernameFields = (scope) =>

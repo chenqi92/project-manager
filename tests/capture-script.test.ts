@@ -311,6 +311,87 @@ describe('capture.js login credential capture', () => {
     expect(latestCaptureCandidate()?.tenant).toBe('acme');
   });
 
+  it('stores the selected display name for a tenantName select', async () => {
+    document.body.innerHTML = `
+      <form>
+        <select name="tenantName">
+          <option value="t-01" selected>飞睿得研发部</option>
+        </select>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.tenant).toBe('飞睿得研发部');
+  });
+
+  it('does not store a tenant dropdown placeholder', async () => {
+    document.body.innerHTML = `
+      <form>
+        <select name="tenantName">
+          <option value="" selected>请选择租户</option>
+          <option value="tenant-1">飞睿得研发部</option>
+        </select>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.tenant).toBeUndefined();
+  });
+
+  it('captures tenantName from a semantic hidden field', async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="hidden" name="tenantName" value="飞睿得研发部" />
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.tenant).toBe('飞睿得研发部');
+  });
+
+  it('captures a selected value from a custom tenant combobox', async () => {
+    document.body.innerHTML = `
+      <form>
+        <div class="el-form-item">
+          <label class="el-form-item__label">租户名称</label>
+          <div class="el-select">
+            <div class="el-select__wrapper" role="combobox">
+              <span class="el-select__selected-item">飞睿得研发部</span>
+            </div>
+          </div>
+        </div>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.tenant).toBe('飞睿得研发部');
+  });
+
+  it('uses the only selected custom dropdown in a login form as the tenant fallback', async () => {
+    document.body.innerHTML = `
+      <form>
+        <div class="ant-select">
+          <div class="ant-select-selector" role="combobox">
+            <span class="ant-select-selection-item">测试平台</span>
+          </div>
+        </div>
+        <input type="text" name="username" value="admin" />
+        <input type="password" name="password" value="pw-new" />
+      </form>`;
+
+    await submitAndFlush();
+
+    expect(latestCaptureCandidate()?.tenant).toBe('测试平台');
+  });
+
   it('captures a label-wrapped tenant input without tenant-ish attributes', async () => {
     document.body.innerHTML = `
       <form>

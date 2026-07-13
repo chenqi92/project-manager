@@ -1107,6 +1107,16 @@ async function handleCaptureSuccessCheck(
   if (candidate.origin !== origin || getOrigin(url) !== origin) return null;
   const totp = normalizeCapturedTotp(signals.totp) || candidate.totp;
   if (!loginSuccessLooksLikely(candidate, url, signals)) {
+    // 弹窗式 OAuth：回调页可能在授权弹窗里先建立待保存提示，发起页仍保留着
+    // 自己的点击候选。优先接管同提供商的已完成提示，避免旧候选挡住回调后的重现。
+    if (candidate.authProvider) {
+      const completed = await recentPendingPrompt(origin, tabId);
+      if (completed?.authProvider === candidate.authProvider) {
+        delete loginCandidates[pendingId(candidate.origin, candidate.tabId)];
+        await saveLoginCandidates();
+        return completed;
+      }
+    }
     if (totp && signals.visiblePasswordFields === 0) {
       candidate.totp = totp;
       candidate.createdAt = Date.now();
@@ -1166,11 +1176,14 @@ async function handleOAuthNav(idpOrigin: string, url: string, tabId?: number): P
     const key = pendingId(det.clientOrigin, tabId);
     const existing = loginCandidates[key];
     if (existing && !existing.viaIdp) {
-      // 页面点击路径已建候选（url / 标题是真实的）：只补上没识别出的登录方式。
+      // 同标签页已经从站点导航到了真实 IdP：保留原始 url / 标题用于展示，
+      // 同时标记 viaIdp，让最终回到相同登录 URL 时也能确认“已经发生过授权回调”。
       if (!existing.authProvider && !existing.password) {
         existing.authProvider = det.provider;
         if (!existing.username) existing.username = providerAccountName(det.provider);
       }
+      existing.viaIdp = true;
+      existing.idpOrigin = det.idpOrigin;
       existing.createdAt = Date.now();
     } else {
       loginCandidates[key] = {
@@ -1610,14 +1623,21 @@ function loginSuccessLooksLikely(
   if (signals.visiblePasswordFields > 0 || signals.filledPasswordFields > 0) return false;
   if (normalizeCapturedTotp(signals.totp) && age >= 450) return true;
 
+  const leftSubmitPage = normalizeCaptureUrl(candidate.url) !== normalizeCaptureUrl(currentUrl);
+
   if (candidate.viaIdp) {
-    // IdP 导航建的候选没有真实提交页 URL（url 是合成的 origin 根），
-    // 「离开提交页」不可判；看成功迹象，或授权耗时已过且页面无密码/OTP 步骤。
+    // 候选按 tab 隔离后，同一 tab 再从 client origin 发来 successCheck 就意味着
+    // 已经从 IdP 回调；不会再被仍停在发起页的 opener 提前消费。
     if (signals.successHint) return true;
-    return age >= 1_500 && signals.visibleOtpFields === 0;
+    return age >= 450 && signals.visibleOtpFields === 0;
   }
 
-  const leftSubmitPage = normalizeCaptureUrl(candidate.url) !== normalizeCaptureUrl(currentUrl);
+  if (candidate.authProvider) {
+    // 第三方按钮通常在没有密码框的登录页上。不能沿用普通 SPA 的“等待 2.5 秒”
+    // 兜底，否则授权窗口尚未完成就会弹保存；必须看到回调导航或明确的已登录信号。
+    return signals.successHint || leftSubmitPage;
+  }
+
   if (signals.successHint) return true;
   if (leftSubmitPage) return true;
 
@@ -1649,6 +1669,10 @@ function getLoginCandidateForContext(origin: string, tabId?: number): LoginCaptu
   if (tabId !== undefined) {
     const sameTab = list.find((c) => c.tabId === tabId);
     if (sameTab) return sameTab;
+    // OAuth 弹窗和发起页是两个 tab。跨 tab 取候选会让发起页在授权完成前
+    // 消费弹窗候选；回调完成后应通过 pending 重现。普通密码登录仍保留旧的
+    // 跨标签页兜底，兼容会另开结果页的非 OAuth 登录流程。
+    return list.find((c) => !c.authProvider && !c.viaIdp) ?? null;
   }
   return list[0] ?? null;
 }
@@ -1772,6 +1796,7 @@ async function handleCaptureLogin(
             accountId: acc.id,
             accountLabel: acc.label,
             username: acc.username,
+            tenant: acc.tenant,
             linkName: link.name,
           });
           // 捕获到的租户与已存的不同才算变化；捕获不到租户（页面没这个字段）不算。

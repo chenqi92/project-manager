@@ -317,7 +317,7 @@ export function fillCredentialsInPage(
     // （同页揭示或跳转新页）自动填密码并提交，避免直接报「没找到密码输入框」。
     if (username) {
       const skipRe =
-        /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b|\borg|search|query|keyword|验证码|验证|code|otp|totp)/i;
+        /(tenant|租户|企业|公司|单位|机构|组织|部门|团队|工作区|商户|院校|学校|域名|域账号|登录域|domain|realm|company|corp\b|enterprise|institution|organization|organisation|department|dept\b|workspace|merchant|unit\b|team\b|school|agency|\borg|search|query|keyword|验证码|验证|code|otp|totp)/i;
       const userCands = Array.from(
         document.querySelectorAll<HTMLInputElement>(
           'input[type="text"], input[type="email"], input[type="tel"], input:not([type])',
@@ -403,65 +403,187 @@ export function fillCredentialsInPage(
     };
   }
 
-  // 租户 / 企业 / 域字段：多租户系统在用户名之外的第三个输入框。
-  // 用户名选择时要跳过它，避免把用户名填进租户框；账号存了租户值时才往里填。
-  // 只看输入框自身属性与 label 文案（不看父容器整段文本），避免把普通用户名框误判成租户框。
-  const tenantRe = /(tenant|租户|企业|公司|单位|机构|组织|域名|域账号|登录域|domain|company|corp\b|\borg)/i;
-  const isTenantField = (el: HTMLElement): boolean =>
-    tenantRe.test(
-      [
-        (el as HTMLInputElement).name ?? '',
-        el.id,
-        (el as HTMLInputElement).autocomplete ?? '',
-        (el as HTMLInputElement).placeholder ?? '',
-        el.getAttribute('aria-label') ?? '',
-        el.getAttribute('title') ?? '',
-        el.closest('label')?.textContent ?? '',
-      ]
-        .join(' ')
-        .toLowerCase(),
+  // 租户 / 企业 / 域字段：兼容 tenantName / tenantId、隐藏字段、原生 select，
+  // 以及 Ant Design / Element / Naive UI 等组件库渲染的自定义下拉。
+  const tenantRe = /(tenant|租户|企业|公司|单位|机构|组织|部门|团队|工作区|商户|院校|学校|域名|域账号|登录域|domain|realm|company|corp\b|enterprise|institution|organization|organisation|department|dept\b|workspace|merchant|unit\b|team\b|school|agency|\borg)/i;
+  const customSelectRoot =
+    '.ant-select, .el-select, .el-cascader, .n-select, .n-cascader, .n-base-selection, .ivu-select, .arco-select, .semi-select, .t-select, .p-select, .p-dropdown, .v-select, .q-select, .select2-container, .react-select__control, [data-slot="select-trigger"]';
+  const customSelectQuery = `${customSelectRoot}, [role="combobox"], [aria-haspopup="listbox"]`;
+  const cleanTenantText = (value: unknown): string => String(value ?? '').replace(/\s+/g, ' ').trim();
+  const tenantFieldText = (el: HTMLElement): string => {
+    const input = el as HTMLInputElement;
+    const parts = [
+      input.name ?? '',
+      el.id,
+      input.autocomplete ?? '',
+      input.placeholder ?? '',
+      el.getAttribute('aria-label') ?? '',
+      el.getAttribute('title') ?? '',
+      el.getAttribute('data-field') ?? '',
+      el.getAttribute('data-name') ?? '',
+      el.getAttribute('data-testid') ?? '',
+      typeof el.className === 'string' ? el.className : '',
+      el.closest('label')?.textContent ?? '',
+    ];
+    for (const label of Array.from(input.labels ?? [])) parts.push(label.textContent ?? '');
+    if (el.id) {
+      const explicit = Array.from(document.querySelectorAll<HTMLLabelElement>('label[for]')).find(
+        (label) => label.htmlFor === el.id,
+      );
+      if (explicit) parts.push(explicit.textContent ?? '');
+    }
+    for (const id of (el.getAttribute('aria-labelledby') ?? '').split(/\s+/).filter(Boolean)) {
+      parts.push(document.getElementById(id)?.textContent ?? '');
+    }
+    const item = el.closest(
+      '.form-item, .form-group, .field, .ant-form-item, .el-form-item, .n-form-item, .ivu-form-item, .arco-form-item',
     );
+    const itemLabel = item?.querySelector<HTMLElement>(
+      'label, .ant-form-item-label, .el-form-item__label, .n-form-item-label, .ivu-form-item-label, .arco-form-item-label',
+    );
+    if (itemLabel) parts.push(itemLabel.textContent ?? '');
+    return parts.join(' ').toLowerCase();
+  };
+  const isTenantField = (el: HTMLElement): boolean => tenantRe.test(tenantFieldText(el));
 
-  // 用户名框：同一表单内、密码框之前最近的一个文本/邮箱/电话输入框（跳过租户框）。
-  let userField: HTMLInputElement | null = null;
   const scope = pw.form ?? document;
   const allCandidates = Array.from(
     scope.querySelectorAll<HTMLInputElement>(
       'input[type="text"], input[type="email"], input[type="tel"], input:not([type])',
     ),
   ).filter((el) => el.type !== 'password' && visible(el));
-  const candidates = allCandidates.filter((el) => !isTenantField(el));
+
+  const customSelectControls = (): HTMLElement[] => {
+    const seen = new Set<HTMLElement>();
+    const result: HTMLElement[] = [];
+    for (const node of scope.querySelectorAll<HTMLElement>(customSelectQuery)) {
+      const control = node.closest<HTMLElement>(customSelectRoot) ?? node;
+      if (seen.has(control)) continue;
+      seen.add(control);
+      result.push(control);
+    }
+    return result;
+  };
+  const beforePassword = (el: HTMLElement): boolean =>
+    Boolean(el.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const semanticTenantInput =
+    allCandidates.find(isTenantField) ??
+    Array.from(
+      scope.querySelectorAll<HTMLInputElement>('input[type="number"], input[inputmode="numeric"]'),
+    ).find((el) => visible(el) && isTenantField(el)) ??
+    null;
+  const semanticTenantSelect =
+    Array.from(scope.querySelectorAll<HTMLSelectElement>('select')).find(
+      (el) => visible(el) && isTenantField(el),
+    ) ?? null;
+  const semanticCustomTenant =
+    customSelectControls().find((el) => visible(el) && isTenantField(el)) ?? null;
+  const fallbackDropdowns = [
+    ...Array.from(scope.querySelectorAll<HTMLSelectElement>('select')),
+    ...customSelectControls(),
+  ].filter(
+    (el, index, all) =>
+      all.indexOf(el) === index && visible(el) && beforePassword(el),
+  );
+  const fallbackTenantControl = fallbackDropdowns.length === 1 ? fallbackDropdowns[0]! : null;
+  const tenantControl: HTMLElement | null =
+    semanticCustomTenant ?? semanticTenantInput ?? semanticTenantSelect ?? fallbackTenantControl;
+
+  // 用户名框：同一表单内、密码框之前最近的一个文本/邮箱/电话输入框（跳过租户框及其内部搜索框）。
+  let userField: HTMLInputElement | null = null;
+  const candidates = allCandidates.filter(
+    (el) =>
+      !isTenantField(el) &&
+      el !== tenantControl &&
+      !(tenantControl && tenantControl !== el && tenantControl.contains(el)),
+  );
   for (const el of candidates) {
     const pos = el.compareDocumentPosition(pw);
     if (pos & Node.DOCUMENT_POSITION_FOLLOWING) userField = el; // el 在 pw 之前
   }
   if (!userField && candidates.length > 0) userField = candidates[0]!;
-  // 全部候选都像租户框时退回旧行为（宁可填错位置也别不填）。
-  if (!userField && allCandidates.length > 0) userField = allCandidates[0]!;
+  // 没识别到租户控件时才退回旧行为；已确认是租户框时绝不能再被用户名覆盖。
+  if (!userField && !tenantControl && allCandidates.length > 0) userField = allCandidates[0]!;
 
+  let tenantSelectionPending = false;
   if (tenant) {
-    // 租户控件可能是文本框、数字编码框（type=number / inputmode=numeric）或下拉框。
-    const tenantInput =
-      allCandidates.find((el) => el !== userField && isTenantField(el)) ??
-      Array.from(
-        scope.querySelectorAll<HTMLInputElement>(
-          'input[type="number"], input[inputmode="numeric"]',
-        ),
-      ).find((el) => el !== userField && visible(el) && isTenantField(el)) ??
-      null;
-    if (tenantInput) {
-      setValue(tenantInput, tenant);
-    } else {
-      const tenantSelect = Array.from(scope.querySelectorAll('select')).find(
-        (el) => visible(el) && isTenantField(el),
-      );
-      if (tenantSelect) {
-        const wanted = tenant.trim();
-        const option =
-          Array.from(tenantSelect.options).find((o) => o.value === wanted) ??
-          Array.from(tenantSelect.options).find((o) => (o.textContent ?? '').trim() === wanted);
-        if (option) setValue(tenantSelect, option.value);
+    const wanted = tenant.trim();
+    if (tenantControl instanceof HTMLInputElement) {
+      setValue(tenantControl, wanted);
+    } else if (tenantControl instanceof HTMLSelectElement) {
+      const option =
+        Array.from(tenantControl.options).find((o) => o.value === wanted) ??
+        Array.from(tenantControl.options).find(
+          (o) => cleanTenantText(o.textContent).toLowerCase() === wanted.toLowerCase(),
+        );
+      if (option) setValue(tenantControl, option.value);
+    } else if (tenantControl) {
+      // 自定义下拉必须像用户一样展开并点击选项；直接改内部 input 通常只会改搜索词。
+      const trigger =
+        (tenantControl.matches('[role="combobox"], [aria-haspopup="listbox"], input')
+          ? tenantControl
+          : tenantControl.querySelector<HTMLElement>(
+              '[role="combobox"], [aria-haspopup="listbox"], input, .ant-select-selector, .el-select__wrapper, .p-select-dropdown, .v-field, .q-field__control, .select2-selection',
+            )) ?? tenantControl;
+      const optionSelector =
+        '[role="option"], .ant-select-item-option, .el-select-dropdown__item, .el-cascader-node, .n-base-select-option, .ivu-select-item, .arco-select-option, .semi-select-option, .p-select-option, .p-dropdown-item, .v-list-item, .q-item, .select2-results__option, .react-select__option, [data-slot="select-item"]';
+      const optionScopes = (): ParentNode[] => {
+        const result: ParentNode[] = [];
+        for (const id of [
+          trigger.getAttribute('aria-controls'),
+          trigger.getAttribute('aria-owns'),
+          tenantControl.getAttribute('aria-controls'),
+          tenantControl.getAttribute('aria-owns'),
+        ].filter(Boolean) as string[]) {
+          const root = document.getElementById(id);
+          if (root && !result.includes(root)) result.push(root);
+        }
+        result.push(document);
+        return result;
+      };
+      const optionMatches = (option: HTMLElement): boolean => {
+        const values = [
+          option.getAttribute('data-value'),
+          option.getAttribute('value'),
+          option.getAttribute('title'),
+          option.getAttribute('aria-label'),
+          option.textContent,
+        ]
+          .map((value) => cleanTenantText(value).toLowerCase())
+          .filter(Boolean);
+        return values.includes(wanted.toLowerCase());
+      };
+      const chooseOption = (): boolean => {
+        for (const root of optionScopes()) {
+          const option = Array.from(root.querySelectorAll<HTMLElement>(optionSelector)).find(
+            (candidate) => visible(candidate) && optionMatches(candidate),
+          );
+          if (!option) continue;
+          option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+          option.click();
+          return true;
+        }
+        return false;
+      };
+
+      trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      trigger.click();
+      if (!chooseOption()) {
+        tenantSelectionPending = true;
+        if (trigger instanceof HTMLInputElement && !trigger.readOnly) setValue(trigger, wanted);
+        let attempts = 0;
+        const retry = (): void => {
+          if (chooseOption() || ++attempts >= 8) return;
+          setTimeout(retry, 75);
+        };
+        setTimeout(retry, 0);
       }
+    } else {
+      // 仅有语义化隐藏字段的站点：至少同步其表单值，供原生提交读取。
+      const hidden = Array.from(scope.querySelectorAll<HTMLInputElement>('input[type="hidden"]')).find(
+        (el) => isTenantField(el),
+      );
+      if (hidden) setValue(hidden, wanted);
     }
   }
   if (userField && username) setValue(userField, username);
@@ -531,7 +653,7 @@ export function fillCredentialsInPage(
           new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }),
         );
       }
-    }, 180);
+    }, tenantSelectionPending ? 700 : 180);
     return { ok: true, submitted: true };
   } else {
     pw.focus();

@@ -151,6 +151,20 @@ describe('fillCredentialsInPage', () => {
     expect((document.querySelector('input[name=username]') as HTMLInputElement).value).toBe('alice');
   });
 
+  it('页面只有租户框和密码框时，不会再用用户名覆盖租户', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="tenantName" />
+        <input type="password" name="pass" />
+      </form>`;
+
+    const result = fillCredentialsInPage('alice', 'pw', false, undefined, '飞睿得研发部');
+
+    expect(result.ok).toBe(true);
+    expect((document.querySelector('input[name=tenantName]') as HTMLInputElement).value).toBe('飞睿得研发部');
+    expect((document.querySelector('input[name=pass]') as HTMLInputElement).value).toBe('pw');
+  });
+
   it('数字编码型租户框（type=number）也能填进去', () => {
     document.body.innerHTML = `
       <form>
@@ -183,6 +197,75 @@ describe('fillCredentialsInPage', () => {
     const byText = fillCredentialsInPage('alice', 'pw', false, undefined, 'Acme 公司');
     expect(byText.ok).toBe(true);
     expect((document.querySelector('select[name=tenantId]') as HTMLSelectElement).value).toBe('t-1');
+  });
+
+  it('tenantName 原生下拉可以按保存的显示名称选中', () => {
+    document.body.innerHTML = `
+      <form>
+        <select name="tenantName">
+          <option value="">请选择租户</option>
+          <option value="tenant-1">飞睿得研发部</option>
+        </select>
+        <input type="text" name="username" />
+        <input type="password" name="pass" />
+      </form>`;
+
+    const result = fillCredentialsInPage('alice', 'pw', false, undefined, '飞睿得研发部');
+
+    expect(result.ok).toBe(true);
+    expect((document.querySelector('select[name=tenantName]') as HTMLSelectElement).value).toBe('tenant-1');
+  });
+
+  it('自定义租户下拉会展开并点击匹配的选项', () => {
+    document.body.innerHTML = `
+      <form>
+        <div class="el-form-item">
+          <label class="el-form-item__label">租户名称</label>
+          <div class="el-select">
+            <div class="el-select__wrapper" role="combobox" aria-controls="tenant-options">
+              <span class="el-select__selected-item">测试平台</span>
+            </div>
+          </div>
+        </div>
+        <input type="text" name="username" />
+        <input type="password" name="pass" />
+      </form>
+      <div id="tenant-options" role="listbox">
+        <div role="option" data-value="tenant-1">飞睿得研发部</div>
+      </div>`;
+    const option = document.querySelector<HTMLElement>('[role="option"]')!;
+    const clicked = vi.fn();
+    option.addEventListener('click', clicked);
+
+    const result = fillCredentialsInPage('alice', 'pw', false, undefined, '飞睿得研发部');
+
+    expect(result.ok).toBe(true);
+    expect(clicked).toHaveBeenCalledOnce();
+    expect((document.querySelector('input[name=username]') as HTMLInputElement).value).toBe('alice');
+    expect((document.querySelector('input[name=pass]') as HTMLInputElement).value).toBe('pw');
+  });
+
+  it('无语义但唯一的自定义下拉也可作为租户选择器', () => {
+    document.body.innerHTML = `
+      <form>
+        <div class="ant-select">
+          <div class="ant-select-selector" role="combobox" aria-controls="platform-options">
+            <span class="ant-select-selection-item">测试平台</span>
+          </div>
+        </div>
+        <input type="text" name="username" />
+        <input type="password" name="pass" />
+      </form>
+      <div id="platform-options" role="listbox">
+        <div role="option">飞睿得研发部</div>
+      </div>`;
+    const option = document.querySelector<HTMLElement>('[role="option"]')!;
+    const clicked = vi.fn();
+    option.addEventListener('click', clicked);
+
+    fillCredentialsInPage('alice', 'pw', false, undefined, '飞睿得研发部');
+
+    expect(clicked).toHaveBeenCalledOnce();
   });
 
   it('顶层无密码框但有内嵌登录 iframe 时回报该 iframe origin', () => {

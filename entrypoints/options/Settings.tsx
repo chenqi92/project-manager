@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
-import { Fingerprint, Layers, Loader2, Palette, Plus, Trash2 } from 'lucide-react';
+import { Fingerprint, Loader2, Palette, Plus, Trash2 } from 'lucide-react';
 import {
   Banner,
   Button,
@@ -20,6 +20,7 @@ import { applyTheme, type Theme } from '@/lib/theme';
 import type { BioEnrollmentPublic, SyncTargetType, SyncTargetView, VaultData } from '@/lib/types';
 import { produce } from '@/lib/vault-ops';
 import { enrollBiometricCredential, isPlatformAuthAvailable } from '@/lib/webauthn';
+import { VersionUpdate } from './VersionUpdate';
 
 const LOCK_OPTS = [0, 1, 5, 10, 15, 30, 60];
 const lockLabel = (n: number) => (n <= 0 ? '永不（直到浏览器关闭/关机）' : `${n} 分钟`);
@@ -449,17 +450,7 @@ export function Settings({
           </SettingsCard>
 
           <SettingsCard title="关于">
-            <div className="flex items-center gap-3 border-t border-gray-100 py-3.5">
-              <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[9px] bg-brand-600 text-white">
-                <Layers size={18} />
-              </span>
-              <div className="flex-1">
-                <div className="text-[13px] font-semibold">项目环境管家</div>
-                <div className="font-mono text-[11px] text-gray-400">
-                  本地端到端加密 · 零知识 · 默认不联网
-                </div>
-              </div>
-            </div>
+            <VersionUpdate />
           </SettingsCard>
         </div>
       </div>

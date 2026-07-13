@@ -531,6 +531,8 @@ export interface CaptureUpdateCandidate {
   accountId: string;
   accountLabel: string;
   username: string;
+  /** 已保存租户；页面未能识别租户控件时供保存弹窗回填。 */
+  tenant?: string;
   linkName: string;
 }
 
