@@ -15,6 +15,7 @@
   let selectedUpdateId = '';
   let captureDraft = null;
   let targetDropdownOpen = false;
+  let muteMenuOpen = false;
   let workspaceDropdownOpen = false;
   let refreshTimer = 0;
   let lastSent = 0;
@@ -949,6 +950,7 @@
       box-shadow: 0 16px 40px rgba(15, 23, 42, .18);
       backdrop-filter: blur(10px);
     }
+    .card.menu-open { overflow: visible; }
     .row {
       display: flex;
       align-items: center;
@@ -1003,6 +1005,46 @@
     button.primary { background: #0d9488; color: #fff; }
     button.secondary { background: #eef2f7; color: #374151; }
     button.icon { width: 30px; padding: 0; color: #6b7280; background: transparent; }
+    .split { position: relative; display: inline-flex; align-items: stretch; }
+    .split > button.primary:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    .more-wrap { position: relative; display: inline-flex; align-items: stretch; }
+    button.more-btn { width: 30px; padding: 0; font-size: 17px; line-height: 1; color: #6b7280; background: transparent; }
+    button.split-toggle {
+      padding: 0 7px;
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+      font-size: 11px;
+      box-shadow: inset 1px 0 0 rgba(255, 255, 255, .3);
+    }
+    .split-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 20;
+      min-width: 176px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 5px;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 14px 34px rgba(15, 23, 42, .2);
+    }
+    .split-menu button {
+      width: 100%;
+      height: 34px;
+      justify-content: flex-start;
+      gap: 8px;
+      padding: 0 10px;
+      border-radius: 8px;
+      background: transparent;
+      color: #374151;
+      font-weight: 700;
+    }
+    .split-menu button:hover { background: #f3f4f6; filter: none; }
+    .split-menu button.danger { color: #b91c1c; }
+    .split-menu button.danger:hover { background: #fef2f2; }
     button:hover { filter: brightness(.96); }
     .list { border-top: 1px solid #eef2f7; padding: 4px; }
     .item {
@@ -2044,10 +2086,27 @@
         : `${hostOf(capturePrompt.origin)} · ${capturePrompt.username || '无用户名'}`
       : `${first.username || '无用户名'}${tenantSuffix(first)} · ${first.projectName} / ${first.envName}`;
 
+    // 登录/填充横幅的操作区：主按钮 + 收进下拉的「不再提示」。
+    const muteMenuTitle = '加入静默名单：在此网站不再自动弹出填充和保存提示（扩展弹窗仍可手动操作）';
+    const snoozeMenuTitle = '仅本次浏览器会话内不自动弹出此网站的登录提示；不进静默名单，关闭浏览器后自动恢复';
+    const bannerMainBtn =
+      surface === 'username'
+        ? `<button class="primary" data-act="${autoSubmit ? 'continue-user' : 'fill-user'}" data-id="${esc(first?.accountId || '')}">${autoSubmit ? '登录' : '填充'}</button>`
+        : surface === 'otp'
+          ? first?.hasTotp
+            ? `<button class="primary" data-act="totp" data-id="${esc(first?.accountId || '')}">验证码</button>`
+            : ''
+          : `<button class="primary" data-act="${autoSubmit ? 'login' : 'fill'}" data-id="${esc(first?.accountId || '')}">${autoSubmit ? '登录' : '填充'}</button>`;
+    const bannerMoreBtn =
+      matchCount > 1 ? `<button class="secondary" data-act="more">更多 ${matchCount}</button>` : '';
+    // 有主按钮时做成分段下拉，把「不再提示」藏进 ⌄ 菜单；无主按钮（otp 无 TOTP）时退回独立按钮。
+    const moreMenu = `<div class="more-wrap"><button class="icon more-btn" data-act="toggle-mute-menu" aria-label="更多" title="更多操作">⋯</button>${muteMenuOpen ? `<div class="split-menu"><button data-act="mute-site" title="${esc(muteMenuTitle)}">不再自动提示此站</button></div>` : ''}</div>`;
+    const bannerActions = `${bannerMainBtn}${bannerMoreBtn}${moreMenu}`;
+
     r.innerHTML = `
       <style>${css}</style>
       <div class="wrap">
-        <div class="card">
+        <div class="card${muteMenuOpen ? ' menu-open' : ''}">
           <div class="row">
             <div class="logo">${capturePrompt ? '+' : 'PM'}</div>
             <div class="text">
@@ -2064,22 +2123,8 @@
                          : ''
                      }
                      <button class="secondary" data-act="edit-capture">编辑</button>
-                     <button class="secondary" data-act="dismiss-capture">忽略</button>`
-                  : `${
-                      surface === 'username'
-                        ? `<button class="primary" data-act="${autoSubmit ? 'continue-user' : 'fill-user'}" data-id="${esc(first.accountId)}">${autoSubmit ? '登录' : '填充'}</button>`
-                        : surface === 'otp'
-                          ? first.hasTotp
-                            ? `<button class="primary" data-act="totp" data-id="${esc(first.accountId)}">验证码</button>`
-                            : ''
-                          : `<button class="primary" data-act="${autoSubmit ? 'login' : 'fill'}" data-id="${esc(first.accountId)}">${autoSubmit ? '登录' : '填充'}</button>`
-                    }
-                     ${
-                       matchCount > 1
-                         ? `<button class="secondary" data-act="more">更多 ${matchCount}</button>`
-                         : ''
-                     }
-                     <button class="secondary" data-act="mute-site" title="加入静默名单：在此网站不再自动弹出填充和保存提示（扩展弹窗仍可手动操作）">不再提示</button>`
+                     ${moreMenu}`
+                  : bannerActions
               }
               <button class="icon" data-act="close" aria-label="关闭">×</button>
             </div>
@@ -2216,7 +2261,13 @@
         return;
       }
       if (act === 'more') {
+        muteMenuOpen = false;
         expanded = !expanded;
+        render();
+        return;
+      }
+      if (act === 'toggle-mute-menu') {
+        muteMenuOpen = !muteMenuOpen;
         render();
         return;
       }
@@ -2581,6 +2632,11 @@
     (e) => {
       const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
       if (path.includes(host)) return;
+      // 点到 UI 之外：收起「不再提示」下拉菜单。
+      if (muteMenuOpen) {
+        muteMenuOpen = false;
+        render();
+      }
       // shadow DOM 里的点击会被重定位到宿主：用 composedPath 拿到真实目标。
       const t = path[0] && path[0].nodeType === 1 ? path[0] : e.target;
       // 已登录页面上的「绑定 GitHub / 关联微信」是账号绑定而不是登录，跳过第三方登录捕获。

@@ -97,6 +97,8 @@ export type Msg =
   | { type: 'assist:matches'; url?: string }
   // 页面浮层点「此网站不再提示」：把 sender origin 加进按站点静默名单（只能静默自己）
   | { type: 'assist:muteSite' }
+  // 页面浮层点「本次会话不再自动弹」：仅本次浏览器会话内不自动弹登录横幅，不进静默名单（storage.session）
+  | { type: 'assist:snoozeSite' }
   | { type: 'assist:fillUsername'; accountId: string; submit?: boolean; url?: string }
   | { type: 'assist:fill'; accountId: string; submit?: boolean; url?: string }
   | { type: 'assist:fillTotp'; accountId: string; submit?: boolean; url?: string }

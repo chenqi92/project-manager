@@ -277,12 +277,15 @@ describe('按站点静默（assist:muteSite）', () => {
     expect(snap.muted).toBe(true);
     expect(snap.matches).toHaveLength(0);
 
-    // origin 记入 vault 设置（随同步走），storage.local 留镜像（锁定时判断用）
-    const data = await sendMsg<{ settings: { assistMutedOrigins?: string[] } }>({
-      type: 'vault:get',
-    });
-    expect(data.settings.assistMutedOrigins).toContain(ORIGIN);
-    expect(localStore.get('assistMutedOrigins')).toEqual([ORIGIN]);
+    // 新模型：命中链接 → 关该链接的 autoAssist（随同步走），不再往 assistMutedOrigins 塞 origin；
+    // storage.local 按 host 留镜像（锁定时判断用）。
+    const data = await sendMsg<{
+      settings: { assistMutedOrigins?: string[] };
+      projects: { environments: { links: { autoAssist?: boolean }[] }[] }[];
+    }>({ type: 'vault:get' });
+    expect(data.projects[0]!.environments[0]!.links[0]!.autoAssist).toBe(false);
+    expect(data.settings.assistMutedOrigins ?? []).not.toContain(ORIGIN);
+    expect(localStore.get('assistMutedOrigins')).toEqual(['app.example.com']);
   });
 
   it('锁定后静默站点的快照仍返回 muted（读 storage.local 镜像）', async () => {

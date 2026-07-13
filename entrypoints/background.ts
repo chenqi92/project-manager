@@ -9,7 +9,7 @@ import {
 } from '@/lib/autofill';
 import { fromB64, toB64 } from '@/lib/crypto';
 import { detectOAuthAuthorize } from '@/lib/federated-oauth';
-import { flatten, matchForUrl, search } from '@/lib/search';
+import { allLinks, flatten, matchForUrl, search } from '@/lib/search';
 import { buildExport, mergeVaults, parseImport } from '@/lib/import-export';
 import type { Msg, MsgResponse } from '@/lib/messaging';
 import { authorizeDrive } from '@/lib/oauth';
@@ -86,6 +86,7 @@ const AUTO_FILL_TTL_MS = 30 * 60_000;
 // 「该站点不弹提示」，否则静默站点在锁定状态下仍会弹「已锁定」浮层。
 // 注：内容脚本的动态注册本就把链接 origin 明文留在浏览器 profile 里，镜像不额外扩大暴露面。
 const MUTED_MIRROR_KEY = 'assistMutedOrigins';
+const SNOOZED_SESSION_KEY = 'assistSnoozedOrigins';
 
 // 全部仅存在于内存（SW 重启后从 session 恢复，浏览器关闭即丢失）。
 let dek: Uint8Array | null = null;
@@ -739,6 +740,14 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
       return;
     }
 
+    case 'assist:snoozeSite': {
+      // 页面只能对自己「本会话不再自动弹出」；不进静默名单，仅存 storage.session。
+      const trusted = senderOrigin(sender);
+      if (!trusted) throw new Error('无法确认当前网页来源');
+      await snoozeAssistSite(trusted);
+      return;
+    }
+
     case 'assist:fillUsername':
       return assistFillUsername(sender, msg.accountId, msg.submit === true, msg.url);
 
@@ -895,10 +904,14 @@ async function assistMatches(sender?: MsgSender, reportedUrl?: string): Promise<
     return { locked: true, enabled: false, muted, origin, autoSubmit: false, theme: 'system', matches: [] };
   }
   const muted = origin ? assistSiteMuted(cachedData, origin) : false;
+  // 本会话「不再自动弹出」：不进静默名单，仅本次浏览器会话内不自动弹登录横幅（保存提示 / 手动填充不受影响）。
+  const snoozed = origin ? await assistSiteSnoozed(origin) : false;
   const pageUrl = assistPageUrl(sender, reportedUrl);
   // 跨全部工作区匹配：工作区只用于展示分组，其它工作区存的账号也要能在该网站弹出顶部横幅。
   const matches =
-    enabled && !muted && pageUrl ? matchForUrl(allWorkspacesData(cachedData), pageUrl).map(toAssistEntry) : [];
+    enabled && !muted && !snoozed && pageUrl
+      ? matchForUrl(allWorkspacesData(cachedData), pageUrl).map(toAssistEntry)
+      : [];
   return {
     locked: false,
     enabled,
@@ -1280,16 +1293,111 @@ async function muteRepromptPending(
   await browser.storage.session.set({ [PENDING_KEY]: pendingCaptures });
 }
 
+/** 从 URL/origin 取 host（含端口）；补协议后解析,失败返回 null。 */
+function hostOfUrl(u: string): string | null {
+  let s = (u || '').trim();
+  if (!s) return null;
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+  try {
+    return new URL(s).host;
+  } catch {
+    return null;
+  }
+}
+
+/** 一条链接涉及的所有 host（主网址 + 更多网址）。 */
+function linkHostsOf(link: PlatformLink): string[] {
+  const out: string[] = [];
+  for (const u of [link.url, ...(link.urls ?? [])]) {
+    const h = hostOfUrl(u);
+    if (h) out.push(h);
+  }
+  return out;
+}
+
+/** 当前所有「关闭了自动提示」的 host：孤儿名单 ∪ autoAssist===false 的链接。用于锁定态镜像。 */
+function mutedHostsFromData(data: VaultData): string[] {
+  const out = new Set<string>();
+  for (const o of data.settings.assistMutedOrigins ?? []) {
+    const h = hostOfUrl(o);
+    if (h) out.add(h);
+  }
+  for (const { link } of allLinks(data)) {
+    if (link.autoAssist === false) for (const h of linkHostsOf(link)) out.add(h);
+  }
+  return [...out];
+}
+
+/** 该 origin 是否被静默（自动提示关闭）：命中 autoAssist===false 的链接,或在孤儿名单里。按 host 比对,忽略协议。 */
 function assistSiteMuted(data: VaultData, origin: string): boolean {
-  return (data.settings.assistMutedOrigins ?? []).includes(origin);
+  const host = hostOfUrl(origin);
+  if (!host) return false;
+  if ((data.settings.assistMutedOrigins ?? []).some((o) => hostOfUrl(o) === host)) return true;
+  return allLinks(data).some(
+    ({ link }) => link.autoAssist === false && linkHostsOf(link).includes(host),
+  );
+}
+
+/** 一次性迁移：旧 assistMutedOrigins 里能对应到链接的 → 设 link.autoAssist=false 并移出名单；对不上的留作孤儿。 */
+function migrateAssistMuted(data: VaultData): boolean {
+  const origins = data.settings.assistMutedOrigins;
+  if (!origins || origins.length === 0) return false;
+  const orphans: string[] = [];
+  let changed = false;
+  for (const o of origins) {
+    const host = hostOfUrl(o);
+    const hits = host
+      ? allLinks(data).filter(({ link }) => linkHostsOf(link).includes(host))
+      : [];
+    if (hits.length > 0) {
+      for (const { link } of hits) {
+        if (link.autoAssist !== false) {
+          link.autoAssist = false;
+          changed = true;
+        }
+      }
+    } else {
+      orphans.push(o);
+    }
+  }
+  if (orphans.length !== origins.length) {
+    data.settings.assistMutedOrigins = orphans.length ? orphans : undefined;
+    changed = true;
+  }
+  return changed;
+}
+
+/** 本会话「不再自动弹出」名单（storage.session，浏览器关闭即清；不写入 vault 静默名单）。 */
+async function assistSiteSnoozed(origin: string): Promise<boolean> {
+  try {
+    const s = await browser.storage.session.get(SNOOZED_SESSION_KEY);
+    return ((s[SNOOZED_SESSION_KEY] as string[] | undefined) ?? []).includes(origin);
+  } catch {
+    return false;
+  }
+}
+
+/** 把某站点加入本会话「不再自动弹出」名单：仅登录横幅不自动弹，保存提示 / 手动填充不受影响。 */
+async function snoozeAssistSite(origin: string): Promise<void> {
+  try {
+    const s = await browser.storage.session.get(SNOOZED_SESSION_KEY);
+    const list = (s[SNOOZED_SESSION_KEY] as string[] | undefined) ?? [];
+    if (!list.includes(origin)) {
+      await browser.storage.session.set({ [SNOOZED_SESSION_KEY]: [...list, origin] });
+    }
+  } catch {
+    /* session 写入失败不阻塞主流程 */
+  }
 }
 
 /** 锁定时读 storage.local 镜像判断站点是否被静默（vault 设置此时不可读）。 */
 async function assistSiteMutedWhileLocked(origin: string): Promise<boolean> {
   try {
+    const host = hostOfUrl(origin);
+    if (!host) return false;
     const s = await browser.storage.local.get(MUTED_MIRROR_KEY);
     const list = s[MUTED_MIRROR_KEY] as string[] | undefined;
-    return Array.isArray(list) && list.includes(origin);
+    return Array.isArray(list) && list.includes(host);
   } catch {
     return false;
   }
@@ -1297,7 +1405,7 @@ async function assistSiteMutedWhileLocked(origin: string): Promise<boolean> {
 
 async function syncMutedOriginsMirror(data: VaultData): Promise<void> {
   try {
-    const list = data.settings.assistMutedOrigins ?? [];
+    const list = mutedHostsFromData(data);
     if (list.length > 0) await browser.storage.local.set({ [MUTED_MIRROR_KEY]: list });
     else await browser.storage.local.remove(MUTED_MIRROR_KEY);
   } catch {
@@ -1308,11 +1416,22 @@ async function syncMutedOriginsMirror(data: VaultData): Promise<void> {
 /** 页面浮层点「此网站不再提示」：加入静默名单并清掉该站点的候选与待处理捕获。 */
 async function muteAssistSite(origin: string): Promise<void> {
   await requireUnlocked();
-  if (!assistSiteMuted(cachedData!, origin)) {
-    const data = structuredClone(cachedData!);
-    data.settings.assistMutedOrigins = [...(data.settings.assistMutedOrigins ?? []), origin];
-    await persistData(data);
-    scheduleAutoSync();
+  const host = hostOfUrl(origin);
+  // 双层：命中链接 → 关该链接的自动提示（持久,可在链接处恢复）；没有链接 → 本会话静默（陌生站,关浏览器恢复）。
+  const hit = host
+    ? allLinks(cachedData!).find(({ link }) => linkHostsOf(link).includes(host))
+    : undefined;
+  if (hit) {
+    if (hit.link.autoAssist !== false) {
+      const data = structuredClone(cachedData!);
+      for (const { link } of allLinks(data)) {
+        if (link.id === hit.link.id) link.autoAssist = false;
+      }
+      await persistData(data);
+      scheduleAutoSync();
+    }
+  } else {
+    await snoozeAssistSite(origin);
   }
   await ensureLoginCandidatesRestored();
   let candidatesChanged = false;
@@ -2075,6 +2194,7 @@ async function setUnlocked(d: Uint8Array, data: VaultData): Promise<void> {
   // 一次性迁移旧的单一自托管同步配置 → syncTargets。
   let changed = migrateSyncSettings(data);
   changed = normalizeVaultData(data) || changed;
+  changed = migrateAssistMuted(data) || changed;
   if (changed) await persistData(data);
   await registerCaptureForData(data);
 }

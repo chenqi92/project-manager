@@ -10,7 +10,7 @@ import {
   SlidersHorizontal,
   Trash2,
 } from 'lucide-react';
-import { Button, Input, Label, Modal, Select, cx } from '@/components/ui';
+import { Button, Input, Label, Modal, Select, Toggle, cx } from '@/components/ui';
 import { decodeQrImage } from '@/lib/qr';
 import type {
   Account,
@@ -484,6 +484,7 @@ export function LinkEditor({
     urls?: string[];
     gitRepos?: GitRepo[];
     customFields?: CustomField[];
+    autoAssist?: boolean;
   }, location?: { workspaceId: string; projectId: string }) => void;
 }) {
   const [workspaceId, setWorkspaceId] = useState(location?.workspaceId ?? location?.workspaces[0]?.id ?? '');
@@ -517,6 +518,9 @@ export function LinkEditor({
   const [note, setNote] = useState(initial?.note ?? '');
   const [repos, setRepos] = useState<GitRepo[]>(initial?.gitRepos ?? []);
   const [customFields, setCustomFields] = useState<CustomField[]>(initial?.customFields ?? []);
+
+  // 网页助手自动提示开关（缺省视为开）；关掉即这条链接匹配的网站不再自动弹登录 / 保存提示。
+  const [autoAssist, setAutoAssist] = useState(initial?.autoAssist !== false);
 
   return (
     <Modal title={initial ? '编辑链接' : '新建链接 / 平台'} onClose={onClose} wide>
@@ -600,6 +604,17 @@ export function LinkEditor({
             同一系统的<b>其它访问地址</b>（不同 IP / 域名 / 端口）写这里。换路径无意义——要写就写不同的 origin。
           </p>
         </div>
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5">
+          <div className="min-w-0">
+            <Label>网页登录提示</Label>
+            <p className="mt-0.5 text-[11px] text-gray-400">
+              {autoAssist
+                ? '在该链接匹配的网站，登录 / 保存时自动弹出提示；关掉即不再自动弹（扩展弹窗仍可手动填充）。'
+                : '已关闭：这个网站不再自动弹登录 / 保存提示；打开即可恢复。'}
+            </p>
+          </div>
+          <Toggle checked={autoAssist} onChange={setAutoAssist} />
+        </div>
         <GitReposField repos={repos} setRepos={setRepos} />
         <CustomFieldsField
           fields={customFields}
@@ -630,6 +645,7 @@ export function LinkEditor({
               urls: urls.length ? urls : undefined,
               gitRepos: cleanRepos(repos),
               customFields: cleanCustomFields(customFields),
+              autoAssist: autoAssist ? undefined : false,
             }, location ? { workspaceId, projectId } : undefined);
           }}
         >

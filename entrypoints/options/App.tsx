@@ -619,6 +619,7 @@ export default function App() {
       urls?: string[];
       gitRepos?: GitRepo[];
       customFields?: CustomField[];
+      autoAssist?: boolean;
     },
     target?: {
       workspaceId?: string;

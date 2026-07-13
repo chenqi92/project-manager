@@ -46,6 +46,7 @@ export function newLink(p: Partial<PlatformLink> = {}): PlatformLink {
     url: p.url ?? '',
     urls: p.urls,
     matchMode: p.matchMode,
+    autoAssist: p.autoAssist,
     gitRepos: p.gitRepos,
     note: p.note,
     customFields: p.customFields,

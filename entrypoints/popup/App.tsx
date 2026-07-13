@@ -30,7 +30,7 @@ import { copyWithAutoClear } from '@/lib/clipboard';
 import { envSwitchTargets } from '@/lib/env-switch';
 import { api } from '@/lib/messaging';
 import { applyTheme, watchSystemTheme } from '@/lib/theme';
-import { entryMatchesUrl, flatten, matchForUrl, search, type FlatEntry } from '@/lib/search';
+import { allLinks as allVaultLinks, entryMatchesUrl, flatten, matchForUrl, search, type FlatEntry } from '@/lib/search';
 import { getUsage, recordUse } from '@/lib/usage';
 import type { CapturePending, EnvKind } from '@/lib/types';
 import { allWorkspacesData } from '@/lib/workspace';
@@ -163,19 +163,46 @@ export default function App() {
   const pageOrigin = tab?.url ? getOrigin(tab.url) : null;
   // 只有 http(s) 网页能注入内容脚本读取输入；chrome:// / chrome-extension:// / file:// 等一律不行。
   const canCapture = !!pageOrigin;
-  // 当前站点在按站点静默名单里：网页浮层不再自动弹填充/保存提示。
-  const siteMuted =
-    !!pageOrigin && (data?.settings.assistMutedOrigins ?? []).includes(pageOrigin);
+  // 网页助手静默（双层）：命中已收纳链接 → 关该链接的 autoAssist；陌生站 → 孤儿 origin 名单。按 host 比对，忽略协议。
+  const hostOf = (u: string): string | null => {
+    try {
+      return new URL(/^https?:\/\//i.test(u) ? u : 'https://' + u).host;
+    } catch {
+      return null;
+    }
+  };
+  const pageHost = pageOrigin ? hostOf(pageOrigin) : null;
+  const mutedLink = useMemo(() => {
+    if (!data || !pageHost) return null;
+    return (
+      allVaultLinks(data).find(({ link }) =>
+        [link.url, ...(link.urls ?? [])].some((u) => hostOf(u) === pageHost),
+      )?.link ?? null
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, pageHost]);
+  const siteMuted = mutedLink
+    ? mutedLink.autoAssist === false
+    : !!pageHost && (data?.settings.assistMutedOrigins ?? []).some((o) => hostOf(o) === pageHost);
 
   async function toggleSiteMute() {
     if (!data || !pageOrigin) return;
     try {
       await vault.save(
         produce(data, (d) => {
-          const list = d.settings.assistMutedOrigins ?? [];
-          d.settings.assistMutedOrigins = siteMuted
-            ? list.filter((o) => o !== pageOrigin)
-            : [...list, pageOrigin];
+          if (mutedLink) {
+            for (const { link } of allVaultLinks(d)) {
+              if (link.id === mutedLink.id) {
+                if (siteMuted) delete link.autoAssist;
+                else link.autoAssist = false;
+              }
+            }
+          } else {
+            const list = d.settings.assistMutedOrigins ?? [];
+            d.settings.assistMutedOrigins = siteMuted
+              ? list.filter((o) => hostOf(o) !== pageHost)
+              : [...list, pageOrigin];
+          }
         }),
       );
       flash(siteMuted ? '已恢复此网站的自动提示' : '此网站不再自动弹出提示');
@@ -433,6 +460,22 @@ export default function App() {
         </span>
         <span className="text-[13px] font-bold text-gray-900">项目环境管家</span>
         <div className="ml-auto flex items-center gap-1">
+          {pageOrigin && data && (
+            <button
+              title={
+                siteMuted
+                  ? '此网站当前不弹自动提示，点击恢复'
+                  : '在此网站不再自动弹出填充和保存提示（弹窗里仍可手动填充/捕获）'
+              }
+              onClick={toggleSiteMute}
+              className={cx(
+                'rounded-md p-1.5 hover:bg-gray-100',
+                siteMuted ? 'text-brand-600' : 'text-gray-500',
+              )}
+            >
+              {siteMuted ? <Bell size={16} /> : <BellOff size={16} />}
+            </button>
+          )}
           {status?.syncEnabled && (
             <button
               title="立即同步"
@@ -736,27 +779,9 @@ export default function App() {
                 <Plus size={15} /> 保存当前页
               </Button>
             )}
-            {pageOrigin && data && (
-              <Button
-                variant="subtle"
-                className="h-9 min-w-0 whitespace-nowrap px-2 text-[13px]"
-                onClick={toggleSiteMute}
-                title={
-                  siteMuted
-                    ? '此网站当前不弹自动提示，点击恢复'
-                    : '在此网站不再自动弹出填充和保存提示（弹窗里仍可手动填充/捕获）'
-                }
-              >
-                {siteMuted ? <Bell size={15} /> : <BellOff size={15} />}
-                {siteMuted ? '恢复本站提示' : '关闭本站提示'}
-              </Button>
-            )}
             <Button
               variant="ghost"
-              className={cx(
-                'h-9 min-w-0 whitespace-nowrap px-2 text-[13px]',
-                pageOrigin && data ? '' : 'col-span-2',
-              )}
+              className="col-span-2 h-9 min-w-0 whitespace-nowrap px-2 text-[13px]"
               onClick={() => browser.runtime.openOptionsPage()}
             >
               管理全部

@@ -13,6 +13,7 @@ import {
   Toggle,
 } from '@/components/ui';
 import { useDialog } from '@/components/Dialog';
+import { allLinks } from '@/lib/search';
 import { toB64 } from '@/lib/crypto';
 import { api } from '@/lib/messaging';
 import { applyTheme, type Theme } from '@/lib/theme';
@@ -81,14 +82,27 @@ export function Settings({
   const setSetting = (fn: (d: VaultData) => void) => onSave(produce(data, fn));
 
   const memoOn = data.settings.floatingMemoHidden !== true;
-  const mutedSites = data.settings.assistMutedOrigins ?? [];
-  const unmuteSite = (origin: string) =>
+  // 关闭了自动提示的链接（autoAssist===false）+ 迁移不到链接的历史 origin（孤儿，按 host 去重）。
+  const silencedLinks = allLinks(data).filter(({ link }) => link.autoAssist === false);
+  const restoreLink = (linkId: string) =>
+    setSetting((d) => {
+      for (const { link } of allLinks(d)) {
+        if (link.id === linkId) delete link.autoAssist;
+      }
+    });
+  const orphanMutes = [
+    ...new Map((data.settings.assistMutedOrigins ?? []).map((o) => [hostOfOrigin(o), o])).values(),
+  ];
+  const unmuteSite = (origin: string) => {
+    const host = hostOfOrigin(origin);
     setSetting(
       (d) =>
         void (d.settings.assistMutedOrigins = (d.settings.assistMutedOrigins ?? []).filter(
-          (o) => o !== origin,
+          (o) => hostOfOrigin(o) !== host,
         )),
     );
+  };
+  const anySilenced = silencedLinks.length > 0 || orphanMutes.length > 0;
   const autoSubmit = data.settings.autoSubmit === true;
   const autoFlow = data.settings.autoFlow !== false;
   const webAssist = data.settings.webAssist !== false;
@@ -267,13 +281,30 @@ export function Settings({
                 }
               />
             </SettingsRow>
-            {mutedSites.length > 0 && (
+            {anySilenced && (
               <SettingsRow
-                title="已静默的网站"
-                desc="这些网站不再自动弹出填充/保存提示（可在网页浮层或扩展弹窗里加入）；移除后恢复提示"
+                title="关闭了自动提示的网站"
+                desc="这些链接 / 网站不再自动弹登录 / 保存提示；点 × 恢复。扩展弹窗仍可手动填充。"
               >
                 <div className="flex max-w-[280px] flex-col items-end gap-1.5">
-                  {mutedSites.map((origin) => (
+                  {silencedLinks.map(({ link, project }) => (
+                    <div
+                      key={link.id}
+                      className="flex items-center gap-1.5 rounded-lg bg-gray-100 py-1 pl-2.5 pr-1.5 text-[12px] text-gray-700"
+                    >
+                      <span className="max-w-[210px] truncate" title={`${project.name} / ${link.name}`}>
+                        {link.name || link.url}
+                      </span>
+                      <button
+                        onClick={() => void restoreLink(link.id)}
+                        className="rounded p-0.5 text-gray-400 hover:text-red-500"
+                        title="恢复该链接的自动提示"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                  {orphanMutes.map((origin) => (
                     <div
                       key={origin}
                       className="flex items-center gap-1.5 rounded-lg bg-gray-100 py-1 pl-2.5 pr-1.5 text-[12px] text-gray-700"

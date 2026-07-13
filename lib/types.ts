@@ -68,6 +68,8 @@ export interface PlatformLink {
   urls?: string[];
   /** 当前页自动匹配策略；缺省为 origin，兼容旧数据。 */
   matchMode?: LinkMatchMode;
+  /** 网页助手自动提示：缺省 / true = 在该链接匹配的网站自动弹登录/保存提示；false = 关闭（不影响 popup 手动填充）。 */
+  autoAssist?: boolean;
   /** 关联的 Git 仓库（可一个或多个） */
   gitRepos?: GitRepo[];
   note?: string;

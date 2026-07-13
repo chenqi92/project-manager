@@ -378,6 +378,15 @@ describe('web-assist.js banner heuristics and per-site mute', () => {
       await focusAndFlush('input[name="username"]');
       expect(document.getElementById('pem-web-assist')).toBeTruthy();
 
+      // 「不再自动提示此站」现在收在 ⋯ 菜单里，先点开 ⋯。
+      const moreBtn = roots
+        .map((r) => r.querySelector('[data-act="toggle-mute-menu"]'))
+        .find(Boolean) as HTMLElement | undefined;
+      expect(moreBtn).toBeTruthy();
+      moreBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve();
+
       const muteBtn = roots
         .map((r) => r.querySelector('[data-act="mute-site"]'))
         .find(Boolean) as HTMLElement | undefined;

@@ -77,6 +77,19 @@ export function flatten(data: VaultData): FlatEntry[] {
   return out;
 }
 
+/** 遍历所有工作区/项目下的链接（环境下 + 项目直挂 + 旧 data.projects）。返回真实引用，可就地修改。 */
+export function allLinks(data: VaultData): Array<{ link: PlatformLink; project: Project }> {
+  const out: Array<{ link: PlatformLink; project: Project }> = [];
+  const walk = (projects: Project[]) => {
+    for (const p of projects) {
+      for (const e of p.environments ?? []) for (const l of e.links ?? []) out.push({ link: l, project: p });
+    }
+  };
+  for (const ws of data.workspaces ?? []) walk(ws.projects);
+  walk(data.projects ?? []);
+  return out;
+}
+
 export function search(data: VaultData, query: string): FlatEntry[] {
   const q = query.trim().toLowerCase();
   const all = flatten(data);
