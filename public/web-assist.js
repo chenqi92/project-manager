@@ -53,9 +53,21 @@
   const sendAssist = (msg) => send({ ...msg, url: location.href });
 
   const visible = (el) => {
+    let current = el;
+    while (current) {
+      const style = getComputedStyle(current);
+      if (
+        current.hidden ||
+        current.getAttribute?.('aria-hidden') === 'true' ||
+        style.visibility === 'hidden' ||
+        style.display === 'none' ||
+        style.opacity === '0'
+      )
+        return false;
+      current = current.parentElement;
+    }
     const r = el.getBoundingClientRect();
-    const s = getComputedStyle(el);
-    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+    return r.width > 0 && r.height > 0;
   };
 
   const passwordFields = () =>
@@ -705,28 +717,63 @@
   // ---- 自动提交防循环 ----------------------------------------------------
   // 有些站点点了登录才弹出滑动验证码 / 二次校验：自动提交那一刻页面上还没有验证码元素，
   // 填充函数无从识别，点击后被拦下、页面刷新清空，再自动提交又被拦下 …… 形成死循环。
-  // 这里记录每个来源是否「需手动完成验证后再提交」，命中后横幅只填充不再自动提交。
+  // 这里按「来源 + 账号」记录是否需手动完成验证后再提交。验证码可能只在某个账号触发，
+  // 不能因为一次拦截就把同站点所有账号一起从「登录」切成「填充」。
   const AUTO_SUBMIT_KEY = 'pemAutoSubmitAt';
-  const MANUAL_SUBMIT_KEY = 'pemManualSubmitOrigins';
+  const MANUAL_SUBMIT_KEY = 'pemManualSubmitAccounts';
+  const LEGACY_MANUAL_SUBMIT_KEY = 'pemManualSubmitOrigins';
 
-  const manualSubmitRequired = () => {
+  // 旧版本保存的是纯 origin 数组，无法还原到具体账号。它只是会话级防循环状态，升级后直接
+  // 丢弃比继续让所有账号错误降级更安全。
+  try {
+    sessionStorage.removeItem(LEGACY_MANUAL_SUBMIT_KEY);
+  } catch {
+    /* ignore private/session storage failures */
+  }
+
+  const readManualSubmitAccounts = () => {
     try {
-      const raw = sessionStorage.getItem(MANUAL_SUBMIT_KEY);
-      return raw ? JSON.parse(raw).includes(location.origin) : false;
+      const parsed = JSON.parse(sessionStorage.getItem(MANUAL_SUBMIT_KEY) || '[]');
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
+      return [];
+    }
+  };
+
+  const manualSubmitRequired = (accountId) =>
+    Boolean(accountId) &&
+    readManualSubmitAccounts().some(
+      (item) => item?.origin === location.origin && item?.accountId === accountId,
+    );
+
+  const markManualSubmit = (accountId) => {
+    if (!accountId) return false;
+    try {
+      const list = readManualSubmitAccounts();
+      if (list.some((item) => item?.origin === location.origin && item?.accountId === accountId))
+        return false;
+      list.push({ origin: location.origin, accountId });
+      sessionStorage.setItem(MANUAL_SUBMIT_KEY, JSON.stringify(list));
+      return true;
+    } catch {
+      /* ignore private/session storage failures */
       return false;
     }
   };
 
-  const markManualSubmit = () => {
+  const clearManualSubmit = (accountId) => {
+    if (!accountId) return false;
     try {
-      const list = JSON.parse(sessionStorage.getItem(MANUAL_SUBMIT_KEY) || '[]');
-      if (!list.includes(location.origin)) {
-        list.push(location.origin);
-        sessionStorage.setItem(MANUAL_SUBMIT_KEY, JSON.stringify(list));
-      }
+      const list = readManualSubmitAccounts();
+      const next = list.filter(
+        (item) => !(item?.origin === location.origin && item?.accountId === accountId),
+      );
+      if (next.length === list.length) return false;
+      if (next.length) sessionStorage.setItem(MANUAL_SUBMIT_KEY, JSON.stringify(next));
+      else sessionStorage.removeItem(MANUAL_SUBMIT_KEY);
+      return true;
     } catch {
-      /* ignore private/session storage failures */
+      return false;
     }
   };
 
@@ -739,28 +786,42 @@
   };
 
   // 页面上是否出现了可见的验证码 / 人机校验（滑块、图形码、geetest/recaptcha 等）。
-  const CHALLENGE_RE =
-    /(captcha|recaptcha|hcaptcha|turnstile|geetest|slider|swipe|slide|drag|验证码|校验码|图形码|滑块|滑动|拖动|拖拽|向右滑|人机验证|安全验证)/i;
-  const verificationChallengeVisible = () =>
-    Array.from(
+  const CHALLENGE_ATTRIBUTE_RE =
+    /(?:captcha|recaptcha|hcaptcha|turnstile|geetest|(?:^|[\s_:/.-])(?:verify|verification|slider|swipe|drag)(?:$|[\s_:/.-])|验证码|校验码|图形码|滑块|人机验证|安全验证)/i;
+  const CHALLENGE_TEXT_RE =
+    /(?:captcha|human\s+verification|security\s+verification|slide\s+to\s+(?:verify|unlock)|drag\s+to\s+(?:verify|unlock)|验证码|校验码|图形码|滑块|滑动|拖动|拖拽|向右滑|人机验证|安全验证)/i;
+  const challengeAttributeText = (el) =>
+    [
+      el.getAttribute('id') || '',
+      el.getAttribute('class') || '',
+      el.getAttribute('name') || '',
+      el.getAttribute('src') || '',
+      el.getAttribute('alt') || '',
+      el.getAttribute('title') || '',
+      el.getAttribute('aria-label') || '',
+      el.getAttribute('data-sitekey') || '',
+    ]
+      .join(' ')
+      .toLowerCase();
+  const directText = (el) =>
+    Array.from(el.childNodes)
+      .filter((node) => node.nodeType === 3)
+      .map((node) => node.textContent || '')
+      .join(' ')
+      .trim();
+  const verificationChallengeVisible = () => {
+    const attributeMatch = Array.from(
       document.querySelectorAll(
         'iframe, img, canvas, svg, [class], [id], [aria-label], [title], [data-sitekey]',
       ),
-    ).some((el) => {
-      if (!visible(el)) return false;
-      const t = [
-        el.getAttribute('id') || '',
-        el.getAttribute('class') || '',
-        el.getAttribute('src') || '',
-        el.getAttribute('alt') || '',
-        el.getAttribute('title') || '',
-        el.getAttribute('aria-label') || '',
-        el.getAttribute('data-sitekey') || '',
-      ]
-        .join(' ')
-        .toLowerCase();
-      return CHALLENGE_RE.test(t);
-    });
+    ).some(
+      (el) => visible(el) && CHALLENGE_ATTRIBUTE_RE.test(challengeAttributeText(el)),
+    );
+    if (attributeMatch) return true;
+    return Array.from(
+      document.querySelectorAll('div, span, p, label, strong, h1, h2, h3, h4'),
+    ).some((el) => visible(el) && CHALLENGE_TEXT_RE.test(directText(el)));
+  };
 
   // 自动提交后仍停留在带可见密码框的登录页、且页面上出现了验证码/人机校验 = 被「点击后才弹出的
   // 滑动验证码 / 二次校验」拦下。记下该来源，之后只填充不再自动提交，避免反复弹验证码 / 刷新。
@@ -773,6 +834,12 @@
       stamp = null;
     }
     if (!stamp || stamp.origin !== location.origin) return false;
+    const accountId = String(stamp.accountId || '');
+    // 旧版本的自动提交标记没有账号信息，不能再据此把整个站点降级。
+    if (!accountId) {
+      clearAutoSubmitMark();
+      return false;
+    }
     const age = Date.now() - Number(stamp.ts || 0);
     if (age > 8000) {
       clearAutoSubmitMark();
@@ -781,11 +848,11 @@
     if (age < 1500) return false; // 留出成功跳转离开登录页的时间，避免误判
     if (passwordFields().length === 0) return false; // 已离开登录页（含进入 OTP 步骤），不算失败
     if (!verificationChallengeVisible()) return false; // 没弹验证码/人机校验，多半只是登录耗时，不降级
-    if (manualSubmitRequired()) {
+    if (manualSubmitRequired(accountId)) {
       clearAutoSubmitMark();
       return false;
     }
-    markManualSubmit();
+    markManualSubmit(accountId);
     clearAutoSubmitMark();
     return true;
   };
@@ -892,7 +959,7 @@
     if (surface === 'none') return;
     if (surface === flow.lastSurface) return; // 还停在同一步，别重复填
     // 出现验证码/人机校验，或该来源已被判定需手动 → 暂停自动续填，交给用户处理
-    if (verificationChallengeVisible() || manualSubmitRequired()) return;
+    if (verificationChallengeVisible() || manualSubmitRequired(flow.accountId)) return;
     // 当前页必须匹配到该账号（背景还会按精确 origin 再校验一次）
     if (!snapshot?.matches?.some((m) => m.accountId === flow.accountId)) return;
 
@@ -1948,15 +2015,17 @@
 
   const render = (message, tone = 'info') => {
     guardAutoSubmitLoop();
+    // 完成验证码并进入登录态后恢复该账号的「登录」动作，避免同一标签页退出后仍长期停在
+    // 「填充」。preferred() 是最近一次由用户选择并提交的账号。
+    if (pageLoggedIn()) clearManualSubmit(preferredId());
     // 站点被静默：不弹任何浮层（横幅 / 锁定提示 / 保存提示）。扩展弹窗仍可手动填充/捕获。
     if (snapshot?.muted) return destroy();
     const surface = surfaceKind();
     sortMatches(surface);
     // 横幅的「登录」默认就点真正的登录按钮（无验证码直接登录；有滑动验证码/二次校验原地弹出，
     // 由用户完成）——和 1Password 一致。仅当该来源被防循环逻辑判定为「需手动完成验证」时，
-    // 才退回只填充，避免对「点击后才弹验证码」的站点反复自动提交。
+    // 才让该账号退回只填充，避免对「点击后才弹验证码」的账号反复自动提交。
     // 注：设置里的「填充后自动登录」只约束 popup / 打开链接的被动填充，不再影响此处。
-    const autoSubmit = !manualSubmitRequired();
     const hasLoginSurface = surface === 'password' || surface === 'username' || surface === 'otp';
     const shouldShowMatches =
       !dismissed &&
@@ -2181,6 +2250,7 @@
 
     const first = snapshot?.matches?.[0];
     const matchCount = snapshot?.matches?.length || 0;
+    const autoSubmit = !manualSubmitRequired(first?.accountId);
     const title = capturePrompt
       ? capturePrompt.kind === 'update'
         ? `更新 ${capturePrompt.linkName || '已保存账号'} 的${capturePrompt.authProvider ? '登录方式' : '密码'}?`
@@ -2241,8 +2311,9 @@
             expanded && !capturePrompt
               ? `<div class="list">
                   ${snapshot.matches
-                    .map(
-                      (e) => `<div class="item">
+                    .map((e) => {
+                      const accountAutoSubmit = !manualSubmitRequired(e.accountId);
+                      return `<div class="item">
                         <div class="logo">${esc((e.accountLabel || e.username || '?').slice(0, 1).toUpperCase())}</div>
                         <div class="text">
                           <div class="title">${esc(e.linkName || e.projectName)} · ${esc(labelFor(e))}</div>
@@ -2250,15 +2321,15 @@
                         </div>
                         ${
                           surface === 'username'
-                            ? `<button class="tiny" data-act="${autoSubmit ? 'continue-user' : 'fill-user'}" data-id="${esc(e.accountId)}">${autoSubmit ? '登录' : '填充'}</button>`
+                            ? `<button class="tiny" data-act="${accountAutoSubmit ? 'continue-user' : 'fill-user'}" data-id="${esc(e.accountId)}">${accountAutoSubmit ? '登录' : '填充'}</button>`
                             : surface === 'otp'
                               ? e.hasTotp
                                 ? `<button class="tiny" data-act="totp" data-id="${esc(e.accountId)}">验证码</button>`
                                 : ''
-                              : `<button class="tiny" data-act="${autoSubmit ? 'login' : 'fill'}" data-id="${esc(e.accountId)}">${autoSubmit ? '登录' : '填充'}</button>`
+                              : `<button class="tiny" data-act="${accountAutoSubmit ? 'login' : 'fill'}" data-id="${esc(e.accountId)}">${accountAutoSubmit ? '登录' : '填充'}</button>`
                         }
-                      </div>`,
-                    )
+                      </div>`;
+                    })
                     .join('')}
                 </div>`
               : ''
@@ -2519,7 +2590,7 @@
         const okMsg =
           act === 'login'
             ? '已填充并提交'
-            : manualSubmitRequired()
+            : manualSubmitRequired(accountId)
               ? '已填充账号密码，请完成验证后点页面的登录按钮'
               : '已填充账号密码';
         render(

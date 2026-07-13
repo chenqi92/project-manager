@@ -406,6 +406,7 @@ export default function App() {
           entry.password,
           data?.settings.autoSubmit === true,
           entry.tenant,
+          entry.accountId,
         );
         await recordUse(entry.accountId);
         if (r.reason) flash(r.reason);

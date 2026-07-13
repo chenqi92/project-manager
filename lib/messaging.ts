@@ -90,6 +90,7 @@ export type Msg =
       username: string;
       password: string;
       tenant?: string;
+      accountId?: string;
       submit: boolean;
     }
   // 网页内助手（content script 发起；后台按 sender origin 二次校验）
@@ -261,13 +262,21 @@ export const api = {
     send<VaultStatus>({ type: 'vault:adopt', serverUrl, token }),
 
   // 打开链接并自动填充（调用前需在页面里先 chrome.permissions.request 该 origin）
-  openAndFill: (url: string, username: string, password: string, submit: boolean, tenant?: string) =>
+  openAndFill: (
+    url: string,
+    username: string,
+    password: string,
+    submit: boolean,
+    tenant?: string,
+    accountId?: string,
+  ) =>
     send<{ filled: boolean; reason?: string }>({
       type: 'tab:openAndFill',
       url,
       username,
       password,
       tenant,
+      accountId,
       submit,
     }),
 

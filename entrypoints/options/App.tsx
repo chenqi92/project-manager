@@ -318,7 +318,13 @@ export default function App() {
     flash(`${what}已复制（25 秒后自动清空）`);
   };
 
-  const openLogin = async (url: string, username: string, password: string, tenant?: string) => {
+  const openLogin = async (
+    url: string,
+    username: string,
+    password: string,
+    tenant?: string,
+    accountId?: string,
+  ) => {
     const origin = getOrigin(url);
     if (!origin) return flash('链接地址不合法');
     const pattern = origin + '/*';
@@ -335,6 +341,7 @@ export default function App() {
         password,
         data?.settings.autoSubmit === true,
         tenant,
+        accountId,
       );
       if (r.reason) flash(r.reason);
     } catch (e) {
@@ -1526,7 +1533,7 @@ interface ProjectViewProps {
   onEditAccount: (envId: string, linkId: string, account: Account) => void;
   onDeleteAccount: (envId: string, linkId: string, account: Account) => void;
   onCopy: (text: string, what: string) => void;
-  onOpenLogin: (url: string, username: string, password: string, tenant?: string) => void;
+  onOpenLogin: (url: string, username: string, password: string, tenant?: string, accountId?: string) => void;
   onOpenDocs: () => void;
   onAddMemo: (text: string, dueAt: number | undefined, urgent: boolean) => void;
   onToggleMemoDone: (id: string) => void;
@@ -1719,7 +1726,7 @@ function LinkBlock({
     link.matchMode === 'path-prefix' ? '路径匹配' : link.matchMode === 'exact-url' ? '精确匹配' : '';
   const openDefaultLogin = () => {
     if (!link.url || !acc0) return;
-    props.onOpenLogin(link.url, acc0.username, acc0.password, acc0.tenant);
+    props.onOpenLogin(link.url, acc0.username, acc0.password, acc0.tenant, acc0.id);
   };
   return (
     <div className="border-t border-gray-100 px-4 py-3.5">
@@ -1819,7 +1826,9 @@ function LinkBlock({
             onEdit={() => props.onEditAccount(env.id, link.id, a)}
             onDelete={() => props.onDeleteAccount(env.id, link.id, a)}
             onOpenLogin={
-              link.url ? () => props.onOpenLogin(link.url, a.username, a.password, a.tenant) : undefined
+              link.url
+                ? () => props.onOpenLogin(link.url, a.username, a.password, a.tenant, a.id)
+                : undefined
             }
           />
         ))}
@@ -2046,7 +2055,7 @@ function SearchView({
 }: {
   results: FlatEntry[];
   onCopy: (text: string, what: string) => void;
-  onOpenLogin: (url: string, username: string, password: string, tenant?: string) => void;
+  onOpenLogin: (url: string, username: string, password: string, tenant?: string, accountId?: string) => void;
 }) {
   return (
     <div className="flex-1 space-y-2 overflow-auto p-6">
@@ -2067,7 +2076,7 @@ function SearchRow({
 }: {
   entry: FlatEntry;
   onCopy: (text: string, what: string) => void;
-  onOpenLogin: (url: string, username: string, password: string, tenant?: string) => void;
+  onOpenLogin: (url: string, username: string, password: string, tenant?: string, accountId?: string) => void;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -2106,7 +2115,15 @@ function SearchRow({
           <>
             <IconButton
               title="打开并登录"
-              onClick={() => onOpenLogin(entry.url, entry.username, entry.password, entry.tenant)}
+              onClick={() =>
+                onOpenLogin(
+                  entry.url,
+                  entry.username,
+                  entry.password,
+                  entry.tenant,
+                  entry.accountId,
+                )
+              }
             >
               <LogIn size={15} />
             </IconButton>

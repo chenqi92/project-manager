@@ -54,7 +54,7 @@ export function Home({
   onOpenSettings: () => void;
   onOpenCnb: () => void;
   onCopy: (text: string, what: string) => void;
-  onOpenLogin: (url: string, username: string, password: string, tenant?: string) => void;
+  onOpenLogin: (url: string, username: string, password: string, tenant?: string, accountId?: string) => void;
 }) {
   const { confirm, prompt } = useDialog();
   const [editing, setEditing] = useState(false);

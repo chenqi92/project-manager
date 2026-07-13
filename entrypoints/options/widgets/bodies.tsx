@@ -507,7 +507,18 @@ function SearchRow({ entry, ctx }: { entry: FlatEntry; ctx: WidgetProps['ctx'] }
           <span className="text-[10px] font-bold">PW</span>
         </IconBtn>
         {entry.url && (
-          <IconBtn title="打开并登录" onClick={() => ctx.onOpenLogin(entry.url, entry.username, entry.password, entry.tenant)}>
+          <IconBtn
+            title="打开并登录"
+            onClick={() =>
+              ctx.onOpenLogin(
+                entry.url,
+                entry.username,
+                entry.password,
+                entry.tenant,
+                entry.accountId,
+              )
+            }
+          >
             <LogIn size={14} />
           </IconBtn>
         )}
@@ -720,7 +731,15 @@ export function RecentWidget({ widget, data, ctx }: WidgetProps) {
               {entry.url && (
                 <IconBtn
                   title="再次打开并登录"
-                  onClick={() => ctx.onOpenLogin(entry.url, entry.username, entry.password, entry.tenant)}
+                  onClick={() =>
+                    ctx.onOpenLogin(
+                      entry.url,
+                      entry.username,
+                      entry.password,
+                      entry.tenant,
+                      entry.accountId,
+                    )
+                  }
                 >
                   <LogIn size={14} />
                 </IconBtn>

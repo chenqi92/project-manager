@@ -505,6 +505,52 @@ describe('fillCredentialsInPage', () => {
     }
   });
 
+  it('真实登录页的 slide 入场动画和隐藏验证码不会阻止首次点击登录', async () => {
+    vi.useFakeTimers();
+    try {
+      sessionStorage.removeItem('pemAutoSubmitAt');
+      document.body.innerHTML = `
+        <div class="login-card transition-all animate-slide-in-up">
+          <input type="text" name="username" />
+          <input type="password" name="password" />
+          <button type="button" class="login-btn">登 录</button>
+          <div class="verify-root mask" style="display:none">
+            <div class="verifybox">
+              <span>请完成安全验证</span>
+              <span>向右滑动完成验证</span>
+            </div>
+          </div>
+        </div>`;
+      const button = document.querySelector('button')!;
+      let clicked = false;
+      button.addEventListener('click', () => {
+        clicked = true;
+      });
+
+      const r = fillCredentialsInPage(
+        'alice',
+        'pw',
+        true,
+        undefined,
+        undefined,
+        'acc-1',
+      );
+
+      expect(r.ok).toBe(true);
+      expect(r.submitSkipped).toBeUndefined();
+      expect(r.submitted).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(clicked).toBe(true);
+      const stamp = JSON.parse(sessionStorage.getItem('pemAutoSubmitAt') || 'null');
+      expect(stamp).toMatchObject({ origin: location.origin, accountId: 'acc-1' });
+    } finally {
+      sessionStorage.removeItem('pemAutoSubmitAt');
+      vi.useRealTimers();
+    }
+  });
+
   it('真正自动提交前写入 pemAutoSubmitAt 标记（供网页内助手识别点击后才弹验证码的死循环）', async () => {
     vi.useFakeTimers();
     try {
@@ -522,7 +568,14 @@ describe('fillCredentialsInPage', () => {
       });
       form.addEventListener('submit', (e) => e.preventDefault());
 
-      const r = fillCredentialsInPage('alice', 'pw', true);
+      const r = fillCredentialsInPage(
+        'alice',
+        'pw',
+        true,
+        undefined,
+        undefined,
+        'acc-1',
+      );
       expect(r.submitted).toBe(true);
       expect(sessionStorage.getItem('pemAutoSubmitAt')).toBeNull(); // 点击发生在延迟里，尚未写入
 
@@ -531,6 +584,7 @@ describe('fillCredentialsInPage', () => {
       expect(clicked).toBe(true);
       const stamp = JSON.parse(sessionStorage.getItem('pemAutoSubmitAt') || 'null');
       expect(stamp?.origin).toBe(location.origin);
+      expect(stamp?.accountId).toBe('acc-1');
       expect(typeof stamp?.ts).toBe('number');
     } finally {
       sessionStorage.removeItem('pemAutoSubmitAt');

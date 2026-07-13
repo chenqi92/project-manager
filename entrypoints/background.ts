@@ -203,6 +203,7 @@ export default defineBackground(() => {
       entry.password,
       cachedData.settings.autoSubmit === true,
       entry.tenant,
+      entry.accountId,
     );
   });
 
@@ -718,7 +719,7 @@ async function route(msg: Msg, sender?: MsgSender): Promise<unknown> {
     }
 
     case 'tab:openAndFill':
-      return openAndFill(msg.url, msg.username, msg.password, msg.submit, msg.tenant);
+      return openAndFill(msg.url, msg.username, msg.password, msg.submit, msg.tenant, msg.accountId);
 
     case 'capture:markAutoFill':
       // 仅扩展页面可发（pageMessage 白名单外）：popup 直填成功后登记，捕获时据此跳过提示。
@@ -2100,6 +2101,7 @@ async function openAndFill(
   password: string,
   submit: boolean,
   tenant?: string,
+  accountId?: string,
 ): Promise<{ filled: boolean; reason?: string }> {
   const targetOrigin = getOrigin(url);
   if (!targetOrigin) throw new Error('链接地址不合法');
@@ -2115,7 +2117,7 @@ async function openAndFill(
     return { filled: false, reason: '页面最终地址与链接不一致，已阻止填充' };
   }
 
-  const result = await injectCredentialFill(tabId, username, password, submit, url, tenant);
+  const result = await injectCredentialFill(tabId, username, password, submit, url, tenant, accountId);
   if (result.ok === false) return { filled: false, reason: result.reason ?? '未能填充' };
   return { filled: true, reason: result.submitSkipped ? result.reason : undefined };
 }

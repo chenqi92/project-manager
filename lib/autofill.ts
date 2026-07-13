@@ -143,14 +143,21 @@ export function fillCredentialsInPage(
     }
   }
   const visible = (el: Element): boolean => {
+    let current: HTMLElement | null = el as HTMLElement;
+    while (current) {
+      const style = getComputedStyle(current);
+      if (
+        current.hidden ||
+        current.getAttribute('aria-hidden') === 'true' ||
+        style.visibility === 'hidden' ||
+        style.display === 'none' ||
+        style.opacity === '0'
+      )
+        return false;
+      current = current.parentElement;
+    }
     const r = (el as HTMLElement).getBoundingClientRect();
-    const s = getComputedStyle(el as HTMLElement);
-    return (
-      r.width > 0 &&
-      r.height > 0 &&
-      s.visibility !== 'hidden' &&
-      s.display !== 'none'
-    );
+    return r.width > 0 && r.height > 0;
   };
 
   const setValue = (el: HTMLInputElement | HTMLSelectElement, value: string): void => {
@@ -177,47 +184,54 @@ export function fillCredentialsInPage(
       .join(' ')
       .toLowerCase();
 
+  // 只把明确的验证码组件标识当作挑战信号。slide 既是滑块验证码用词，也是页面入场动画
+  // （如 animate-slide-in-up）的常用类名，不能单独作为判断依据。
+  const CHALLENGE_ATTRIBUTE_RE =
+    /(?:captcha|recaptcha|hcaptcha|turnstile|geetest|(?:^|[\s_:/.-])(?:verify|verification|slider|swipe|drag)(?:$|[\s_:/.-])|验证码|校验码|图形码|滑块|人机验证|安全验证)/i;
+  const CHALLENGE_TEXT_RE =
+    /(?:captcha|human\s+verification|security\s+verification|slide\s+to\s+(?:verify|unlock)|drag\s+to\s+(?:verify|unlock)|验证码|校验码|图形码|滑块|滑动|拖动|拖拽|向右滑|人机验证|安全验证)/i;
+
+  const challengeAttributeText = (el: HTMLElement): string =>
+    [
+      el.id,
+      el.className,
+      el.getAttribute('name') ?? '',
+      el.getAttribute('src') ?? '',
+      el.getAttribute('alt') ?? '',
+      el.getAttribute('title') ?? '',
+      el.getAttribute('aria-label') ?? '',
+      el.getAttribute('data-sitekey') ?? '',
+    ]
+      .join(' ')
+      .toLowerCase();
+
+  // 只读取元素自身的直接文本，避免可见的表单容器把 display:none 验证码子树中的文案
+  // 合并进 textContent，造成「验证码尚未弹出」的误判。
+  const directText = (el: HTMLElement): string =>
+    Array.from(el.childNodes)
+      .filter((node) => node.nodeType === 3)
+      .map((node) => node.textContent ?? '')
+      .join(' ')
+      .trim();
+
   const formHasCaptchaMedia = (root: ParentNode): boolean =>
-    Array.from(root.querySelectorAll<HTMLElement>('img, canvas, svg')).some((el) => {
-      const text = [
-        el.id,
-        el.className,
-        el.getAttribute('src') ?? '',
-        el.getAttribute('alt') ?? '',
-        el.getAttribute('title') ?? '',
-        el.getAttribute('aria-label') ?? '',
-      ]
-        .join(' ')
-        .toLowerCase();
-      return /(captcha|verify|verification|code|验证码|校验码|图形码|图片验证码)/i.test(text);
-    });
+    Array.from(root.querySelectorAll<HTMLElement>('img, canvas, svg')).some(
+      (el) => visible(el) && CHALLENGE_ATTRIBUTE_RE.test(challengeAttributeText(el)),
+    );
 
   const hasVerificationChallenge = (root: ParentNode): boolean => {
-    const nodes = Array.from(
+    const attributeMatch = Array.from(
       root.querySelectorAll<HTMLElement>(
         '[class], [id], [data-sitekey], [aria-label], [title], iframe, img, canvas, svg',
       ),
-    ).filter(visible);
-    if (
-      nodes.some((el) => {
-        const text = [
-          el.id,
-          el.className,
-          el.getAttribute('name') ?? '',
-          el.getAttribute('src') ?? '',
-          el.getAttribute('alt') ?? '',
-          el.getAttribute('title') ?? '',
-          el.getAttribute('aria-label') ?? '',
-          el.getAttribute('data-sitekey') ?? '',
-        ]
-          .join(' ')
-          .toLowerCase();
-        return /(captcha|recaptcha|hcaptcha|turnstile|geetest|verify|verification|slider|swipe|slide|drag|验证码|校验码|图形码|滑块|滑动|拖动|拖拽|向右滑|人机验证|安全验证)/i.test(text);
-      })
-    )
-      return true;
-    const text = ((root as HTMLElement).textContent ?? '').slice(0, 1200).toLowerCase();
-    return /(captcha|recaptcha|hcaptcha|turnstile|geetest|验证码|校验码|图形码|滑块|人机验证|安全验证)/i.test(text);
+    ).some(
+      (el) => visible(el) && CHALLENGE_ATTRIBUTE_RE.test(challengeAttributeText(el)),
+    );
+    if (attributeMatch) return true;
+
+    return Array.from(
+      root.querySelectorAll<HTMLElement>('div, span, p, label, strong, h1, h2, h3, h4'),
+    ).some((el) => visible(el) && CHALLENGE_TEXT_RE.test(directText(el)));
   };
 
   const isVerificationField = (
@@ -636,7 +650,7 @@ export function fillCredentialsInPage(
       try {
         sessionStorage.setItem(
           'pemAutoSubmitAt',
-          JSON.stringify({ origin: location.origin, ts: Date.now() }),
+          JSON.stringify({ origin: location.origin, accountId, ts: Date.now() }),
         );
       } catch {
         /* 忽略隐私模式下的 sessionStorage 失败 */

@@ -401,6 +401,116 @@ describe('web-assist.js banner heuristics and per-site mute', () => {
     expect(document.getElementById('pem-web-assist')).toBeNull();
   });
 
+  it('does not downgrade login for animate-slide-in-up with a hidden verification component', async () => {
+    document.body.innerHTML = `<input name="plain" />`;
+    await focusAndFlush('input[name="plain"]');
+
+    const roots: ShadowRoot[] = [];
+    const origAttach = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init: ShadowRootInit) {
+      const root = origAttach.call(this, init);
+      roots.push(root);
+      return root;
+    };
+    try {
+      snapshotMatches = [demoMatch(), demoMatch({ accountId: 'acc-2', username: 'other' })];
+      sessionStorage.setItem(
+        'pemAutoSubmitAt',
+        JSON.stringify({ origin: location.origin, accountId: 'acc-1', ts: Date.now() - 2_000 }),
+      );
+      document.body.innerHTML = `
+        <div class="login-card transition-all animate-slide-in-up">
+          <input type="text" name="username" />
+          <input type="password" name="password" />
+          <button type="button">登录</button>
+          <div class="verify-root mask" style="display:none">
+            <div class="verifybox">
+              <span>请完成安全验证</span>
+              <span>向右滑动完成验证</span>
+            </div>
+          </div>
+        </div>`;
+
+      await focusAndFlush('input[name="username"]');
+
+      expect(sessionStorage.getItem('pemManualSubmitAccounts')).toBeNull();
+      const main = roots
+        .map((root) => root.querySelector('[data-id="acc-1"]'))
+        .find(Boolean) as HTMLElement | undefined;
+      expect(main?.textContent).toBe('登录');
+    } finally {
+      Element.prototype.attachShadow = origAttach;
+    }
+  });
+
+  it('downgrades only the account whose submitted login opened a visible challenge', async () => {
+    document.body.innerHTML = `<input name="plain" />`;
+    await focusAndFlush('input[name="plain"]');
+
+    const roots: ShadowRoot[] = [];
+    const origAttach = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init: ShadowRootInit) {
+      const root = origAttach.call(this, init);
+      roots.push(root);
+      return root;
+    };
+    try {
+      snapshotMatches = [demoMatch(), demoMatch({ accountId: 'acc-2', username: 'other' })];
+      sessionStorage.setItem(
+        'pemAutoSubmitAt',
+        JSON.stringify({ origin: location.origin, accountId: 'acc-1', ts: Date.now() - 2_000 }),
+      );
+      document.body.innerHTML = `
+        <div>
+          <input type="text" name="username" />
+          <input type="password" name="password" />
+          <button type="button">登录</button>
+          <div class="verify-root mask">
+            <div class="verifybox"><span>请完成安全验证</span></div>
+          </div>
+        </div>`;
+
+      await focusAndFlush('input[name="username"]');
+
+      expect(JSON.parse(sessionStorage.getItem('pemManualSubmitAccounts') || '[]')).toEqual([
+        { origin: location.origin, accountId: 'acc-1' },
+      ]);
+      const root = roots[roots.length - 1];
+      expect(root).toBeTruthy();
+      expect(root!.querySelector('[data-id="acc-1"]')?.textContent).toBe('填充');
+
+      const more = root!.querySelector('[data-act="more"]') as HTMLElement | null;
+      expect(more).toBeTruthy();
+      more!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve();
+
+      const labels = Array.from(root!.querySelectorAll('.tiny')).map((button) => ({
+        accountId: (button as HTMLElement).dataset.id,
+        text: button.textContent,
+      }));
+      expect(labels).toContainEqual({ accountId: 'acc-1', text: '填充' });
+      expect(labels).toContainEqual({ accountId: 'acc-2', text: '登录' });
+    } finally {
+      Element.prototype.attachShadow = origAttach;
+    }
+  });
+
+  it('restores the account login action after the page reaches a logged-in state', async () => {
+    snapshotMatches = [demoMatch()];
+    sessionStorage.setItem('pemAssistPreferredAccountId', 'acc-1');
+    sessionStorage.setItem(
+      'pemManualSubmitAccounts',
+      JSON.stringify([{ origin: location.origin, accountId: 'acc-1' }]),
+    );
+    document.body.innerHTML = `
+      <main><a href="/logout">退出登录</a><input name="plain" /></main>`;
+
+    await focusAndFlush('input[name="plain"]');
+
+    expect(sessionStorage.getItem('pemManualSubmitAccounts')).toBeNull();
+  });
+
   it('mute button sends assist:muteSite and removes the overlay', async () => {
     // 先让上一条测试可能遗留的浮层被销毁，确保本测试会重新 attachShadow。
     document.body.innerHTML = `<input name="plain" />`;

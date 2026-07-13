@@ -9,7 +9,7 @@ import type { DashAppearance, DashWidget, VaultData } from '@/lib/types';
 /** 主页传给每个磁贴的共享操作上下文（凭据动作走 App 顶层处理）。 */
 export interface WidgetCtx {
   onCopy: (text: string, what: string) => void;
-  onOpenLogin: (url: string, username: string, password: string, tenant?: string) => void;
+  onOpenLogin: (url: string, username: string, password: string, tenant?: string, accountId?: string) => void;
   onOpenTab: (url: string) => void;
   onToggleTodo: (id: string) => void;
   onEnableWeather: () => void;
